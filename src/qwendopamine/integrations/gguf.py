@@ -106,10 +106,11 @@ def load_qwen35_from_gguf(
     device_map: str = "cpu",
     **kwargs: Any,
 ) -> Any:
-    """Load Qwen3.5 from standard HF weights by default.
+    """Load Qwen3.5 from standard HF weights by default, or from GGUF.
 
     Args:
-        model_name: HF repo ID or path to .gguf file.
+        model_name: HF repo ID for the base model, a GGUF repo ID, or a
+            path to a ``.gguf`` file.
         config: Optional pre-built config. Defaults to Qwen/Qwen3.5-0.8B.
         device_map: Device placement string.
         **kwargs: Extra kwargs forwarded to HFIntegration.load_model.
@@ -117,22 +118,39 @@ def load_qwen35_from_gguf(
     Returns:
         HF model with weights loaded.
     """
-    if not model_name.endswith(".gguf"):
-        return HFIntegration.load_model(
-            model_name=model_name,
-            quantization_config=None,
-            device_map=device_map,
-            **kwargs,
-        )
-
-    gguf_path = model_name
+    base_model = "Qwen/Qwen3.5-0.8B"
     if config is None:
-        config = HFIntegration.load_config("Qwen/Qwen3.5-0.8B")
+        config = HFIntegration.load_config(base_model)
+
     model = HFIntegration.load_model(
-        "Qwen/Qwen3.5-0.8B",
+        base_model,
         quantization_config=None,
         device_map=device_map,
         **kwargs,
     )
-    load_gguf_weights(model, gguf_path)
+
+    if model_name == base_model:
+        return model
+
+    if model_name.endswith(".gguf"):
+        load_gguf_weights(model, model_name)
+    else:
+        # GGUF repo: discover the GGUF filename and download it.
+        try:
+            from huggingface_hub import list_repo_files
+            candidates = [
+                f for f in list_repo_files(model_name)
+                if f.startswith("Qwen3.5-0.8B-") and f.endswith(".gguf")
+            ]
+            if not candidates:
+                raise RuntimeError(f"No GGUF files found in repo '{model_name}'")
+            gguf_file = candidates[0]
+            from huggingface_hub import hf_hub_download
+            gguf_path = hf_hub_download(model_name, filename=gguf_file)
+            load_gguf_weights(model, gguf_path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot load '{model_name}' as a regular HF model and failed to load as GGUF repo: {exc}"
+            ) from exc
+
     return model

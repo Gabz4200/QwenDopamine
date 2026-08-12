@@ -1,0 +1,15 @@
+defaults:
+  - train: frozen_backbone
+
+experiment:
+  name: ablation_unfreezing
+  phases:
+    - name: train_new_blocks
+      max_steps: 10000
+      unfreeze: [experimental_blocks]
+    - name: unfreeze_nearby
+      max_steps: 10000
+      unfreeze: [experimental_blocks, model.layers.2, model.layers.4]
+    - name: full_finetune
+      max_steps: 10000
+      unfreeze: [model]

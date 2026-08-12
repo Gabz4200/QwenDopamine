@@ -1,0 +1,11 @@
+defaults:
+  - train: cpu
+
+freeze:
+  base_model: true
+  new_blocks: false
+  unfreeze_phases:
+    - step: 5000
+      modules: [model.layers.12]
+    - step: 10000
+      modules: [model.layers.24]

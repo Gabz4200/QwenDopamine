@@ -1,0 +1,8 @@
+defaults:
+  - train: single_gpu
+
+distributed:
+  backend: fsdp2
+  cpu_offload: false
+  activation_checkpointing: true
+  mixed_precision: bf16

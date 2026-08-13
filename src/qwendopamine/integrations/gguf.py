@@ -1,4 +1,8 @@
+r"""GGUF weight loading and conversion utilities."""
+
 from __future__ import annotations
+
+r"""GGUF weight loading and conversion utilities."""
 
 import os
 from typing import Any
@@ -43,6 +47,14 @@ _ATTN_TENSOR_MAP: dict[str, str] = {
 
 
 def _map_gguf_name_to_hf(gguf_name: str) -> str | None:
+    r"""Map a GGUF tensor name to the corresponding HF state-dict key.
+
+    Args:
+        gguf_name (str): raw GGUF tensor name.
+
+    Returns:
+        str | None: mapped HF key, or ``None`` if unmapped.
+    """
     hf_name = GGUF_TO_HF_NAME_MAP.get(gguf_name)
     if hf_name is not None:
         return hf_name
@@ -60,6 +72,15 @@ def _map_gguf_name_to_hf(gguf_name: str) -> str | None:
 
 
 def _dequantize_gguf_tensor(tensor: Any, hf_name: str) -> torch.Tensor:
+    r"""Dequantize a GGUF tensor and reshape conv1d weights if needed.
+
+    Args:
+        tensor (Any): GGUF tensor metadata.
+        hf_name (str): target HF tensor name used to detect conv1d reshape.
+
+    Returns:
+        Tensor: dequantized tensor.
+    """
     dequantized = dequantize(tensor.data, tensor.tensor_type)
     if hf_name.endswith(".conv1d.weight") and dequantized.ndim == 2:
         return torch.from_numpy(dequantized.copy()).unsqueeze(1)
@@ -67,6 +88,14 @@ def _dequantize_gguf_tensor(tensor: Any, hf_name: str) -> torch.Tensor:
 
 
 def _build_state_dict_from_gguf(gguf_path: str) -> dict[str, torch.Tensor]:
+    r"""Build an HF-style state dict from a GGUF file.
+
+    Args:
+        gguf_path (str): path to GGUF file.
+
+    Returns:
+        dict[str, Tensor]: mapped state dict.
+    """
     reader = GGUFReader(gguf_path)
     state_dict: dict[str, torch.Tensor] = {}
 
@@ -81,8 +110,16 @@ def _build_state_dict_from_gguf(gguf_path: str) -> dict[str, torch.Tensor]:
 
 
 def load_gguf_weights(model: Any, gguf_path: str) -> None:
+    r"""Load GGUF weights into an existing model.
+
+    Missing ``lm_head.weight`` is allowed; all other missing keys raise.
+
+    Args:
+        model (Any): model to populate.
+        gguf_path (str): path to a GGUF file.
+    """
     state_dict = _build_state_dict_from_gguf(gguf_path)
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    missing, _ = model.load_state_dict(state_dict, strict=False)
     if missing:
         allowed_missing = {"lm_head.weight"}
         unexpected_missing = set(missing) - allowed_missing
@@ -91,6 +128,15 @@ def load_gguf_weights(model: Any, gguf_path: str) -> None:
 
 
 def convert_gguf_to_safetensors(gguf_path: str, output_dir: str) -> str:
+    r"""Convert a GGUF file to a safetensors file.
+
+    Args:
+        gguf_path (str): path to input GGUF file.
+        output_dir (str): directory to write ``model.safetensors`` into.
+
+    Returns:
+        str: path to written safetensors file.
+    """
     from safetensors.torch import save_file
 
     state_dict = _build_state_dict_from_gguf(gguf_path)
@@ -106,17 +152,19 @@ def load_qwen35_from_gguf(
     device_map: str = "cpu",
     **kwargs: Any,
 ) -> Any:
-    """Load Qwen3.5 from standard HF weights by default, or from GGUF.
+    r"""Load Qwen3.5 from standard HF weights by default, or from GGUF.
 
     Args:
-        model_name: HF repo ID for the base model, a GGUF repo ID, or a
+        model_name (str): HF repo ID for the base model, a GGUF repo ID, or a
             path to a ``.gguf`` file.
-        config: Optional pre-built config. Defaults to Qwen/Qwen3.5-0.8B.
-        device_map: Device placement string.
-        **kwargs: Extra kwargs forwarded to HFIntegration.load_model.
+        config (Any, optional): optional pre-built config. Defaults to
+            ``Qwen/Qwen3.5-0.8B``.
+        device_map (str): device placement string. Default: ``"cpu"``.
+        **kwargs: extra keyword arguments forwarded to
+            :meth:`HFIntegration.load_model`.
 
     Returns:
-        HF model with weights loaded.
+        Any: HF model with weights loaded.
     """
     base_model = "Qwen/Qwen3.5-0.8B"
     if config is None:
@@ -135,7 +183,6 @@ def load_qwen35_from_gguf(
     if model_name.endswith(".gguf"):
         load_gguf_weights(model, model_name)
     else:
-        # GGUF repo: discover the GGUF filename and download it.
         try:
             from huggingface_hub import list_repo_files
             candidates = [

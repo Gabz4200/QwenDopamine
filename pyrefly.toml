@@ -1,0 +1,23 @@
+project-includes = ["src/**/*.py", "tests/**/*.py"]
+
+[errors]
+implicit-import = false
+implicit-any = true
+unannotated-return = true
+unannotated-parameter = true
+
+[[sub-config]]
+matches = "tests/**"
+[sub-config.errors]
+implicit-import = false
+implicit-any = true
+unannotated-return = false
+unannotated-parameter = false
+
+[[sub-config]]
+matches = "notebooks/**"
+[sub-config.errors]
+implicit-import = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false

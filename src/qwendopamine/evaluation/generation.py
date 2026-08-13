@@ -4,12 +4,7 @@ from typing import Any
 
 import torch
 
-
-def _get_model_device(model: torch.nn.Module) -> torch.device:
-    try:
-        return next(model.parameters()).device
-    except StopIteration:
-        return torch.device("cpu")
+from qwendopamine.utils import get_model_device as _get_model_device
 
 
 def generate_text(model: torch.nn.Module, tokenizer: Any, prompt: str, max_new_tokens: int = 256, **kwargs: Any) -> str:

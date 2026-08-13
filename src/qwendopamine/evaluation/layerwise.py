@@ -4,26 +4,20 @@ from typing import Any
 
 import torch
 
-
-def _get_model_device(model: torch.nn.Module) -> torch.device:
-    """Return the device of the first model parameter."""
-    try:
-        return next(model.parameters()).device
-    except StopIteration:
-        return torch.device("cpu")
+from qwendopamine.utils import get_model_device as _get_model_device
 
 
 def layerwise_stats(model: torch.nn.Module, dataloader: Any, max_steps: int = 50) -> dict[str, float]:
-    r"""Collect per-layer activation statistics from one forward pass.
+    r"""Collect per-layer activation statistics from one or more forward passes.
 
-    Currently a placeholder: it runs a single batch through the model and
-    returns an empty stats dict. Extend this hook to inspect intermediate
-    activations when adding layerwise instrumentation.
+    Runs up to ``max_steps`` batches through the model under ``torch.no_grad``
+    and returns a placeholder stats dict. Extend this hook to capture
+    intermediate activations when adding layerwise instrumentation.
 
     Args:
         model (torch.nn.Module): model to inspect.
         dataloader (Any): iterable yielding input batches.
-        max_steps (int): unused; kept for interface consistency. Default: ``50``.
+        max_steps (int): maximum number of batches to process. Default: ``50``.
 
     Returns:
         dict[str, float]: collected layer statistics. Currently empty.
@@ -37,5 +31,4 @@ def layerwise_stats(model: torch.nn.Module, dataloader: Any, max_steps: int = 50
                 break
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             model(**batch)
-            break
     return stats

@@ -4,12 +4,7 @@ from typing import Any
 
 import torch
 
-
-def _get_model_device(model: torch.nn.Module) -> torch.device:
-    try:
-        return next(model.parameters()).device
-    except StopIteration:
-        return torch.device("cpu")
+from qwendopamine.utils import get_model_device
 
 
 def compute_perplexity(model: torch.nn.Module, dataloader: Any, max_steps: int = 500) -> float:
@@ -31,7 +26,7 @@ def compute_perplexity(model: torch.nn.Module, dataloader: Any, max_steps: int =
     model.eval()
     total_loss = 0.0
     total_tokens = 0
-    device = _get_model_device(model)
+    device = get_model_device(model)
 
     with torch.no_grad():
         for step, batch in enumerate(dataloader):

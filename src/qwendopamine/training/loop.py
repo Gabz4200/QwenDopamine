@@ -6,8 +6,9 @@ from typing import Any
 import torch
 from torch import nn
 from torch.amp import GradScaler
-
 from torch.optim.lr_scheduler import LRScheduler
+
+from qwendopamine.utils import get_model_device
 
 
 @dataclass
@@ -21,14 +22,10 @@ class TrainConfig:
         mixed_precision (str): mixed precision mode. Accepted values: ``"bf16"``
             or ``"fp16"``. Default: ``"bf16"``.
     """
-
-
-def _infer_autocast_device(model: nn.Module) -> str:
-    """Return the device type string for ``torch.autocast`` from the model."""
-    try:
-        return next(model.parameters()).device.type
-    except StopIteration:
-        return "cpu"
+    max_steps: int = 100000
+    grad_accum_steps: int = 1
+    max_grad_norm: float = 1.0
+    mixed_precision: str = "bf16"
 
 
 class TrainingLoop:
@@ -46,7 +43,8 @@ class TrainingLoop:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.config = config
-        self.scaler = GradScaler(_infer_autocast_device(model), enabled=config.mixed_precision == "fp16")
+        self.scaler = GradScaler(get_model_device(model).type, enabled=config.mixed_precision == "fp16")
+        self.mixed_precision = config.mixed_precision
         self.global_step = 0
 
     def run(self, train_loader: Any) -> None:
@@ -56,21 +54,25 @@ class TrainingLoop:
             train_loader (Any): iterable yielding training batches.
         """
         self.model.train()
-        accumulator = 0
+        accum = 0  # noqa: SIM113
 
         for batch in train_loader:
             batch = self._move_to_device(self.model, batch)
-            autocast_device = _infer_autocast_device(self.model)
-            with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=self.config.mixed_precision == "bf16"):
+            autocast_device = get_model_device(self.model).type
+            with torch.autocast(
+                device_type=autocast_device,
+                dtype=torch.bfloat16 if self.mixed_precision == "bf16" else torch.float16,
+                enabled=self.mixed_precision in ("bf16", "fp16"),
+            ):
                 outputs = self.model(**batch)
                 loss = outputs.get("loss") if isinstance(outputs, dict) else getattr(outputs, "loss", None)
                 assert loss is not None
                 loss = loss / self.config.grad_accum_steps
 
             self.scaler.scale(loss).backward()  # type: ignore[arg-type]
-            accumulator += 1
+            accum += 1
 
-            if accumulator % self.config.grad_accum_steps == 0:
+            if accum % self.config.grad_accum_steps == 0:
                 self._optimizer_step()
                 self.scheduler.step()
                 self.optimizer.zero_grad(set_to_none=True)
@@ -94,7 +96,10 @@ class TrainingLoop:
         Returns:
             Any: batch with tensors moved to the model's device.
         """
-        device = next(model.parameters()).device
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
         if isinstance(batch, torch.Tensor):
             return batch.to(device)
         if isinstance(batch, dict):

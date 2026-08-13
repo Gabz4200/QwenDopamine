@@ -4,20 +4,11 @@ Reference:
   Hatamizadeh et al. (2026). "Gated DeltaNet-2: Decoupling Erase and Write in
   Linear Attention." arXiv:2605.22791.
   Code: https://github.com/NVlabs/GatedDeltaNet-2
-
-Implements the Gated Delta Rule-2 recurrence from Eq. (9) of the paper:
-
-    S_t = (I - k_t (b_t ⊙ k_t)^T) Diag(exp(g_t)) S_{t-1} + k_t (w_t ⊙ v_t)^T
-    o_t = S_t^T q_t
-
-where b_t is the channel-wise erase gate and w_t is the channel-wise write
-gate.  This implementation uses a pure-PyTorch token-by-token recurrence so
-it runs on CPU without Triton kernels.  A chunkwise parallel path can be
-added later for training speed.
 """
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import torch
 from torch import nn
@@ -26,10 +17,38 @@ from torch.nn import functional as F
 from qwendopamine.models.normalization import RMSNorm
 
 
-class _ShortConv(nn.Module):
-    """Depthwise Conv1d with causal padding and SiLU activation.
+@dataclass
+class GDN2Projections:
+    r"""Container for precomputed GDN-2 projections used by chunk dispatch.
 
-    Matches the paper's "short convolution" on q/k/v pathways.
+    Attributes:
+        q (Tensor): query tensor of shape ``[B, H, T, d_k]``.
+        k (Tensor): key tensor of shape ``[B, H, T, d_k]``.
+        v (Tensor): value tensor of shape ``[B, V, T, d_v]``.
+        alpha (Tensor): log-decay tensor of shape ``[B, H, T, d_k]``.
+        b (Tensor): erase gate tensor of shape ``[B, H, T, d_k]``.
+        w (Tensor): write gate tensor of shape ``[B, V, T, d_v]``.
+    """
+
+    q: torch.Tensor
+    k: torch.Tensor
+    v: torch.Tensor
+    alpha: torch.Tensor
+    b: torch.Tensor
+    w: torch.Tensor
+
+
+class _ShortConv(nn.Module):
+    r"""Depthwise Conv1d with causal left padding and SiLU activation.
+
+    Implements the paper's "short convolution" on the q/k/v pathways.
+    Input is expected in ``[B, T, hidden_size]`` format; internally transposed
+    to ``[B, hidden_size, T]`` for the convolution.
+
+    Args:
+        hidden_size (int): number of channels, also used as ``groups`` for depthwise conv.
+        kernel_size (int): convolution kernel length. Default: ``4``.
+        bias (bool): if ``True``, add learnable bias to the convolution. Default: ``False``.
     """
 
     def __init__(self, hidden_size: int, kernel_size: int = 4, bias: bool = False) -> None:
@@ -53,7 +72,7 @@ class _ShortConv(nn.Module):
 
 
 class GDN2Mixer(nn.Module):
-    """Token-mixing core of Gated DeltaNet-2.
+    r"""Token-mixing core of Gated DeltaNet-2.
 
     Projects the hidden state to query, key, value, erase gate ``b``, write
     gate ``w``, and log-decay ``g``.  Maintains a fixed-size recurrent state
@@ -126,13 +145,13 @@ class GDN2Mixer(nn.Module):
 
         # Options.
         self.allow_neg_eigval = getattr(config, "allow_neg_eigval", False)
+        self.kernel_mode = getattr(config, "gdn2_kernel_mode", "fallback")
+        if self.kernel_mode not in {"fallback", "chunk"}:
+            raise ValueError(
+                f"gdn2_kernel_mode must be 'fallback' or 'chunk'; got {self.kernel_mode!r}"
+            )
 
-        # Light init: small uniform for all linears.
         self.apply(self._init_weights)
-
-    # ------------------------------------------------------------------
-    # Init
-    # ------------------------------------------------------------------
 
     def _init_weights(self, module: nn.Module) -> None:
         """Small-uniform init for all linear layers (matches reference)."""
@@ -140,10 +159,6 @@ class GDN2Mixer(nn.Module):
             nn.init.xavier_uniform_(module.weight, gain=2 ** -2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
-
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
 
     def forward(self, hidden_states: torch.Tensor, **kwargs: object) -> torch.Tensor:
         """Run the GDN-2 token mixer.
@@ -183,14 +198,31 @@ class GDN2Mixer(nn.Module):
         w = torch.sigmoid(self.w_proj(hidden_states))  # [B, T, value_dim]
         w = w.view(B, T, self.num_v_heads, self.head_v_dim).transpose(1, 2)  # [B, V, T, d_v]
 
-        # Log-decay.
         f = self.f_proj(hidden_states)  # [B, T, key_dim]
         A_log = self.A_log.repeat_interleave(self.head_dim)  # [key_dim]
         g = -A_log.view(1, 1, -1) * F.softplus(f + self.dt_bias)
         alpha = torch.exp(g)  # [B, T, key_dim]
         alpha = alpha.view(B, T, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, T, d_k]
 
-        # -- per-head token-by-token recurrence (Eq. 9) --------------------
+        # -- kernel dispatch -------------------------------------------------
+        if self.kernel_mode == "chunk":
+            return self._forward_chunk(hidden_states, GDN2Projections(q, k, v, alpha, b, w))
+
+        return self._forward_fallback(hidden_states, q, k, v, alpha, b, w)
+
+    def _forward_fallback(
+        self,
+        hidden_states: torch.Tensor,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        alpha: torch.Tensor,
+        b: torch.Tensor,
+        w: torch.Tensor,
+    ) -> torch.Tensor:
+        """Per-head token-by-token recurrence (Eq. 9)."""
+        B, T, _ = hidden_states.shape
+
         # S: [B, num_heads, head_k_dim, head_v_dim]
         S = hidden_states.new_zeros(B, self.num_heads, self.head_dim, self.head_v_dim)
         outputs: list[torch.Tensor] = []
@@ -232,9 +264,22 @@ class GDN2Mixer(nn.Module):
         out = self.o_proj(out)          # [B, T, hidden_size]
         return out
 
+    def _forward_chunk(
+        self,
+        hidden_states: torch.Tensor,
+        proj: GDN2Projections,
+    ) -> torch.Tensor:
+        """Dispatch to chunkwise GPU kernel when available, else fallback."""
+        from qwendopamine.models.blocks.gdn2_ops import dispatch_gdn2  # type: ignore[import]
+        return dispatch_gdn2(
+            mixer=self,
+            hidden_states=hidden_states,
+            proj=proj,
+        )
+
 
 class GatedDeltaNet2Block(nn.Module):
-    """Full GDN-2 residual block: pre-norm -> mixer -> post-norm -> MLP.
+    r"""Full GDN-2 residual block: pre-norm -> mixer -> post-norm -> MLP.
 
     Matches the interface of the other blocks in this repo
     (forward takes hidden_states and returns hidden_states).

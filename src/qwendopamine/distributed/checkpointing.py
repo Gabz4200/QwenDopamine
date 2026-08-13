@@ -7,13 +7,27 @@ import torch
 
 
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: Path, **kwargs: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), **kwargs}, path)
+    r"""Save model and optimizer state dicts to disk.
+
+    Parent directories are created automatically.
+
+    Args:
+        model (torch.nn.Module): model to save.
+        optimizer (torch.optim.Optimizer): optimizer to save.
+        path (Path): output checkpoint path.
+        **kwargs: extra entries merged into the checkpoint dict.
+    """
 
 
 def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: Path, map_location: str = "cpu") -> dict[str, Any]:
-    checkpoint = torch.load(path, map_location=map_location, weights_only=False)
-    model.load_state_dict(checkpoint["model"])
-    if optimizer is not None and "optimizer" in checkpoint:
-        optimizer.load_state_dict(checkpoint["optimizer"])
-    return checkpoint
+    r"""Load a checkpoint and restore model/optimizer state.
+
+    Args:
+        model (torch.nn.Module): model to restore.
+        optimizer (torch.optim.Optimizer): optimizer to restore.
+        path (Path): checkpoint path.
+        map_location (str): device mapping for loading. Default: ``"cpu"``.
+
+    Returns:
+        dict[str, Any]: full checkpoint dict.
+    """

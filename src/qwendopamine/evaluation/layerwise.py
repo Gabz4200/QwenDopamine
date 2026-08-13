@@ -6,6 +6,20 @@ import torch
 
 
 def layerwise_stats(model: torch.nn.Module, dataloader: Any, max_steps: int = 50) -> dict[str, float]:
+    r"""Collect per-layer activation statistics from one forward pass.
+
+    Currently a placeholder: it runs a single batch through the model and
+    returns an empty stats dict. Extend this hook to inspect intermediate
+    activations when adding layerwise instrumentation.
+
+    Args:
+        model (torch.nn.Module): model to inspect.
+        dataloader (Any): iterable yielding input batches.
+        max_steps (int): unused; kept for interface consistency. Default: ``50``.
+
+    Returns:
+        dict[str, float]: collected layer statistics. Currently empty.
+    """
     model.eval()
     stats: dict[str, float] = {}
     with torch.no_grad():

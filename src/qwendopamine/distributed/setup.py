@@ -4,6 +4,15 @@ import os
 
 
 def init_distributed() -> tuple[int, int, int]:
+    r"""Initialize the distributed process group if ``WORLD_SIZE > 1``.
+
+    Environment variables ``RANK``, ``WORLD_SIZE``, and ``LOCAL_RANK`` are
+    defaulted to ``0``/``1``/``0`` when unset so single-process execution
+    does not require distributed launch.
+
+    Returns:
+        tuple[int, int, int]: ``(rank, world_size, local_rank)``.
+    """
     if not os.environ.get("RANK"):
         os.environ.setdefault("RANK", "0")
         os.environ.setdefault("WORLD_SIZE", "1")
@@ -22,6 +31,7 @@ def init_distributed() -> tuple[int, int, int]:
 
 
 def cleanup_distributed() -> None:
+    r"""Destroy the distributed process group if initialized."""
     import torch.distributed as dist
     if dist.is_initialized():
         dist.destroy_process_group()

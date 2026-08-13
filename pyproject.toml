@@ -28,7 +28,8 @@ dependencies = [
 
 [dependency-groups]
 hf = ["huggingface-hub>=0.34.0", "tokenizers>=0.21.0"]
-dev = ["pytest>=8.3.0", "ruff>=0.9.0", "ipykernel>=6.30.0"]
+dev = ["pytest>=8.3.0", "ruff>=0.9.0", "ipykernel>=6.30.0", "pyrefly>=0.15.0"]
+gpu = ["flash-linear-attention>=0.5.2"]
 
 [[tool.uv.index]]
 name = "pytorch"
@@ -49,3 +50,6 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
+
+[tool.pyrefly]
+project-includes = ["src/**/*.py", "tests/**/*.py"]

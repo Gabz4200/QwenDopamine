@@ -99,7 +99,7 @@ class HFIntegration:
         )
 
     @staticmethod
-    def load_tokenizer(model_name: str, **kwargs: Any) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
+    def load_tokenizer(model_name: str, **kwargs: Any) -> PreTrainedTokenizer | PreTrainedTokenizerFast | None:
         r"""Load a Hugging Face tokenizer.
 
         Args:
@@ -108,7 +108,7 @@ class HFIntegration:
                 :meth:`transformers.AutoTokenizer.from_pretrained`.
 
         Returns:
-            PreTrainedTokenizer | PreTrainedTokenizerFast: loaded tokenizer.
+            PreTrainedTokenizer | PreTrainedTokenizerFast | None: loaded tokenizer.
         """
         return AutoTokenizer.from_pretrained(model_name)
 

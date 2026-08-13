@@ -16,3 +16,4 @@ def wrap_with_fsdp(model: torch.nn.Module, **kwargs: Any) -> torch.nn.Module:
     Returns:
         torch.nn.Module: FSDP-wrapped model.
     """
+    return model

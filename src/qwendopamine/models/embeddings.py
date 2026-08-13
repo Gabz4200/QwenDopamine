@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
-
 import torch
 from torch import nn
 
 
 class TokenEmbeddings(nn.Module):
+    r"""Standard token embedding table.
+
+    Args:
+        vocab_size (int): number of tokens.
+        hidden_size (int): embedding dimension.
+    """
+
     def __init__(self, vocab_size: int, hidden_size: int) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty(vocab_size, hidden_size))
@@ -17,6 +22,13 @@ class TokenEmbeddings(nn.Module):
 
 
 class PositionEmbeddings(nn.Module):
+    r"""Learned absolute position embeddings.
+
+    Args:
+        max_position_embeddings (int): maximum sequence length supported.
+        hidden_size (int): embedding dimension.
+    """
+
     def __init__(self, max_position_embeddings: int, hidden_size: int) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty(max_position_embeddings, hidden_size))

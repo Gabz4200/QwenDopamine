@@ -9,8 +9,17 @@ from qwendopamine.models.normalization import RMSNorm
 
 
 class QwenDecoderLayer(nn.Module):
+    r"""Minimal Qwen-style decoder layer.
+
+    Applies pre-norm residual attention and MLP branches with plain
+    :class:`torch.nn.Linear` projections. This is a lightweight reference
+    block for research comparisons, not a full Qwen3.5 implementation.
+
+    Args:
+        config: any object with ``hidden_size`` and ``rms_norm_eps`` attributes.
+        layer_idx (int): layer index for compatibility with config-driven stacks.
+    """
     def __init__(self, config: Any, layer_idx: int) -> None:
-        super().__init__()
         self.layer_idx = layer_idx
         self.hidden_size = getattr(config, "hidden_size", 2560)
         self.input_layernorm = RMSNorm(self.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6))

@@ -12,6 +12,21 @@ from qwendopamine.models.output_head import LMHead
 
 
 class ResearchDecoder(nn.Module):
+    r"""Configurable decoder model assembled from token/position embeddings,
+    a configurable block stack, and a language-model head.
+
+    This is the default research decoder used by :func:`build_model`.
+    It mirrors standard causal-LM structure while keeping block composition
+    driven by Hydra configs through :func:`qwendopamine.models.blocks.build_block`.
+
+    Args:
+        config: any object with model-level attributes. Supported keys and defaults:
+            ``hidden_size`` (``2560``), ``vocab_size`` (``151936``),
+            ``max_position_embeddings`` (``4096``), ``num_layers`` (``4``),
+            ``block_types`` (list of block names), ``hidden_dropout_prob`` (``0.0``),
+            and ``rms_norm_eps`` (``1e-6``).
+    """
+
     def __init__(self, config: Any) -> None:
         super().__init__()
         self.hidden_size = getattr(config, "hidden_size", 2560)
@@ -46,10 +61,32 @@ class ResearchDecoder(nn.Module):
 
 
 def build_model(config: Any) -> nn.Module:
+    r"""Build the default research decoder from the provided config.
+
+    Args:
+        config: any object with model-level attributes forwarded to
+            :class:`ResearchDecoder`.
+
+    Returns:
+        nn.Module: assembled :class:`ResearchDecoder`.
+    """
     return ResearchDecoder(config)
 
 
 def build_reference_model(config: Any, **kwargs: Any) -> nn.Module:
+    r"""Load a reference Hugging Face causal-LM model, optionally with quantization.
+
+    This helper is intended for baseline comparisons against the research decoder.
+
+    Args:
+        config: any object with ``base_model`` and HF loader kwargs.
+        **kwargs: additional keyword arguments passed to
+            :meth:`HFIntegration.load_model`, such as ``quantization_config``
+            and ``device_map``.
+
+    Returns:
+        nn.Module: Hugging Face pretrained causal language model.
+    """
     from qwendopamine.integrations.huggingface import HFIntegration
     return HFIntegration.load_model(
         model_name=config.base_model,

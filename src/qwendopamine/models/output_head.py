@@ -5,6 +5,13 @@ from torch import nn
 
 
 class LMHead(nn.Module):
+    r"""Language-model head: dense-up projection, SiLU activation, norm, then output linear.
+
+    Args:
+        hidden_size (int): model hidden dimension.
+        vocab_size (int): vocabulary size for the final logits projection.
+    """
+
     def __init__(self, hidden_size: int, vocab_size: int) -> None:
         super().__init__()
         self.dense = nn.Linear(hidden_size, hidden_size, bias=False)

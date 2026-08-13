@@ -1,4 +1,4 @@
-"""Evaluation utilities."""
+r"""Evaluation utilities."""
 
 from .perplexity import compute_perplexity
 from .generation import generate_text

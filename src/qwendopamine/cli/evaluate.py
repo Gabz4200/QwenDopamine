@@ -9,6 +9,8 @@ def main(config: DictConfig) -> None:
     r"""Evaluation CLI entrypoint.
 
     Stub for future evaluation workflows.
+
+    TODO: call compute_perplexity or generate_text from the evaluation module.
     """
     print(f"Evaluate entrypoint stub with config: {config}")
 

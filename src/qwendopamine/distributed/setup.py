@@ -2,6 +2,17 @@ from __future__ import annotations
 
 import os
 
+import torch
+
+
+def _default_backend() -> str:
+    """Pick a distributed backend based on available hardware."""
+    if torch.cuda.is_available():
+        return "nccl"
+    if torch.backends.mps.is_available():
+        return "gloo"
+    return "gloo"
+
 
 def init_distributed() -> tuple[int, int, int]:
     r"""Initialize the distributed process group if ``WORLD_SIZE > 1``.
@@ -25,7 +36,7 @@ def init_distributed() -> tuple[int, int, int]:
     if world_size > 1:
         import torch.distributed as dist
         if not dist.is_initialized():
-            dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+            dist.init_process_group(backend=_default_backend(), rank=rank, world_size=world_size)
 
     return rank, world_size, local_rank
 

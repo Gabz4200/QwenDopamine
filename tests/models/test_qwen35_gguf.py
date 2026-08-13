@@ -23,6 +23,7 @@ def test_qwen35_gguf_loading_forward_pass():
     assert out.logits.shape == (1, 2, 248320)
 
 
+@pytest.mark.slow
 def test_qwen35_tokenizer_fallback():
     r"""Tokenizer loader must fall back to Qwen/Qwen3.5-0.8B."""
     tokenizer = load_qwen35_tokenizer("unsloth/Qwen3.5-0.8B-MTP-GGUF")

@@ -10,17 +10,39 @@ import warnings
 from typing import Any
 
 import torch
+from torch.nn import functional as F
 
-from qwendopamine.models.blocks.gdn2 import GDN2Mixer
+from qwendopamine.models.blocks.gdn2 import GDN2Mixer, GDN2Projections, _gated_delta_rule_2_fallback
+
+
+# Warn only once per process; the fallback is the expected CPU path.
+_warned_fallback = False
+
+
+def _warn_fallback(reason: str) -> None:
+    global _warned_fallback
+    if not _warned_fallback:
+        warnings.warn(f"GDN-2 falling back to pure-PyTorch recurrence: {reason}")
+        _warned_fallback = True
+
+
+def _infer_device(tensor: torch.Tensor) -> str:
+    """Return the device type string from the input tensor."""
+    return tensor.device.type
 
 
 def dispatch_gdn2(
     mixer: GDN2Mixer,
-    hidden_states: Any,
-    proj: Any,
+    hidden_states: torch.Tensor,
+    proj: GDN2Projections,
     **kwargs: Any,
-) -> Any:
+) -> torch.Tensor:
     r"""Dispatch GDN-2 to the chunkwise GPU kernel when available, else fallback.
+
+    The fallback path is the pure-PyTorch token-by-token recurrence, which
+    works on any device (CPU, CUDA, ROCm, MPS).  The chunkwise kernel is
+    only used when the input lives on a CUDA device and
+    ``flash-linear-attention`` is installed.
 
     Args:
         mixer: :class:`GDN2Mixer` instance whose parameters and configuration
@@ -33,35 +55,22 @@ def dispatch_gdn2(
     Returns:
         Output tensor of shape ``[B, T, hidden_size]``.
     """
-    if not torch.cuda.is_available():
-        warnings.warn("CUDA unavailable; using pure-PyTorch GDN-2 recurrence.")
-        return mixer._forward_fallback(
-            hidden_states, proj.q, proj.k, proj.v, proj.alpha, proj.b, proj.w
-        )
+    device = _infer_device(hidden_states)
 
-    module_tensor = next(mixer.parameters())
-    if module_tensor.device.type != "cuda":
-        return mixer._forward_fallback(
-            hidden_states, proj.q, proj.k, proj.v, proj.alpha, proj.b, proj.w
-        )
+    if device != "cuda":
+        _warn_fallback(f"input on {device}; chunk kernel requires CUDA")
+        return _gated_delta_rule_2_fallback(mixer, hidden_states, proj)
 
     try:
         from flash_linear_attention.ops.gdn2 import chunk_gdn2  # type: ignore[import]
     except ImportError:
-        warnings.warn("flash-linear-attention unavailable; using pure-PyTorch GDN-2 recurrence.")
-        return mixer._forward_fallback(
-            hidden_states, proj.q, proj.k, proj.v, proj.alpha, proj.b, proj.w
-        )
+        _warn_fallback("flash-linear-attention not installed")
+        return _gated_delta_rule_2_fallback(mixer, hidden_states, proj)
 
     B, T, _ = hidden_states.shape
-    q = proj.q
-    k = proj.k
-    v = proj.v
-    alpha = proj.alpha
-    b = proj.b
-    w = proj.w
+    q, k, v = proj.q, proj.k, proj.v
+    alpha, b, w = proj.alpha, proj.b, proj.w
 
-    scale = mixer.head_dim**-0.5
     o, _ = chunk_gdn2(
         q=q,
         k=k,
@@ -69,15 +78,12 @@ def dispatch_gdn2(
         g=alpha,
         b=b,
         wg=w,
-        scale=scale,
+        scale=mixer.head_dim**-0.5,
         chunk_size=64,
         cu_seqlens=None,
     )
 
-    o = o.transpose(1, 2).contiguous().view(B, T, mixer.value_dim)
-
-    gate = mixer.g_proj(hidden_states)
-    gate = gate.view(B, T, mixer.num_v_heads, mixer.head_v_dim).transpose(1, 2)
-    o = mixer.o_norm(o, gate)
-    o = o.transpose(1, 2).contiguous().view(B, T, mixer.value_dim)
-    return mixer.o_proj(o)
+    out = o.transpose(1, 2).contiguous().view(B, T, mixer.value_dim)
+    g = mixer.g_proj(hidden_states)
+    out = mixer.o_norm(out) * F.silu(g)
+    return mixer.o_proj(out)

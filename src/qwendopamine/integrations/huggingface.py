@@ -3,12 +3,24 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, QuantoConfig
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    QuantoConfig,
+)
 
 
 class HFIntegration:
     @staticmethod
-    def make_quantization_config(method: str = "int8", compute_dtype: str = "bfloat16", device: str = "cpu") -> Any:
+    def make_quantization_config(
+        method: str = "int8", compute_dtype: str = "bfloat16", device: str = "cpu"
+    ) -> BitsAndBytesConfig | QuantoConfig:
         r"""Build a Hugging Face quantization config for CPU-friendly loading.
 
         Args:
@@ -20,19 +32,16 @@ class HFIntegration:
                 ``int8``. Default: ``"cpu"``.
 
         Returns:
-            Any: quantization config object, or ``None`` when ``method`` is
-                unrecognized and falls back to :class:`transformers.QuantoConfig`.
+            BitsAndBytesConfig | QuantoConfig: quantization config object.
         """
         if method == "int8":
-            dtype = getattr(torch, compute_dtype, torch.bfloat16)
             return BitsAndBytesConfig(load_in_8bit=True, llm_int8_enable_fp32_cpu_offload=device == "cpu")
         if method == "int4":
-            dtype = getattr(torch, compute_dtype, torch.bfloat16)
-            return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype)
+            return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=getattr(torch, compute_dtype, torch.bfloat16))
         return QuantoConfig(weights=method)
 
     @staticmethod
-    def load_config(model_name: str, **kwargs: Any):
+    def load_config(model_name: str, **kwargs: Any) -> PreTrainedConfig:
         r"""Load a Hugging Face model config.
 
         Args:
@@ -46,7 +55,13 @@ class HFIntegration:
         return AutoConfig.from_pretrained(model_name, **kwargs)
 
     @staticmethod
-    def load_model(model_name: str, quantization_config: Any = None, device_map: str = "cpu", from_gguf: bool = False, **kwargs: Any):
+    def load_model(
+        model_name: str,
+        quantization_config: Any = None,
+        device_map: str = "cpu",
+        from_gguf: bool = False,
+        **kwargs: Any,
+    ) -> PreTrainedModel:
         r"""Load a Hugging Face causal-LM model, optionally with quantization.
 
         If ``from_gguf`` is ``True`` or ``model_name`` ends with ``.gguf``,
@@ -83,7 +98,7 @@ class HFIntegration:
         )
 
     @staticmethod
-    def load_tokenizer(model_name: str, **kwargs: Any):
+    def load_tokenizer(model_name: str, **kwargs: Any) -> PreTrainedTokenizer | PreTrainedTokenizerFast:
         r"""Load a Hugging Face tokenizer.
 
         Args:
@@ -92,7 +107,7 @@ class HFIntegration:
                 :meth:`transformers.AutoTokenizer.from_pretrained`.
 
         Returns:
-            PreTrainedTokenizer: loaded tokenizer.
+            PreTrainedTokenizer | PreTrainedTokenizerFast: loaded tokenizer.
         """
         return AutoTokenizer.from_pretrained(model_name)
 

@@ -17,6 +17,7 @@ def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, pa
         path (Path): output checkpoint path.
         **kwargs: extra entries merged into the checkpoint dict.
     """
+    raise NotImplementedError("Checkpoint saving is not implemented yet. Wire this into the training loop.")
 
 
 def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, path: Path, map_location: str = "cpu") -> dict[str, Any]:
@@ -31,3 +32,4 @@ def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, pa
     Returns:
         dict[str, Any]: full checkpoint dict.
     """
+    raise NotImplementedError("Checkpoint loading is not implemented yet. Wire this into the training loop.")

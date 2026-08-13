@@ -19,6 +19,7 @@ class GatedDeltaNetBlock(nn.Module):
         layer_idx (int): layer index for compatibility with config-driven stacks.
     """
     def __init__(self, config: Any, layer_idx: int) -> None:
+        super().__init__()
         self.layer_idx = layer_idx
         self.hidden_size = getattr(config, "hidden_size", 2560)
         self.norm = RMSNorm(self.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6))

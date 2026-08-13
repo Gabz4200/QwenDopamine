@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from qwendopamine.models.blocks import build_block
-from qwendopamine.models.embeddings import TokenEmbeddings, PositionEmbeddings
+from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
 from qwendopamine.models.normalization import RMSNorm
 from qwendopamine.models.output_head import LMHead
 
@@ -73,16 +73,18 @@ def build_model(config: Any) -> nn.Module:
     return ResearchDecoder(config)
 
 
-def build_reference_model(config: Any, **kwargs: Any) -> nn.Module:
+def build_reference_model(config: Any, quantization_config: Any = None, device_map: str = "cpu", **kwargs: Any) -> nn.Module:
     r"""Load a reference Hugging Face causal-LM model, optionally with quantization.
 
     This helper is intended for baseline comparisons against the research decoder.
 
     Args:
         config: any object with ``base_model`` and HF loader kwargs.
-        **kwargs: additional keyword arguments passed to
-            :meth:`HFIntegration.load_model`, such as ``quantization_config``
-            and ``device_map``.
+        quantization_config: optional quantization config forwarded to
+            :meth:`HFIntegration.load_model`.
+        device_map: device placement string. Default: ``"cpu"``.
+        **kwargs: additional keyword arguments forwarded to
+            :meth:`HFIntegration.load_model`.
 
     Returns:
         nn.Module: Hugging Face pretrained causal language model.
@@ -90,7 +92,7 @@ def build_reference_model(config: Any, **kwargs: Any) -> nn.Module:
     from qwendopamine.integrations.huggingface import HFIntegration
     return HFIntegration.load_model(
         model_name=config.base_model,
-        quantization_config=kwargs.pop("quantization_config", None),
-        device_map=kwargs.pop("device_map", "cpu"),
+        quantization_config=quantization_config,
+        device_map=device_map,
         **kwargs,
     )

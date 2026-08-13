@@ -5,7 +5,7 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -23,6 +23,14 @@ class TrainConfig:
     """
 
 
+def _infer_autocast_device(model: nn.Module) -> str:
+    """Return the device type string for ``torch.autocast`` from the model."""
+    try:
+        return next(model.parameters()).device.type
+    except StopIteration:
+        return "cpu"
+
+
 class TrainingLoop:
     r"""Minimal training loop with gradient accumulation and mixed precision.
 
@@ -38,7 +46,7 @@ class TrainingLoop:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.config = config
-        self.scaler = GradScaler(enabled=config.mixed_precision == "fp16")
+        self.scaler = GradScaler(_infer_autocast_device(model), enabled=config.mixed_precision == "fp16")
         self.global_step = 0
 
     def run(self, train_loader: Any) -> None:
@@ -51,10 +59,11 @@ class TrainingLoop:
         accumulator = 0
 
         for batch in train_loader:
-            batch = self._move_to_device(batch)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.config.mixed_precision == "bf16"):
+            batch = self._move_to_device(self.model, batch)
+            autocast_device = _infer_autocast_device(self.model)
+            with torch.autocast(device_type=autocast_device, dtype=torch.bfloat16, enabled=self.config.mixed_precision == "bf16"):
                 outputs = self.model(**batch)
-                loss = outputs.get("loss") if isinstance(outputs, dict) else outputs.loss
+                loss = outputs.get("loss") if isinstance(outputs, dict) else getattr(outputs, "loss", None)
                 assert loss is not None
                 loss = loss / self.config.grad_accum_steps
 
@@ -75,16 +84,17 @@ class TrainingLoop:
         self.scaler.update()
 
     @staticmethod
-    def _move_to_device(batch: Any, device: torch.device | str = "cuda") -> Any:
-        r"""Recursively move tensors in a batch to ``device``.
+    def _move_to_device(model: nn.Module, batch: Any) -> Any:
+        r"""Recursively move tensors in a batch to the model's device.
 
         Args:
+            model (nn.Module): model whose device the batch is moved to.
             batch (Any): tensor, dict of tensors, or nested structure.
-            device (torch.device | str): target device. Default: ``"cuda"``.
 
         Returns:
-            Any: batch with tensors moved to ``device``.
+            Any: batch with tensors moved to the model's device.
         """
+        device = next(model.parameters()).device
         if isinstance(batch, torch.Tensor):
             return batch.to(device)
         if isinstance(batch, dict):

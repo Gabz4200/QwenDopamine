@@ -5,6 +5,14 @@ from typing import Any
 import torch
 
 
+def _get_model_device(model: torch.nn.Module) -> torch.device:
+    """Return the device of the first model parameter."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
 def layerwise_stats(model: torch.nn.Module, dataloader: Any, max_steps: int = 50) -> dict[str, float]:
     r"""Collect per-layer activation statistics from one forward pass.
 
@@ -22,11 +30,12 @@ def layerwise_stats(model: torch.nn.Module, dataloader: Any, max_steps: int = 50
     """
     model.eval()
     stats: dict[str, float] = {}
+    device = _get_model_device(model)
     with torch.no_grad():
         for step, batch in enumerate(dataloader):
             if step >= max_steps:
                 break
-            batch = {k: v.to(next(model.parameters()).device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             model(**batch)
             break
     return stats

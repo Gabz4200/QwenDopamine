@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from qwendopamine.integrations.huggingface import HFIntegration
 
 
-@hydra.main(version_base="1.3", config_path="../../configs", config_name="train/cpu")
+@hydra.main(version_base="1.3", config_path=str(Path(__file__).resolve().parent.parent.parent / "configs"), config_name="train/cpu")
 def main(config: DictConfig) -> None:
     r"""Training CLI entrypoint.
 

@@ -2,8 +2,6 @@ r"""GGUF weight loading and conversion utilities."""
 
 from __future__ import annotations
 
-r"""GGUF weight loading and conversion utilities."""
-
 import os
 from typing import Any
 
@@ -153,6 +151,12 @@ def load_qwen35_from_gguf(
     **kwargs: Any,
 ) -> Any:
     r"""Load Qwen3.5 from standard HF weights by default, or from GGUF.
+
+    Non-standard GGUF repos (for example ``unsloth/Qwen3.5-0.8B-MTP-GGUF``)
+    often lack ``model_type`` in ``config.json``, so they cannot be loaded
+    directly with :meth:`transformers.AutoConfig.from_pretrained`. This loader
+    always builds a base HF model first (``Qwen/Qwen3.5-0.8B``) and then
+    overlays GGUF weights on top of it.
 
     Args:
         model_name (str): HF repo ID for the base model, a GGUF repo ID, or a

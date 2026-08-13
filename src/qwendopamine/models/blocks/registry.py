@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from .experimental_block import ExperimentalBlock
+from .gdn2 import GatedDeltaNet2Block
 from .gdn_block import GatedDeltaNetBlock
 from .qwen_block import QwenDecoderLayer
 
 BLOCKS: dict[str, type] = {
     "qwen": QwenDecoderLayer,
     "gdn": GatedDeltaNetBlock,
+    "gdn2": GatedDeltaNet2Block,
     "experimental": ExperimentalBlock,
 }
 

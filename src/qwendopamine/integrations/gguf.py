@@ -155,14 +155,16 @@ def load_qwen35_from_gguf(
     Non-standard GGUF repos (for example ``unsloth/Qwen3.5-0.8B-MTP-GGUF``)
     often lack ``model_type`` in ``config.json``, so they cannot be loaded
     directly with :meth:`transformers.AutoConfig.from_pretrained`. This loader
-    always builds a base HF model first (``Qwen/Qwen3.5-0.8B``) and then
-    overlays GGUF weights on top of it.
+    builds a base HF model matching the size indicated in ``model_name`` and
+    then overlays GGUF weights on top of it.
 
     Args:
         model_name (str): HF repo ID for the base model, a GGUF repo ID, or a
-            path to a ``.gguf`` file.
-        config (Any, optional): optional pre-built config. Defaults to
-            ``Qwen/Qwen3.5-0.8B``.
+            path to a ``.gguf`` file. The repo name must contain a size token
+            such as ``0.8B``, ``1.7B``, ``4B``, etc., so the base model can
+            be inferred.
+        config (Any, optional): optional pre-built config. Defaults to the
+            config for the inferred base model.
         device_map (str): device placement string. Default: ``"cpu"``.
         **kwargs: extra keyword arguments forwarded to
             :meth:`HFIntegration.load_model`.
@@ -170,7 +172,8 @@ def load_qwen35_from_gguf(
     Returns:
         Any: HF model with weights loaded.
     """
-    base_model = "Qwen/Qwen3.5-0.8B"
+    size_token = model_name.split("-")[-1].replace("B", "")
+    base_model = f"Qwen/Qwen3.5-{size_token}B"
     if config is None:
         config = HFIntegration.load_config(base_model)
 
@@ -181,7 +184,7 @@ def load_qwen35_from_gguf(
         **kwargs,
     )
 
-    if model_name == base_model:
+    if model_name == base_model or model_name == base_model.replace("/", "-"):
         return model
 
     if model_name.endswith(".gguf"):

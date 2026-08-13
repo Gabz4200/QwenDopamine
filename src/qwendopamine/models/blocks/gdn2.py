@@ -207,6 +207,23 @@ class GDN2Mixer(nn.Module):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
 
+    def _apply_output_projection(self, out: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+        r"""Apply gated output norm and final projection.
+
+        Shared between the inline chunk branch and :func:`dispatch_gdn2`
+        to keep the post-kernel logic in one place.
+
+        Args:
+            out: raw kernel output of shape ``[B, T, value_dim]``.
+            hidden_states: original input, used to compute the gate.
+
+        Returns:
+            Output tensor of shape ``[B, T, hidden_size]``.
+        """
+        g = self.g_proj(hidden_states)
+        out = self.o_norm(out) * F.silu(g)
+        return self.o_proj(out)
+
     def forward(self, hidden_states: torch.Tensor, **kwargs: object) -> torch.Tensor:
         r"""Run the GDN-2 token mixer.
 
@@ -247,9 +264,7 @@ class GDN2Mixer(nn.Module):
                 scale=self.head_dim**-0.5, chunk_size=64, cu_seqlens=None,
             )
             out = o.transpose(1, 2).contiguous().view(B, T, self.value_dim)
-            g = self.g_proj(hidden_states)
-            out = self.o_norm(out) * F.silu(g)
-            return self.o_proj(out)
+            return self._apply_output_projection(out, hidden_states)
 
         return _gated_delta_rule_2_fallback(self, hidden_states, proj)
 

@@ -70,7 +70,8 @@ class HFIntegration:
         Args:
             model_name (str): repo id, local path, or GGUF file path.
             quantization_config (Any, optional): quantization config. When
-                ``None``, :meth:`make_quantization_config` is used with defaults.
+                ``None``, :meth:`make_quantization_config` creates an ``int8``
+                config with CPU offload automatically.
             device_map (str): device placement map. Default: ``"cpu"``.
             from_gguf (bool): force GGUF loading. Default: ``False``.
             **kwargs: extra keyword arguments forwarded to

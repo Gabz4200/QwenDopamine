@@ -7,10 +7,39 @@ Expected hardware: 2x T4 or P100 on Kaggle.
 Expected runtime: ~5-10 minutes for the full notebook.
 """
 
-import os
+import importlib.metadata
+import subprocess
 import sys
 import time
-from pathlib import Path
+
+REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
+PIP_REPO_URL = "git+" + REPO_URL
+
+def _is_qwendopamine_installed() -> bool:
+    try:
+        importlib.metadata.version("qwendopamine")
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+print("[setup] Checking qwendopamine import...")
+if _is_qwendopamine_installed():
+    import qwendopamine
+    print(f"[setup] qwendopamine {qwendopamine.__version__} already installed")
+else:
+    print(f"[setup] Installing from {PIP_REPO_URL} ...")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade-strategy", "only-if-needed", PIP_REPO_URL],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    import qwendopamine
+    print(f"[setup] Installed qwendopamine {qwendopamine.__version__}")
 
 import torch
 from torch import nn
@@ -18,30 +47,6 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from qwendopamine.blocks import GatedDeltaNet2Block
 from qwendopamine.models.normalization import RMSNorm
-
-# ---------------------------------------------------------------------------
-# Cell 1: Install the package from GitHub
-# ---------------------------------------------------------------------------
-# Kaggle usually has internet disabled at runtime, but if you're running
-# this interactively or with internet enabled, uncomment the line below.
-# If torch is already installed on the machine, uv will keep it.
-#
-#   !pip install --quiet https://github.com/Gabz4200/QwenDopamine.git
-#
-# For local testing without internet, install beforehand with:
-#   pip install https://github.com/Gabz4200/QwenDopamine.git
-
-REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
-
-print("[setup] Checking qwendopamine import...")
-try:
-    import qwendopamine  # noqa: F401
-    print(f"[setup] qwendopamine {qwendopamine.__version__} already installed")
-except ImportError:
-    print(f"[setup] Installing from {REPO_URL} ...")
-    os.system(f"{sys.executable} -m pip install --quiet {REPO_URL}")
-    import qwendopamine
-    print(f"[setup] Installed qwendopamine {qwendopamine.__version__}")
 
 # ---------------------------------------------------------------------------
 # Cell 2: Device and dtype setup
@@ -85,47 +90,67 @@ except Exception as e:
     # A small slice of real public-domain text (Shakespeare, etc.)
     # This is real language, just much smaller.
     texts = [
-        "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer "
-        "The slings and arrows of outrageous fortune, Or to take arms against a sea of troubles "
-        "And by opposing end them. To die: to sleep; No more; and by a sleep to say we end "
-        "The heart-ache and the thousand natural shocks That flesh is heir to: 'tis a consummation "
-        "Devoutly to be wish'd. To die, to sleep; To sleep: perchance to dream: ay, there's the rub; "
-        "For in that sleep of death what dreams may come When we have shuffled off this mortal coil, "
-        "Must give us pause.",
-        "All the world's a stage, And all the men and women merely players; They have their exits "
-        "and their entrances, And one man in his time plays many parts, His acts being seven ages. "
-        "At first the infant, Mewling and puking in the nurse's arms; And then the whining schoolboy, "
-        "with his satchel And shining morning face, creeping like snail Unwillingly to school.",
-        "Shall I compare thee to a summer's day? Thou art more lovely and more temperate: "
-        "Rough winds do shake the darling buds of May, And summer's lease hath all too short a date; "
-        "Sometime too hot the eye of heaven shines, And often is his gold complexion dimm'd; "
-        "And every fair from fair sometime declines, By chance, or nature's changing course untrimm'd.",
-        "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age "
-        "of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season "
-        "of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair.",
-        "Call me Ishmael. Some years ago, never mind how long precisely, having little or no money in "
-        "my purse, and nothing particular to interest me on shore, I thought I would sail about a little "
-        "and see the watery part of the world. It is a way I have of driving off the spleen and "
-        "regulating the circulation.",
-        "In the beginning God created the heaven and the earth. And the earth was without form, and "
-        "void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face "
-        "of the waters. And God said, Let there be light: and there was light. And God saw the light, "
-        "that it was good: and God divided the light from the darkness.",
-        "It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his "
-        "chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through "
-        "the glass doors of Victory Mansions, though not quickly enough to prevent a swirl of gritty "
-        "dust from entering along with him.",
-        "Mr. and Mrs. Dursley, of number four, Privet Drive, were proud to say that they were "
-        "perfectly normal, thank you very much. They were the last people you'd expect to be involved "
-        "in anything strange or mysterious, because they just didn't hold with such nonsense.",
-        "The man in black fled across the desert, and the gunslinger followed. The desert was the "
-        "apotheosis of all deserts, and the gunslinger had been in many. He was a creature of the "
-        "old world, a relic of a time when men walked the earth in search of something other than "
-        "their own reflections.",
-        "Sitting at his desk, Winston dipped his pen into the ink and stared at the blank page "
-        "before him. The telescreen on the wall was broadcasting a speech about the victories of "
-        "the Party, but he was not listening. His mind was on the forbidden thought that had crept "
-        "into his consciousness like a thief in the night.",
+        (
+            "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer "
+            "The slings and arrows of outrageous fortune, Or to take arms against a sea of troubles "
+            "And by opposing end them. To die: to sleep; No more; and by a sleep to say we end "
+            "The heart-ache and the thousand natural shocks That flesh is heir to: 'tis a consummation "
+            "Devoutly to be wish'd. To die, to sleep; To sleep: perchance to dream: ay, there's the rub; "
+            "For in that sleep of death what dreams may come When we have shuffled off this mortal coil, "
+            "Must give us pause."
+        ),
+        (
+            "All the world's a stage, And all the men and women merely players; They have their exits "
+            "and their entrances, And one man in his time plays many parts, His acts being seven ages. "
+            "At first the infant, Mewling and puking in the nurse's arms; And then the whining schoolboy, "
+            "with his satchel And shining morning face, creeping like snail Unwillingly to school."
+        ),
+        (
+            "Shall I compare thee to a summer's day? Thou art more lovely and more temperate: "
+            "Rough winds do shake the darling buds of May, And summer's lease hath all too short a date; "
+            "Sometime too hot the eye of heaven shines, And often is his gold complexion dimm'd; "
+            "And every fair from fair sometime declines, By chance, or nature's changing course untrimm'd."
+        ),
+        (
+            "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age "
+            "of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season "
+            "of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair."
+        ),
+        (
+            "Call me Ishmael. Some years ago, never mind how long precisely, having little or no money in "
+            "my purse, and nothing particular to interest me on shore, I thought I would sail about a little "
+            "and see the watery part of the world. It is a way I have of driving off the spleen and "
+            "regulating the circulation."
+        ),
+        (
+            "In the beginning God created the heaven and the earth. And the earth was without form, and "
+            "void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face "
+            "of the waters. And God said, Let there be light: and there was light. And God saw the light, "
+            "that it was good: and God divided the light from the darkness."
+        ),
+        (
+            "It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his "
+            "chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through "
+            "the glass doors of Victory Mansions, though not quickly enough to prevent a swirl of gritty "
+            "dust from entering along with him."
+        ),
+        (
+            "Mr. and Mrs. Dursley, of number four, Privet Drive, were proud to say that they were "
+            "perfectly normal, thank you very much. They were the last people you'd expect to be involved "
+            "in anything strange or mysterious, because they just didn't hold with such nonsense."
+        ),
+        (
+            "The man in black fled across the desert, and the gunslinger followed. The desert was the "
+            "apotheosis of all deserts, and the gunslinger had been in many. He was a creature of the "
+            "old world, a relic of a time when men walked the earth in search of something other than "
+            "their own reflections."
+        ),
+        (
+            "Sitting at his desk, Winston dipped his pen into the ink and stared at the blank page "
+            "before him. The telescreen on the wall was broadcasting a speech about the victories of "
+            "the Party, but he was not listening. His mind was on the forbidden thought that had crept "
+            "into his consciousness like a thief in the night."
+        ),
     ] * 200  # repeat to get enough data
     print(f"[data] Using embedded real text fallback ({len(texts)} passages)")
 

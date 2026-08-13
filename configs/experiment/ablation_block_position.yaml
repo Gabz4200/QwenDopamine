@@ -10,5 +10,4 @@ experiment:
     - experimental
     - qwen
     - qwen
-  block_layers: [3]
   new_block_scale: 0.001

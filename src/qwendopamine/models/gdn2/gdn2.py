@@ -375,17 +375,17 @@ class GatedDeltaNet2(nn.Module):
             return None, None
 
         if isinstance(past_key_values, Cache):
-            if (
-                hasattr(past_key_values, "has_previous_state")
-                and self.layer_idx is not None
-                and past_key_values.has_previous_state(self.layer_idx)
-            ):
-                layers = getattr(past_key_values, "layers", [])
-                if self.layer_idx < len(layers):
-                    layer_cache = layers[self.layer_idx]
-                    rec_state = getattr(layer_cache, "recurrent_states", [None])[0]
-                    conv_state = getattr(layer_cache, "conv_states", None)
-                    return rec_state, conv_state
+            layers = getattr(past_key_values, "layers", [])
+            if self.layer_idx is not None and self.layer_idx < len(layers):
+                layer_cache = layers[self.layer_idx]
+                rec_states = getattr(layer_cache, "recurrent_states", None)
+                rec_state = (
+                    rec_states[0]
+                    if rec_states is not None and len(rec_states) > 0
+                    else None
+                )
+                conv_state = getattr(layer_cache, "conv_states", None)
+                return rec_state, conv_state
             return None, None
 
         if isinstance(past_key_values, dict):

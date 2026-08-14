@@ -258,6 +258,7 @@ class GatedDeltaNet2(nn.Module):
     def __init__(
         self,
         hidden_size_or_config: int | Any = 2048,
+        hidden_size: int | None = None,
         layer_idx: int | None = None,
         expand_v: float = 1.0,
         head_dim: int = 128,
@@ -283,7 +284,7 @@ class GatedDeltaNet2(nn.Module):
             head_dim = getattr(
                 cfg,
                 "head_dim",
-                getattr(cfg, "head_size", hidden_size // num_heads),
+                getattr(cfg, "head_size", head_dim),
             )
             num_v_heads = getattr(
                 cfg,
@@ -300,17 +301,17 @@ class GatedDeltaNet2(nn.Module):
                 cfg, "allow_neg_eigval", allow_neg_eigval
             )
             expand_v = getattr(cfg, "expand_v", expand_v)
-        else:
-            hidden_size = kwargs.pop("hidden_size", int(hidden_size_or_config))
+        elif hidden_size is None:
+            hidden_size = int(hidden_size_or_config)
 
         self.hidden_size = hidden_size
-        self.num_heads = kwargs.pop("num_heads", num_heads)
-        self.head_k_dim = kwargs.pop("head_dim", head_dim)
-        self.num_v_heads = kwargs.pop("num_v_heads", num_v_heads or self.num_heads)
-        self.conv_size = kwargs.pop("conv_size", conv_size)
-        self.norm_eps = kwargs.pop("norm_eps", norm_eps)
-        self.allow_neg_eigval = kwargs.pop("allow_neg_eigval", allow_neg_eigval)
-        self.expand_v = kwargs.pop("expand_v", expand_v)
+        self.num_heads = num_heads
+        self.head_k_dim = head_dim
+        self.num_v_heads = num_v_heads or self.num_heads
+        self.conv_size = conv_size
+        self.norm_eps = norm_eps
+        self.allow_neg_eigval = allow_neg_eigval
+        self.expand_v = expand_v
 
         self.layer_idx = layer_idx
         self.mode = mode

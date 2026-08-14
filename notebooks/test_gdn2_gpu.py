@@ -29,7 +29,15 @@ if _is_qwendopamine_installed():
 else:
     print(f"[setup] Installing from {PIP_REPO_URL} ...")
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade-strategy", "only-if-needed", PIP_REPO_URL],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade-strategy",
+            "only-if-needed",
+            PIP_REPO_URL,
+        ],
         capture_output=True,
         text=True,
         check=True,
@@ -84,7 +92,7 @@ try:
     ds_iter = iter(ds.take(NUM_TRAIN_EXAMPLES))
     texts = [row["text"] for row in ds_iter if row["text"].strip()]
     print(f"[data] Loaded {len(texts)} real stories from TinyStories")
-except Exception as e:
+except (OSError, RuntimeError, ValueError, ImportError) as e:
     print(f"[data] Could not load dataset ({e}); using embedded real text fallback")
     USE_DATASET = False
     # A small slice of real public-domain text (Shakespeare, etc.)
@@ -345,7 +353,7 @@ sample_text = tokenizer.decode(sample_input)
 print(f"\n[sample] Real text from dataset:\n{sample_text[:200]}...")
 
 print("\n[summary]")
-print(f"  Model: TinyGDN2LM (1x GatedDeltaNet2Block)")
+print("  Model: TinyGDN2LM (1x GatedDeltaNet2Block)")
 print(f"  Params: {total_params:,}")
 print(f"  Device: {device}")
 print(f"  Data: {'TinyStories' if USE_DATASET else 'embedded real text'}")

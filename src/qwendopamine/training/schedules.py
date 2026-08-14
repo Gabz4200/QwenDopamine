@@ -7,7 +7,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 
-def build_scheduler(optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5, **kwargs: Any) -> LRScheduler:
+def build_scheduler(optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5) -> LRScheduler:
     r"""Build a learning-rate scheduler with linear warmup.
 
     Currently supports ``"cosine"`` with linear warmup.
@@ -17,7 +17,6 @@ def build_scheduler(optimizer: Optimizer, name: str, warmup_steps: int = 2000, m
         name (str): scheduler name. Accepted values: ``"cosine"``.
         warmup_steps (int): number of warmup steps. Default: ``2000``.
         min_lr (float): minimum learning rate after decay. Default: ``1e-5``.
-        **kwargs: extra keyword arguments reserved for future scheduler types.
 
     Returns:
         LRScheduler: wrapped scheduler with warmup.
@@ -49,6 +48,7 @@ class LinearWarmupScheduler(LRScheduler):
         self.min_lr = min_lr
         self.step_count = 0
         super().__init__(optimizer)
+        self.step_count = 0
 
     def step(self, epoch: int | None = None) -> None:
         r"""Step the scheduler.

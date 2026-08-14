@@ -24,7 +24,7 @@ def main(config: DictConfig) -> None:
         quantization_config=quantization_config,
         device_map=config.train.device or "cpu",
     )
-    print(f"Model loaded with quantization={quantization_config is not None}")
+    print(f"Model {type(model).__name__} loaded with quantization={quantization_config is not None}")
 
 
 if __name__ == "__main__":

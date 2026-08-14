@@ -54,9 +54,8 @@ class TrainingLoop:
             train_loader (Any): iterable yielding training batches.
         """
         self.model.train()
-        accum = 0  # noqa: SIM113
-
-        for batch in train_loader:
+        accum = 0
+        for accum, batch in enumerate(train_loader, start=1):
             batch = self._move_to_device(self.model, batch)
             autocast_device = get_model_device(self.model).type
             with torch.autocast(
@@ -65,12 +64,10 @@ class TrainingLoop:
                 enabled=self.mixed_precision in ("bf16", "fp16"),
             ):
                 outputs = self.model(**batch)
-                loss = outputs.get("loss") if isinstance(outputs, dict) else getattr(outputs, "loss", None)
-                assert loss is not None
+                loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
                 loss = loss / self.config.grad_accum_steps
 
             self.scaler.scale(loss).backward()  # type: ignore[arg-type]
-            accum += 1
 
             if accum % self.config.grad_accum_steps == 0:
                 self._optimizer_step()
@@ -96,10 +93,7 @@ class TrainingLoop:
         Returns:
             Any: batch with tensors moved to the model's device.
         """
-        try:
-            device = next(model.parameters()).device
-        except StopIteration:
-            device = torch.device("cpu")
+        device = get_model_device(model)
         if isinstance(batch, torch.Tensor):
             return batch.to(device)
         if isinstance(batch, dict):

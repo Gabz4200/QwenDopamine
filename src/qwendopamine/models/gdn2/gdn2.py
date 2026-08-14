@@ -25,6 +25,11 @@ from einops import rearrange, repeat
 from torch import nn
 from transformers.cache_utils import Cache
 
+try:
+    from transformers.cache_utils import LinearAttentionCacheLayerMixin
+except ImportError:
+    LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
+
 # Module-level single-warning guard for CPU fallback
 _WARNED_FALLBACKS: set[str] = set()
 
@@ -403,13 +408,21 @@ class GatedDeltaNet2(nn.Module):
         if self.layer_idx is not None and isinstance(past_key_values, Cache):
             layers = getattr(past_key_values, "layers", [])
             if self.layer_idx < len(layers):
+                layer_cache = layers[self.layer_idx]
+                is_recurrent_layer = (
+                    isinstance(layer_cache, LinearAttentionCacheLayerMixin)
+                    or hasattr(layer_cache, "update_recurrent_state")
+                    or hasattr(layer_cache, "recurrent_states")
+                )
                 if (
-                    hasattr(past_key_values, "update_recurrent_state")
+                    is_recurrent_layer
+                    and hasattr(past_key_values, "update_recurrent_state")
                     and recurrent_state is not None
                 ):
                     past_key_values.update_recurrent_state(recurrent_state, self.layer_idx)
                 if (
-                    hasattr(past_key_values, "update_conv_state")
+                    is_recurrent_layer
+                    and hasattr(past_key_values, "update_conv_state")
                     and conv_state is not None
                 ):
                     c_state = conv_state[0] if isinstance(conv_state, (tuple, list)) else conv_state
@@ -469,13 +482,16 @@ class GatedDeltaNet2(nn.Module):
             k = F.silu(self.k_proj(hidden_states))
             v = F.silu(self.v_proj(hidden_states))
 
+        # Log decay computation
         g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
             self.f_proj(hidden_states).float() + self.dt_bias.repeat_interleave(self.head_k_dim)
         )
 
+        # Gates
         b = self.b_proj(hidden_states).sigmoid()
         w = self.w_proj(hidden_states).sigmoid()
 
+        # Reshape to head dimensions
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
         k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
         g = rearrange(g, "... (h d) -> ... h d", d=self.head_k_dim)
@@ -567,6 +583,7 @@ class GatedDeltaNet2(nn.Module):
                     use_qk_l2norm_in_kernel=True,
                 )
 
+        # Update cache
         if use_cache or past_key_values is not None:
             self._update_cache(
                 past_key_values,
@@ -578,6 +595,7 @@ class GatedDeltaNet2(nn.Module):
                 ),
             )
 
+        # Output normalization and projection
         z = rearrange(
             self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
         )

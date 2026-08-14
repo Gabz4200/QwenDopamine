@@ -9,6 +9,7 @@ from typing import Any
 
 @dataclass
 class GDN2Config:
+    name: str = ""
     hidden_size: int = 2048
     num_heads: int = 16
     head_dim: int = 128
@@ -28,7 +29,6 @@ class GDN2Config:
                 f"Unknown config name '{name}'. Available configs: {list(name_to_config.keys())}"
             )
         conf_dict: dict[str, Any] = name_to_config[name].copy()
-        conf_dict.pop("name", None)
         conf_dict.update(kwargs)
         return cls(**conf_dict)
 

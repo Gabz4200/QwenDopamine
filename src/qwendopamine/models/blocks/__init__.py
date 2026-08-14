@@ -3,6 +3,8 @@
 from qwendopamine.models.blocks.gdn_block import (
     GatedDeltaNet2Block,
     GatedDeltaNetBlock,
+    GatedSurpriseNetAdam,
+    GatedSurpriseNetBlock,
     Qwen3_5GatedDeltaNet,
 )
 from qwendopamine.models.blocks.qwen_block import (
@@ -15,6 +17,8 @@ __all__ = [
     "BLOCKS",
     "GatedDeltaNet2Block",
     "GatedDeltaNetBlock",
+    "GatedSurpriseNetAdam",
+    "GatedSurpriseNetBlock",
     "Qwen3_5DecoderLayer",
     "Qwen3_5GatedDeltaNet",
     "QwenDecoderLayer",

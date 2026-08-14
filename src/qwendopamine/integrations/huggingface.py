@@ -142,6 +142,60 @@ class Qwen35GDN2HFConfig(GDN2HFConfig):
     model_type = "qwen35_gdn2"
 
 
+class GatedSurpriseNetHFConfig(_BaseConfig):
+    r"""Hugging Face PreTrainedConfig adapter for GatedSurpriseNetAdam configuration."""
+
+    model_type = "gated_surprise_net"
+
+    def __init__(
+        self,
+        hidden_size: int = 2048,
+        num_heads: int = 16,
+        head_dim: int = 128,
+        num_v_heads: int | None = None,
+        expand_v: float = 1.0,
+        conv_size: int = 4,
+        conv_bias: bool = False,
+        allow_neg_eigval: bool = False,
+        norm_eps: float = 1e-5,
+        local_adam_lr: float = 1e-3,
+        local_adam_beta1: float = 0.9,
+        local_adam_beta2: float = 0.999,
+        local_adam_eps: float = 1e-8,
+        nll_var_eps: float = 1e-6,
+        nll_full: bool = False,
+        learnable_init_state: bool = False,
+        train_chunk_size: int = 128,
+        vocab_size: int = 32000,
+        **kwargs: Any,
+    ) -> None:
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.num_v_heads = num_v_heads
+        self.expand_v = expand_v
+        self.conv_size = conv_size
+        self.conv_bias = conv_bias
+        self.allow_neg_eigval = allow_neg_eigval
+        self.norm_eps = norm_eps
+        self.local_adam_lr = local_adam_lr
+        self.local_adam_beta1 = local_adam_beta1
+        self.local_adam_beta2 = local_adam_beta2
+        self.local_adam_eps = local_adam_eps
+        self.nll_var_eps = nll_var_eps
+        self.nll_full = nll_full
+        self.learnable_init_state = learnable_init_state
+        self.train_chunk_size = train_chunk_size
+        self.vocab_size = vocab_size
+        super().__init__(**kwargs)
+
+
+class Qwen35GatedSurpriseNetHFConfig(GatedSurpriseNetHFConfig):
+    r"""Hugging Face PreTrainedConfig adapter for Qwen3.5 GatedSurpriseNet variant."""
+
+    model_type = "qwen35_gated_surprise_net"
+
+
 class GDN2HFBlock(nn.Module):
     r"""Hugging Face compatible nn.Module block wrapper around GatedDeltaNet2."""
 
@@ -180,13 +234,99 @@ class GDN2HFBlock(nn.Module):
         )
 
 
+class GatedSurpriseNetHFBlock(nn.Module):
+    r"""Hugging Face compatible nn.Module block wrapper around GatedSurpriseNetAdam."""
+
+    def __init__(
+        self,
+        config: PreTrainedConfig | dict[str, Any] | Any,
+        layer_idx: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__()
+        from qwendopamine.models.gated_surprise_net import GatedSurpriseNetAdam
+
+        if isinstance(config, GatedSurpriseNetHFConfig):
+            self.config: GatedSurpriseNetHFConfig = config
+        elif isinstance(config, dict):
+            self.config = GatedSurpriseNetHFConfig(**config)
+        else:
+            attrs = {
+                k: getattr(config, k)
+                for k in [
+                    "hidden_size",
+                    "num_heads",
+                    "head_dim",
+                    "num_v_heads",
+                    "expand_v",
+                    "conv_size",
+                    "conv_bias",
+                    "allow_neg_eigval",
+                    "norm_eps",
+                    "local_adam_lr",
+                    "local_adam_beta1",
+                    "local_adam_beta2",
+                    "local_adam_eps",
+                    "nll_var_eps",
+                    "nll_full",
+                    "learnable_init_state",
+                    "train_chunk_size",
+                ]
+                if hasattr(config, k)
+            }
+            self.config = GatedSurpriseNetHFConfig(**attrs)
+
+        self.layer_idx = layer_idx
+        kwargs_dict = {
+            "hidden_size": getattr(self.config, "hidden_size", 2048),
+            "num_heads": getattr(self.config, "num_heads", 16),
+            "head_dim": getattr(self.config, "head_dim", 128),
+            "num_v_heads": getattr(self.config, "num_v_heads", None),
+            "expand_v": getattr(self.config, "expand_v", 1.0),
+            "conv_size": getattr(self.config, "conv_size", 4),
+            "conv_bias": getattr(self.config, "conv_bias", False),
+            "allow_neg_eigval": getattr(self.config, "allow_neg_eigval", False),
+            "norm_eps": getattr(self.config, "norm_eps", 1e-5),
+            "local_adam_lr": getattr(self.config, "local_adam_lr", 1e-3),
+            "local_adam_beta1": getattr(self.config, "local_adam_beta1", 0.9),
+            "local_adam_beta2": getattr(self.config, "local_adam_beta2", 0.999),
+            "local_adam_eps": getattr(self.config, "local_adam_eps", 1e-8),
+            "nll_var_eps": getattr(self.config, "nll_var_eps", 1e-6),
+            "nll_full": getattr(self.config, "nll_full", False),
+            "learnable_init_state": getattr(self.config, "learnable_init_state", False),
+            "train_chunk_size": getattr(self.config, "train_chunk_size", 128),
+        }
+        kwargs_dict.update(kwargs)
+        self.mixer = GatedSurpriseNetAdam(layer_idx=layer_idx, **kwargs_dict)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values: Any = None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, Any]:
+        return self.mixer(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            **kwargs,
+        )
+
+
 class HFIntegration:
     @staticmethod
     def register_gdn2_hf() -> None:
-        r"""Register GDN2HFConfig and Qwen35GDN2HFConfig with AutoConfig."""
+        r"""Register GDN2HFConfig, Qwen35GDN2HFConfig, GatedSurpriseNetHFConfig with AutoConfig."""
         if AutoConfig is not None and hasattr(AutoConfig, "register"):
             AutoConfig.register("gdn2", GDN2HFConfig, exist_ok=True)
             AutoConfig.register("qwen35_gdn2", Qwen35GDN2HFConfig, exist_ok=True)
+            AutoConfig.register("gated_surprise_net", GatedSurpriseNetHFConfig, exist_ok=True)
+            AutoConfig.register("qwen35_gated_surprise_net", Qwen35GatedSurpriseNetHFConfig, exist_ok=True)
 
     @staticmethod
     def build_gdn2_hf_config(
@@ -209,6 +349,51 @@ class HFIntegration:
     ) -> GDN2HFBlock:
         r"""Build a Hugging Face compatible GDN2HFBlock module."""
         return GDN2HFBlock(config=config, layer_idx=layer_idx, **kwargs)
+
+    @staticmethod
+    def build_gated_surprise_net_hf_config(
+        config_or_dict: dict[str, Any] | Any = None,
+        **kwargs: Any,
+    ) -> GatedSurpriseNetHFConfig:
+        r"""Build a GatedSurpriseNetHFConfig instance."""
+        data: dict[str, Any] = {}
+        if isinstance(config_or_dict, dict):
+            data.update(config_or_dict)
+        elif config_or_dict is not None:
+            data.update({
+                k: getattr(config_or_dict, k)
+                for k in [
+                    "hidden_size",
+                    "num_heads",
+                    "head_dim",
+                    "num_v_heads",
+                    "expand_v",
+                    "conv_size",
+                    "conv_bias",
+                    "allow_neg_eigval",
+                    "norm_eps",
+                    "local_adam_lr",
+                    "local_adam_beta1",
+                    "local_adam_beta2",
+                    "local_adam_eps",
+                    "nll_var_eps",
+                    "nll_full",
+                    "learnable_init_state",
+                    "train_chunk_size",
+                ]
+                if hasattr(config_or_dict, k)
+            })
+        data.update(kwargs)
+        return GatedSurpriseNetHFConfig(**data)
+
+    @staticmethod
+    def build_gated_surprise_net_hf_block(
+        config: PreTrainedConfig | dict[str, Any] | Any,
+        layer_idx: int | None = None,
+        **kwargs: Any,
+    ) -> GatedSurpriseNetHFBlock:
+        r"""Build a Hugging Face compatible GatedSurpriseNetHFBlock module."""
+        return GatedSurpriseNetHFBlock(config=config, layer_idx=layer_idx, **kwargs)
 
     @staticmethod
     def make_quantization_config(

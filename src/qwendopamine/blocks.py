@@ -5,6 +5,8 @@ from __future__ import annotations
 from qwendopamine.models.blocks import (
     GatedDeltaNet2Block,
     GatedDeltaNetBlock,
+    GatedSurpriseNetAdam,
+    GatedSurpriseNetBlock,
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
     QwenDecoderLayer,
@@ -13,6 +15,8 @@ from qwendopamine.models.blocks import (
 __all__ = [
     "GatedDeltaNet2Block",
     "GatedDeltaNetBlock",
+    "GatedSurpriseNetAdam",
+    "GatedSurpriseNetBlock",
     "Qwen3_5DecoderLayer",
     "Qwen3_5GatedDeltaNet",
     "QwenDecoderLayer",

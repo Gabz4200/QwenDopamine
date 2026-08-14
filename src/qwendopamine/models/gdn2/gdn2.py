@@ -3,21 +3,18 @@
 
 r"""GDN-2 (Gated DeltaNet 2) hardware-agnostic token-mixing layer.
 
-This module defines `GatedDeltaNet2`, the `nn.Module` that wraps the GDN-2
-recurrence into a drop-in token mixer for Qwen-style Transformer blocks. It
-supports both GPU (accelerated via Triton/FLA when available) and CPU/device-agnostic
-execution via pure PyTorch reference fallbacks.
+This module defines `GatedDeltaNet2`, the `nn.Module` that wraps the GDN-2 recurrence into
+a drop-in token mixer for Qwen-style Transformer blocks. It supports both GPU (accelerated
+via Triton/FLA when available) and CPU/device-agnostic execution via pure PyTorch reference fallbacks.
 
-GDN-2 extends KDA's scalar-beta erase gate to channel-wise erase (`b`) and write (`w`)
-gates:
-
+GDN-2 extends KDA's scalar-beta erase gate to channel-wise erase (`b`) and write (`w`) gates:
     S_t = (I - k_t (b_t \odot k_t)^T) \text{Diag}(\exp(g_t)) S_{t-1} + k_t (w_t \odot v_t)^T
 """
 
 from __future__ import annotations
 
 import warnings
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import torch
 import torch.nn.functional as F
@@ -80,7 +77,7 @@ def torch_recurrent_gdn2(
         b: Erase gate tensor of shape `[B, T, H, d_k]`.
         w: Write gate tensor of shape `[B, T, H, d_v]`.
         initial_state: Optional recurrent state tensor of shape `[B, H, d_k, d_v]`.
-        output_final_state: Whether to return the final state tensor.
+        output_final_state: Whether to return the final state.
         use_qk_l2norm_in_kernel: Whether to apply L2 normalization to queries and keys.
 
     Returns:
@@ -88,53 +85,52 @@ def torch_recurrent_gdn2(
     """
     batch_size, seq_len, num_heads, d_k = q.shape
     d_v = v.shape[-1]
-
     dtype = q.dtype
-    q_f = q.float()
-    k_f = k.float()
-    v_f = v.float()
-    g_f = g.float()
+
+    q = q.float()
+    k = k.float()
+    v = v.float()
+    g = g.float()
     b_f = b.float()
     w_f = w.float()
 
     if use_qk_l2norm_in_kernel:
-        q_f = F.normalize(q_f, p=2, dim=-1, eps=1e-6)
-        k_f = F.normalize(k_f, p=2, dim=-1, eps=1e-6)
+        q = F.normalize(q, p=2, dim=-1, eps=1e-6)
+        k = F.normalize(k, p=2, dim=-1, eps=1e-6)
 
     scale = d_k**-0.5
-    q_f = q_f * scale
+    q = q * scale
 
-    if initial_state is not None:
-        state = initial_state.float()
-    else:
+    if initial_state is None:
         state = torch.zeros(
             batch_size, num_heads, d_k, d_v, dtype=torch.float32, device=q.device
         )
+    else:
+        state = initial_state.float()
 
     outputs = []
-    exp_g = torch.exp(g_f)
+    exp_g = torch.exp(g)
 
     for t in range(seq_len):
-        q_t = q_f[:, t]
-        k_t = k_f[:, t]
-        v_t = v_f[:, t]
-        g_t = exp_g[:, t]
-        b_t = b_f[:, t]
-        w_t = w_f[:, t]
+        q_t = q[:, t]  # [B, H, d_k]
+        k_t = k[:, t]  # [B, H, d_k]
+        v_t = v[:, t]  # [B, H, d_v]
+        g_t = exp_g[:, t]  # [B, H, d_k]
+        b_t = b_f[:, t]  # [B, H, d_k]
+        w_t = w_f[:, t]  # [B, H, d_v]
 
         # 1. Decay state along key channels
         state = state * g_t.unsqueeze(-1)
 
         # 2. Memory read with erase gate
-        k_erase = b_t * k_t
-        v_read = torch.einsum("bhkv,bhk->bhv", state, k_erase)
+        erase_k = b_t * k_t
+        v_read = torch.einsum("bhkv,bhk->bhv", state, erase_k)
 
         # 3. Delta value with write gate
-        v_write = w_t * v_t
-        delta = v_write - v_read
+        v_write = w_t * v_t - v_read
 
-        # 4. Update state: S_t = S_{t-1} + k_t delta^T
-        state = state + torch.einsum("bhk,bhv->bhkv", k_t, delta)
+        # 4. Update state: S_t = S_{t-1} + k_t \delta^T
+        state = state + k_t.unsqueeze(-1) * v_write.unsqueeze(-2)
 
         # 5. Output read: o_t = S_t^T q_t
         out_t = torch.einsum("bhkv,bhk->bhv", state, q_t)
@@ -142,6 +138,7 @@ def torch_recurrent_gdn2(
 
     out = torch.stack(outputs, dim=1).to(dtype)
     final_state = state.to(dtype) if output_final_state else None
+
     return out, final_state
 
 
@@ -211,6 +208,11 @@ class ShortConvolution(nn.Module):
         _, t, d = x.shape
         x_t = x.transpose(1, 2)  # [B, D, T]
 
+        if cache is None and output_final_state and t == 1:
+            cache = torch.zeros(
+                x.shape[0], d, self.kernel_size - 1, device=x.device, dtype=x.dtype
+            )
+
         if cache is not None and t == 1:
             x_cat = torch.cat([cache, x_t], dim=-1)
             new_cache = x_cat[:, :, 1:] if output_final_state else None
@@ -259,12 +261,12 @@ class GatedDeltaNet2(nn.Module):
         self,
         hidden_size_or_config: int | Any = 2048,
         hidden_size: int | None = None,
+        num_heads: int | None = None,
+        head_dim: int | None = None,
         layer_idx: int | None = None,
-        expand_v: float = 1.0,
-        head_dim: int = 128,
-        num_heads: int = 16,
-        num_v_heads: int | None = None,
         mode: Literal["chunk", "fused_recurrent"] = "chunk",
+        expand_v: float = 1.0,
+        num_v_heads: int | None = None,
         use_short_conv: bool = True,
         allow_neg_eigval: bool = False,
         conv_size: int = 4,
@@ -279,17 +281,17 @@ class GatedDeltaNet2(nn.Module):
             hidden_size_or_config, "n_embd"
         ):
             cfg = hidden_size_or_config
-            hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", 2048))
-            num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", num_heads))
+            hidden_size = getattr(
+                cfg, "hidden_size", getattr(cfg, "n_embd", 2048)
+            )
+            num_heads = getattr(
+                cfg, "num_heads", getattr(cfg, "n_head", 16)
+            )
             head_dim = getattr(
-                cfg,
-                "head_dim",
-                getattr(cfg, "head_size", head_dim),
+                cfg, "head_dim", getattr(cfg, "head_size", 128)
             )
             num_v_heads = getattr(
-                cfg,
-                "num_v_heads",
-                getattr(cfg, "n_query_groups", num_v_heads or num_heads),
+                cfg, "num_v_heads", getattr(cfg, "n_query_groups", num_v_heads or num_heads)
             )
             conv_size = getattr(
                 cfg, "conv_size", getattr(cfg, "conv_kernel_size", conv_size)
@@ -305,22 +307,24 @@ class GatedDeltaNet2(nn.Module):
             hidden_size = int(hidden_size_or_config)
 
         self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.head_k_dim = head_dim
-        self.num_v_heads = num_v_heads or self.num_heads
-        self.conv_size = conv_size
-        self.norm_eps = norm_eps
-        self.allow_neg_eigval = allow_neg_eigval
-        self.expand_v = expand_v
-
+        self.num_heads = num_heads if num_heads is not None else 16
+        self.head_dim = head_dim if head_dim is not None else 128
+        self.num_v_heads = (
+            num_v_heads if num_v_heads is not None else self.num_heads
+        )
         self.layer_idx = layer_idx
         self.mode = mode
         self.use_short_conv = use_short_conv
+        self.allow_neg_eigval = allow_neg_eigval
+        self.conv_size = conv_size
         self.conv_bias = conv_bias
+        self.norm_eps = norm_eps
+        self.expand_v = expand_v
 
-        self.head_v_dim = int(self.head_k_dim * self.expand_v)
-        self.key_dim = self.num_heads * self.head_k_dim
-        self.value_dim = self.num_v_heads * self.head_v_dim
+        self.head_k_dim = self.head_dim
+        self.head_v_dim = int(self.head_dim * self.expand_v)
+        self.key_dim = int(self.num_heads * self.head_k_dim)
+        self.value_dim = int(self.num_v_heads * self.head_v_dim)
 
         # Projection layers
         self.q_proj = nn.Linear(self.hidden_size, self.key_dim, bias=False)
@@ -349,20 +353,21 @@ class GatedDeltaNet2(nn.Module):
         self.b_proj = nn.Linear(self.hidden_size, self.key_dim, bias=False)
         self.w_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
 
-        # Output gate projection
-        self.g_proj = nn.Sequential(
-            nn.Linear(self.hidden_size, self.value_dim, bias=False)
-        )
-
         # Decay-gate parameters
         self.A_log = nn.Parameter(
             torch.log(
-                torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.01, 16.0)
+                torch.empty(self.num_heads, dtype=torch.float32).uniform_(
+                    1, 16
+                )
             )
         )
         self.dt_bias = nn.Parameter(torch.ones(self.num_heads))
 
         # Output normalization and projection
+        self.g_proj = nn.Sequential(
+            nn.Linear(self.hidden_size, self.head_v_dim, bias=False),
+            nn.Linear(self.head_v_dim, self.value_dim, bias=True),
+        )
         self.o_norm = RMSNormGated(self.head_v_dim, eps=self.norm_eps)
         self.o_proj = nn.Linear(self.value_dim, self.hidden_size, bias=False)
 
@@ -370,7 +375,8 @@ class GatedDeltaNet2(nn.Module):
         self, past_key_values: Cache | dict[str, Any] | None
     ) -> tuple[
         torch.Tensor | None,
-        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None,
+        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
+        | None,
     ]:
         if past_key_values is None:
             return None, None
@@ -420,15 +426,17 @@ class GatedDeltaNet2(nn.Module):
                     and hasattr(past_key_values, "update_recurrent_state")
                     and recurrent_state is not None
                 ):
-                    past_key_values.update_recurrent_state(recurrent_state, self.layer_idx)
+                    past_key_values.update_recurrent_state(
+                        recurrent_state, self.layer_idx
+                    )
                 if (
                     is_recurrent_layer
                     and hasattr(past_key_values, "update_conv_state")
                     and conv_state is not None
                 ):
-                    c_state = conv_state[0] if isinstance(conv_state, (tuple, list)) else conv_state
-                    if c_state is not None:
-                        past_key_values.update_conv_state(c_state, self.layer_idx)
+                    past_key_values.update_conv_state(
+                        cast(Any, conv_state), self.layer_idx
+                    )
         elif isinstance(past_key_values, dict):
             if recurrent_state is not None:
                 past_key_values["recurrent_state"] = recurrent_state
@@ -485,7 +493,8 @@ class GatedDeltaNet2(nn.Module):
 
         # Log decay computation
         g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
-            self.f_proj(hidden_states).float() + self.dt_bias.repeat_interleave(self.head_k_dim)
+            self.f_proj(hidden_states).float()
+            + self.dt_bias.repeat_interleave(self.head_k_dim)
         )
 
         # Gates
@@ -501,12 +510,9 @@ class GatedDeltaNet2(nn.Module):
         w = rearrange(w, "... (h d) -> ... h d", d=self.head_v_dim)
 
         if self.num_v_heads > self.num_heads:
+            groups = self.num_v_heads // self.num_heads
             q, k, g, b = (
-                repeat(
-                    x,
-                    "... h d -> ... (h g) d",
-                    g=self.num_v_heads // self.num_heads,
-                )
+                repeat(x, "... h d -> ... (h g) d", g=groups)
                 for x in (q, k, g, b)
             )
 
@@ -514,13 +520,9 @@ class GatedDeltaNet2(nn.Module):
             b = b * 2.0
 
         # Dispatch kernel: Triton on CUDA if available, pure PyTorch otherwise
-        use_cuda_triton = (
-            hidden_states.is_cuda
-            and torch.cuda.is_available()
-            and _HAS_TRITON_OPS
-        )
-
+        use_cuda_triton = hidden_states.is_cuda and torch.cuda.is_available() and _HAS_TRITON_OPS
         o: torch.Tensor | None = None
+
         if use_cuda_triton:
             if mode == "chunk" and _triton_chunk_gdn2 is not None:
                 o, recurrent_state = _triton_chunk_gdn2(
@@ -597,12 +599,12 @@ class GatedDeltaNet2(nn.Module):
             )
 
         # Output normalization and projection
-        z = rearrange(
+        gate = rearrange(
             self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
         )
         assert o is not None
-        o = self.o_norm(o, z)
+        o = self.o_norm(o, gate)
         o = rearrange(o, "... h d -> ... (h d)")
-        o = self.o_proj(o)
+        out = self.o_proj(o)
 
-        return o, None, past_key_values
+        return out, None, past_key_values

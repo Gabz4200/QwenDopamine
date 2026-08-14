@@ -24,8 +24,11 @@ is optional here because GatedSurpriseNetAdam runs in pure-PyTorch mode).
 
 from __future__ import annotations
 
+import importlib.metadata
 import math
 import os
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +45,25 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 from transformers import AutoTokenizer
+
+REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
+PIP_REPO_URL = "git+" + REPO_URL
+
+
+def _is_qwendopamine_installed() -> bool:
+    try:
+        importlib.metadata.version("qwendopamine")
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+
+if not _is_qwendopamine_installed():
+    print(f"[setup] Installing qwendopamine from {PIP_REPO_URL}...")
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-deps", PIP_REPO_URL],
+        check=True,
+    )
 
 from qwendopamine.models.gated_surprise_net import SurpriseMemoryAdam
 from qwendopamine.models.model_factory import ResearchDecoder

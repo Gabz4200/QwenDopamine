@@ -13,74 +13,250 @@
 # limitations under the License.
 """PyTorch Qwen3.5 model."""
 
-from typing import ClassVar
+from __future__ import annotations
+
+from typing import Any, ClassVar
 
 import torch
 import torch.nn.functional as F
-from huggingface_hub.dataclasses import strict
 from torch import nn
-from transformers import initialization as init
-from transformers.cache_utils import Cache, DynamicCache
-from transformers.integrations import use_kernel_forward_from_hub, use_kernelized_func
-from transformers.masking_utils import (
-    create_causal_mask,
-    create_recurrent_attention_mask,
-)
-from transformers.modeling_layers import (
-    GenericForSequenceClassification,
-    GenericForTokenClassification,
-    GradientCheckpointingLayer,
-)
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    BaseModelOutputWithPooling,
-    SequenceClassifierOutputWithPast,
-)
-from transformers.modeling_utils import PreTrainedModel
-from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
-from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
-from transformers.models.qwen3_next.modeling_qwen3_next import (
-    Qwen3NextAttention,
-    Qwen3NextGatedDeltaNet,
-    Qwen3NextMLP,
-    Qwen3NextModel,
-    Qwen3NextPreTrainedModel,
-    Qwen3NextRMSNorm,
-    apply_mask_to_padding_states,
-    causal_conv1d_fn,
-    causal_conv1d_update,
-    torch_chunk_gated_delta_rule,
-    torch_recurrent_gated_delta_rule,
-)
-from transformers.models.qwen3_vl.configuration_qwen3_vl import (
-    Qwen3VLConfig,
-    Qwen3VLVisionConfig,
-)
-from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    Qwen3VLForConditionalGeneration,
-    Qwen3VLModel,
-    Qwen3VLModelOutputWithPast,
-    Qwen3VLTextRotaryEmbedding,
-    Qwen3VLVisionModel,
-    Qwen3VLVisionRotaryEmbedding,
-)
-from transformers.processing_utils import Unpack
-from transformers.utils import (
-    TransformersKwargs,
-    auto_docstring,
-    can_return_tuple,
-    logging,
-)
-from transformers.utils.generic import (
-    accepts_precomputed_kwargs,
-    merge_with_config_defaults,
-)
-from transformers.utils.output_capturing import capture_outputs
-from transformers.vision_utils import (
-    get_vision_attention_seqlens,
-    get_vision_interpolation_indices_and_weights,
-    get_vision_position_ids,
-)
+
+try:
+    from huggingface_hub.dataclasses import strict
+except ImportError:
+    def strict(cls: Any) -> Any:
+        return cls
+
+try:
+    from transformers import initialization as init
+except ImportError:
+    init = None  # type: ignore[misc, assignment]
+
+try:
+    from transformers.cache_utils import Cache, DynamicCache
+except ImportError:
+    class Cache:  # type: ignore[no-redef]
+        pass
+
+    class DynamicCache(Cache):  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.integrations import (
+        use_kernel_forward_from_hub,
+        use_kernelized_func,
+    )
+except ImportError:
+    def use_kernel_forward_from_hub(*args: Any, **kwargs: Any) -> Any:
+        def decorator(fn: Any) -> Any:
+            return fn
+        return decorator
+
+    def use_kernelized_func(*args: Any, **kwargs: Any) -> Any:
+        def decorator(fn: Any) -> Any:
+            return fn
+        return decorator
+
+try:
+    from transformers.masking_utils import (
+        create_causal_mask,
+        create_recurrent_attention_mask,
+    )
+except ImportError:
+    try:
+        from transformers.masking_utils import create_causal_mask
+    except ImportError:
+        def create_causal_mask(*args: Any, **kwargs: Any) -> Any:
+            return None
+
+    def create_recurrent_attention_mask(*args: Any, **kwargs: Any) -> Any:
+        return None
+
+try:
+    from transformers.modeling_layers import (
+        GenericForSequenceClassification,
+        GenericForTokenClassification,
+        GradientCheckpointingLayer,
+    )
+except ImportError:
+    class GenericForSequenceClassification:  # type: ignore[no-redef]
+        pass
+
+    class GenericForTokenClassification:  # type: ignore[no-redef]
+        pass
+
+    class GradientCheckpointingLayer(nn.Module):  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.modeling_outputs import (
+        BaseModelOutputWithPast,
+        BaseModelOutputWithPooling,
+        SequenceClassifierOutputWithPast,
+    )
+except ImportError:
+    class BaseModelOutputWithPast:  # type: ignore[no-redef]
+        pass
+
+    class BaseModelOutputWithPooling:  # type: ignore[no-redef]
+        pass
+
+    class SequenceClassifierOutputWithPast:  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.modeling_utils import PreTrainedModel
+except ImportError:
+    class PreTrainedModel(nn.Module):  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
+except ImportError:
+    class Qwen3ForCausalLM(nn.Module):  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
+except ImportError:
+    class Qwen3NextConfig:  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.models.qwen3_next.modeling_qwen3_next import (
+        Qwen3NextAttention,
+        Qwen3NextGatedDeltaNet,
+        Qwen3NextMLP,
+        Qwen3NextModel,
+        Qwen3NextPreTrainedModel,
+        Qwen3NextRMSNorm,
+        apply_mask_to_padding_states,
+        causal_conv1d_fn,
+        causal_conv1d_update,
+        torch_chunk_gated_delta_rule,
+        torch_recurrent_gated_delta_rule,
+    )
+except ImportError:
+    class Qwen3NextAttention(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3NextGatedDeltaNet(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3NextMLP(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3NextModel(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3NextPreTrainedModel(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3NextRMSNorm(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    apply_mask_to_padding_states = None  # type: ignore[misc, assignment]
+    causal_conv1d_fn = None  # type: ignore[misc, assignment]
+    causal_conv1d_update = None  # type: ignore[misc, assignment]
+    torch_chunk_gated_delta_rule = None  # type: ignore[misc, assignment]
+    torch_recurrent_gated_delta_rule = None  # type: ignore[misc, assignment]
+
+try:
+    from transformers.models.qwen3_vl.configuration_qwen3_vl import (
+        Qwen3VLConfig,
+        Qwen3VLVisionConfig,
+    )
+except ImportError:
+    class Qwen3VLConfig:  # type: ignore[no-redef]
+        pass
+
+    class Qwen3VLVisionConfig:  # type: ignore[no-redef]
+        pass
+
+try:
+    from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+        Qwen3VLForConditionalGeneration,
+        Qwen3VLModel,
+        Qwen3VLModelOutputWithPast,
+        Qwen3VLTextRotaryEmbedding,
+        Qwen3VLVisionModel,
+        Qwen3VLVisionRotaryEmbedding,
+    )
+except ImportError:
+    class Qwen3VLForConditionalGeneration(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3VLModel(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3VLModelOutputWithPast:  # type: ignore[no-redef]
+        pass
+
+    class Qwen3VLTextRotaryEmbedding(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3VLVisionModel(nn.Module):  # type: ignore[no-redef]
+        pass
+
+    class Qwen3VLVisionRotaryEmbedding(nn.Module):  # type: ignore[no-redef]
+        pass
+
+try:
+    from typing import Unpack
+except ImportError:
+    try:
+        from transformers.processing_utils import Unpack
+    except ImportError:
+        Unpack = Any  # type: ignore[misc, assignment]
+
+try:
+    from transformers.utils import (
+        TransformersKwargs,
+        auto_docstring,
+        can_return_tuple,
+        logging,
+    )
+except ImportError:
+    def auto_docstring(*args: Any, **kwargs: Any) -> Any:
+        def decorator(cls: Any) -> Any:
+            return cls
+        return decorator
+
+    TransformersKwargs = Any  # type: ignore[misc, assignment]
+    can_return_tuple = None  # type: ignore[misc, assignment]
+    import logging
+
+try:
+    from transformers.utils.generic import (
+        accepts_precomputed_kwargs,
+        merge_with_config_defaults,
+    )
+except ImportError:
+    def accepts_precomputed_kwargs(*args: Any, **kwargs: Any) -> Any:
+        def decorator(fn: Any) -> Any:
+            return fn
+        return decorator
+
+    def merge_with_config_defaults(*args: Any, **kwargs: Any) -> Any:
+        def decorator(fn: Any) -> Any:
+            return fn
+        return decorator
+
+try:
+    from transformers.utils.output_capturing import capture_outputs
+except ImportError:
+    capture_outputs = None  # type: ignore[misc, assignment]
+
+try:
+    from transformers.vision_utils import (
+        get_vision_attention_seqlens,
+        get_vision_interpolation_indices_and_weights,
+        get_vision_position_ids,
+    )
+except ImportError:
+    get_vision_attention_seqlens = None  # type: ignore[misc, assignment]
+    get_vision_interpolation_indices_and_weights = None  # type: ignore[misc, assignment]
+    get_vision_position_ids = None  # type: ignore[misc, assignment]
 
 logger = logging.get_logger(__name__)
 

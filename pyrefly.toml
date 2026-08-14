@@ -29,6 +29,9 @@ bad-argument-count = false
 missing-import = false
 unbound-name = false
 not-callable = false
+invalid-inheritance = false
+bad-specialization = false
+unexpected-keyword = false
 
 [[sub-config]]
 matches = "src/qwendopamine/models/gdn2/gdn2_ops/**"

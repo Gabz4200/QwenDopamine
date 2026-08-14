@@ -3,6 +3,5 @@ defaults:
 
 model_type: qwen35_custom_block
 base_model: Qwen/Qwen3.5-4B
-block_type: experimental
+block_type: gdn
 block_layers: [2]
-new_block_scale: 0.001

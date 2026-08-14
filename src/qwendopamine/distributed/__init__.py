@@ -1,5 +1,5 @@
 """Distributed training utilities."""
 
-from .setup import init_distributed, cleanup_distributed
+from .setup import cleanup_distributed, init_distributed
 
-__all__ = ["init_distributed", "cleanup_distributed"]
+__all__ = ["cleanup_distributed", "init_distributed"]

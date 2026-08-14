@@ -9,22 +9,22 @@ from qwendopamine.models.blocks import build_block
 from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
 from qwendopamine.models.normalization import RMSNorm
 from qwendopamine.models.output_head import LMHead
+from qwendopamine.models.qwen35 import (
+    Qwen3_5Config,
+    Qwen3_5ForCausalLM,
+    Qwen3_5TextConfig,
+    Qwen3_5TextModel,
+)
 
 
 class ResearchDecoder(nn.Module):
-    r"""Configurable decoder model assembled from token/position embeddings,
+    r"""Configurable research decoder model assembled from token/position embeddings,
     a configurable block stack, and a language-model head.
 
-    This is the default research decoder used by :func:`build_model`.
-    It mirrors standard causal-LM structure while keeping block composition
-    driven by Hydra configs through :func:`qwendopamine.models.blocks.build_block`.
-
     Args:
-        config: any object with model-level attributes. Supported keys and defaults:
-            ``hidden_size`` (``2560``), ``vocab_size`` (``151936``),
-            ``max_position_embeddings`` (``4096``), ``num_layers`` (``4``),
-            ``block_types`` (list of block names), ``hidden_dropout_prob`` (``0.0``),
-            and ``rms_norm_eps`` (``1e-6``).
+        config: any object with model-level attributes. Supported keys:
+            ``hidden_size``, ``vocab_size``, ``max_position_embeddings``,
+            ``num_layers``, ``block_types``, ``hidden_dropout_prob``, ``rms_norm_eps``.
     """
 
     def __init__(self, config: Any) -> None:
@@ -32,7 +32,9 @@ class ResearchDecoder(nn.Module):
         self.hidden_size = getattr(config, "hidden_size", 2560)
         self.vocab_size = getattr(config, "vocab_size", 151936)
         self.max_position_embeddings = getattr(config, "max_position_embeddings", 4096)
-        self.block_types = getattr(config, "block_types", ["qwen"] * getattr(config, "num_layers", 4))
+        self.block_types = getattr(
+            config, "block_types", ["qwen"] * getattr(config, "num_layers", 4)
+        )
 
         self.embed_tokens = TokenEmbeddings(self.vocab_size, self.hidden_size)
         self.embed_positions = PositionEmbeddings(self.max_position_embeddings, self.hidden_size)
@@ -61,38 +63,44 @@ class ResearchDecoder(nn.Module):
 
 
 def build_model(config: Any) -> nn.Module:
-    r"""Build the default research decoder from the provided config.
+    r"""Build either the exact Qwen3.5 model or the research decoder from config.
 
     Args:
-        config: any object with model-level attributes forwarded to
-            :class:`ResearchDecoder`.
+        config: model configuration instance. If an instance of :class:`Qwen3_5TextConfig`
+            or :class:`Qwen3_5Config` or having ``model_type == "qwen3_5_text"``, returns
+            an exact :class:`Qwen3_5ForCausalLM`. Otherwise returns :class:`ResearchDecoder`.
 
     Returns:
-        nn.Module: assembled :class:`ResearchDecoder`.
+        nn.Module: assembled causal language model.
     """
+    model_type = getattr(config, "model_type", None)
+    if (
+        isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config))
+        or model_type in ("qwen3_5_text", "qwen3_5")
+    ):
+        return Qwen3_5ForCausalLM(config)
     return ResearchDecoder(config)
 
 
-def build_reference_model(config: Any, quantization_config: Any = None, device_map: str = "cpu", **kwargs: Any) -> nn.Module:
-    r"""Load a reference Hugging Face causal-LM model, optionally with quantization.
-
-    This helper is intended for baseline comparisons against the research decoder.
-
-    Args:
-        config: any object with ``base_model`` and HF loader kwargs.
-        quantization_config: optional quantization config forwarded to
-            :meth:`HFIntegration.load_model`.
-        device_map: device placement string. Default: ``"cpu"``.
-        **kwargs: additional keyword arguments forwarded to
-            :meth:`HFIntegration.load_model`.
-
-    Returns:
-        nn.Module: Hugging Face pretrained causal language model.
-    """
+def build_reference_model(
+    config: Any, quantization_config: Any = None, device_map: str = "cpu", **kwargs: Any
+) -> nn.Module:
+    r"""Load a reference Hugging Face causal-LM model, optionally with quantization."""
     from qwendopamine.integrations.huggingface import HFIntegration
     return HFIntegration.load_model(
-        model_name=config.base_model,
+        model_name=getattr(config, "base_model", "Qwen/Qwen3.5-0.8B"),
         quantization_config=quantization_config,
         device_map=device_map,
         **kwargs,
     )
+
+
+__all__ = [
+    "Qwen3_5Config",
+    "Qwen3_5ForCausalLM",
+    "Qwen3_5TextConfig",
+    "Qwen3_5TextModel",
+    "ResearchDecoder",
+    "build_model",
+    "build_reference_model",
+]

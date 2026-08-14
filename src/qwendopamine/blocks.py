@@ -1,21 +1,19 @@
-"""Top-level re-export for blocks subpackage.
-
-Allows ``from qwendopamine.blocks import GDN2Mixer`` instead of
-``from qwendopamine.models.blocks import GDN2Mixer``.
-"""
+"""Top-level re-export for Qwen3.5 architecture blocks."""
 
 from __future__ import annotations
 
 from qwendopamine.models.blocks import (
-    GDN2Mixer,
-    GDN2Projections,
     GatedDeltaNet2Block,
-    dispatch_gdn2,
+    GatedDeltaNetBlock,
+    Qwen3_5DecoderLayer,
+    Qwen3_5GatedDeltaNet,
+    QwenDecoderLayer,
 )
 
 __all__ = [
-    "GDN2Mixer",
-    "GDN2Projections",
     "GatedDeltaNet2Block",
-    "dispatch_gdn2",
+    "GatedDeltaNetBlock",
+    "Qwen3_5DecoderLayer",
+    "Qwen3_5GatedDeltaNet",
+    "QwenDecoderLayer",
 ]

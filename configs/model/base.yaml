@@ -1,10 +1,10 @@
-# Base model configuration for research experiments.
+# Base model configuration for the reference Qwen3.5 gated-delta stack.
 model_type: qwen_like
 block_types:
-  - qwen
-  - qwen
-  - experimental
-  - qwen
+  - gdn
+  - gdn
+  - gdn
+  - gdn
 num_layers: 4
 hidden_size: 2560
 num_attention_heads: 32

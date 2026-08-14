@@ -1,18 +1,22 @@
-"""Transformer block registry."""
+"""Transformer blocks package."""
 
-from qwendopamine.models.blocks.gdn2 import (  # noqa: F401
-    GDN2Mixer,
-    GDN2Projections,
+from qwendopamine.models.blocks.gdn_block import (
     GatedDeltaNet2Block,
+    GatedDeltaNetBlock,
+    Qwen3_5GatedDeltaNet,
 )
-from qwendopamine.models.blocks.gdn2_ops import dispatch_gdn2  # noqa: F401
-from qwendopamine.models.blocks.registry import BLOCKS, build_block  # noqa: F401
+from qwendopamine.models.blocks.qwen_block import (
+    Qwen3_5DecoderLayer,
+    QwenDecoderLayer,
+)
+from qwendopamine.models.blocks.registry import BLOCKS, build_block
 
 __all__ = [
     "BLOCKS",
-    "build_block",
-    "GDN2Mixer",
-    "GDN2Projections",
     "GatedDeltaNet2Block",
-    "dispatch_gdn2",
+    "GatedDeltaNetBlock",
+    "Qwen3_5DecoderLayer",
+    "Qwen3_5GatedDeltaNet",
+    "QwenDecoderLayer",
+    "build_block",
 ]

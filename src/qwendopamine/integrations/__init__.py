@@ -1,6 +1,14 @@
 r"""External integrations."""
 
-from .huggingface import HFIntegration
-from .safetensors import save_safetensors, load_safetensors
+try:
+    from .huggingface import HFIntegration
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    HFIntegration = None
 
-__all__ = ["HFIntegration", "save_safetensors", "load_safetensors"]
+try:
+    from .safetensors import load_safetensors, save_safetensors
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    save_safetensors = None
+    load_safetensors = None
+
+__all__ = ["HFIntegration", "load_safetensors", "save_safetensors"]

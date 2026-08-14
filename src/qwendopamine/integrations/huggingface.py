@@ -1,19 +1,45 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import torch
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    PreTrainedConfig,
-    PreTrainedModel,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-    QuantoConfig,
-)
+
+try:
+    from transformers import (
+        AutoConfig,
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+        PreTrainedConfig,
+        PreTrainedModel,
+        PreTrainedTokenizer,
+        PreTrainedTokenizerFast,
+        QuantoConfig,
+    )
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+
+    @dataclass
+    class _FallbackBitsAndBytesConfig:
+        load_in_8bit: bool = False
+        llm_int8_enable_fp32_cpu_offload: bool = False
+        load_in_4bit: bool = False
+        bnb_4bit_quant_type: str = "nf4"
+        bnb_4bit_compute_dtype: Any = None
+
+    @dataclass
+    class _FallbackQuantoConfig:
+        weights: str = "int8"
+
+    AutoConfig = None
+    AutoModelForCausalLM = None
+    AutoTokenizer = None
+    BitsAndBytesConfig = _FallbackBitsAndBytesConfig
+    PreTrainedConfig = Any
+    PreTrainedModel = Any
+    PreTrainedTokenizer = Any
+    PreTrainedTokenizerFast = Any
+    QuantoConfig = _FallbackQuantoConfig
 
 
 class HFIntegration:
@@ -35,9 +61,15 @@ class HFIntegration:
             BitsAndBytesConfig | QuantoConfig: quantization config object.
         """
         if method == "int8":
-            return BitsAndBytesConfig(load_in_8bit=True, llm_int8_enable_fp32_cpu_offload=device == "cpu")
+            return BitsAndBytesConfig(
+                load_in_8bit=True, llm_int8_enable_fp32_cpu_offload=device == "cpu"
+            )
         if method == "int4":
-            return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=getattr(torch, compute_dtype, torch.bfloat16))
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=getattr(torch, compute_dtype, torch.bfloat16),
+            )
         return QuantoConfig(weights=method)
 
     @staticmethod
@@ -52,6 +84,10 @@ class HFIntegration:
         Returns:
             PretrainedConfig: loaded config.
         """
+        if AutoConfig is None:
+            raise RuntimeError(
+                "transformers is required for HF config loading. Install qwendopamine[hf]."
+            )
         return AutoConfig.from_pretrained(model_name, **kwargs)
 
     @staticmethod
@@ -80,6 +116,10 @@ class HFIntegration:
         Returns:
             PreTrainedModel: loaded model.
         """
+        if AutoModelForCausalLM is None:
+            raise RuntimeError(
+                "transformers is required for HF model loading. Install qwendopamine[hf]."
+            )
         if quantization_config is None:
             quantization_config = HFIntegration.make_quantization_config()
 
@@ -99,7 +139,9 @@ class HFIntegration:
         )
 
     @staticmethod
-    def load_tokenizer(model_name: str, **kwargs: Any) -> PreTrainedTokenizer | PreTrainedTokenizerFast | None:
+    def load_tokenizer(
+        model_name: str, **kwargs: Any
+    ) -> PreTrainedTokenizer | PreTrainedTokenizerFast | None:
         r"""Load a Hugging Face tokenizer.
 
         Args:
@@ -110,7 +152,11 @@ class HFIntegration:
         Returns:
             PreTrainedTokenizer | PreTrainedTokenizerFast | None: loaded tokenizer.
         """
-        return AutoTokenizer.from_pretrained(model_name)
+        if AutoTokenizer is None:
+            raise RuntimeError(
+                "transformers is required for tokenizer loading. Install qwendopamine[hf]."
+            )
+        return AutoTokenizer.from_pretrained(model_name, **kwargs)
 
     @staticmethod
     def save_model(model: Any, save_directory: str) -> None:

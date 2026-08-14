@@ -3,13 +3,18 @@ r"""GGUF weight loading and conversion utilities."""
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import torch
-from gguf import GGUFReader, dequantize
+
+try:
+    from gguf import GGUFReader, dequantize
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    GGUFReader = None
+    dequantize = None
 
 from .huggingface import HFIntegration
-
 
 GGUF_TO_HF_NAME_MAP: dict[str, str] = {
     "token_embd.weight": "model.embed_tokens.weight",
@@ -79,6 +84,11 @@ def _dequantize_gguf_tensor(tensor: Any, hf_name: str) -> torch.Tensor:
     Returns:
         Tensor: dequantized tensor.
     """
+    if dequantize is None:
+        data = torch.as_tensor(tensor.data)
+        if hf_name.endswith(".conv1d.weight") and data.ndim == 2:
+            return data.unsqueeze(1)
+        return data
     dequantized = dequantize(tensor.data, tensor.tensor_type)
     if hf_name.endswith(".conv1d.weight") and dequantized.ndim == 2:
         return torch.from_numpy(dequantized.copy()).unsqueeze(1)
@@ -94,6 +104,10 @@ def _build_state_dict_from_gguf(gguf_path: str) -> dict[str, torch.Tensor]:
     Returns:
         dict[str, Tensor]: mapped state dict.
     """
+    if GGUFReader is None or dequantize is None:
+        raise RuntimeError(
+            "gguf is required for GGUF loading. Install the optional GGUF dependency."
+        )
     reader = GGUFReader(gguf_path)
     state_dict: dict[str, torch.Tensor] = {}
 
@@ -122,7 +136,9 @@ def load_gguf_weights(model: Any, gguf_path: str) -> None:
         allowed_missing = {"lm_head.weight"}
         unexpected_missing = set(missing) - allowed_missing
         if unexpected_missing:
-            raise RuntimeError(f"Missing keys after GGUF load: {sorted(unexpected_missing)}")
+            raise RuntimeError(
+                f"Missing keys after GGUF load: {sorted(unexpected_missing)}"
+            )
 
 
 def convert_gguf_to_safetensors(gguf_path: str, output_dir: str) -> str:
@@ -172,7 +188,14 @@ def load_qwen35_from_gguf(
     Returns:
         Any: HF model with weights loaded.
     """
-    size_token = model_name.split("-")[-1].replace("B", "")
+    size_match = re.search(
+        r"Qwen3\.5-(\d+(?:\.\d+)?)B", model_name, flags=re.IGNORECASE
+    )
+    if size_match is None:
+        raise ValueError(
+            f"Could not infer Qwen3.5 size from model_name: {model_name!r}"
+        )
+    size_token = size_match.group(1)
     base_model = f"Qwen/Qwen3.5-{size_token}B"
     if config is None:
         config = HFIntegration.load_config(base_model)
@@ -192,14 +215,17 @@ def load_qwen35_from_gguf(
     else:
         try:
             from huggingface_hub import list_repo_files
+
             candidates = [
-                f for f in list_repo_files(model_name)
-                if f.startswith("Qwen3.5-0.8B-") and f.endswith(".gguf")
+                f
+                for f in list_repo_files(model_name)
+                if f.startswith(f"Qwen3.5-{size_token}B-") and f.endswith(".gguf")
             ]
             if not candidates:
                 raise RuntimeError(f"No GGUF files found in repo '{model_name}'")
             gguf_file = candidates[0]
             from huggingface_hub import hf_hub_download
+
             gguf_path = hf_hub_download(model_name, filename=gguf_file)
             load_gguf_weights(model, gguf_path)
         except Exception as exc:

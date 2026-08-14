@@ -34,8 +34,7 @@ def compute_perplexity(model: torch.nn.Module, dataloader: Any, max_steps: int =
                 break
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             outputs = model(**batch)
-            loss = outputs.get("loss") if isinstance(outputs, dict) else getattr(outputs, "loss", None)
-            assert loss is not None
+            loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
             total_loss += loss.item() * batch["input_ids"].numel()
             total_tokens += batch["input_ids"].numel()
 

@@ -103,3 +103,18 @@ def test_when_build_model_with_research_config_then_returns_research_decoder(
 ) -> None:
     model = build_model(mock_config)
     assert isinstance(model, ResearchDecoder)
+
+
+def test_when_research_decoder_forward_with_gdn2_block_then_executes_successfully(
+    mock_config: types.SimpleNamespace,
+) -> None:
+    mock_config.block_types = ["gdn2"]
+    mock_config.hidden_size = 64
+    mock_config.num_heads = 2
+    mock_config.head_dim = 32
+    model = ResearchDecoder(mock_config)
+    input_ids = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.long)
+
+    logits = model(input_ids)
+    assert logits.shape == (2, 3, mock_config.vocab_size)
+    assert not torch.isnan(logits).any()

@@ -56,7 +56,8 @@ class ResearchDecoder(nn.Module):
         hidden_states = self.embed_dropout(hidden_states)
 
         for layer in self.layers:
-            hidden_states = layer(hidden_states)
+            output = layer(hidden_states)
+            hidden_states = output[0] if isinstance(output, tuple) else output
 
         hidden_states = self.final_norm(hidden_states)
         return self.lm_head(hidden_states)

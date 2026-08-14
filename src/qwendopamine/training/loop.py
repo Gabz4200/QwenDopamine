@@ -74,6 +74,14 @@ class TrainingLoop:
                 self.scheduler.step()
                 self.optimizer.zero_grad(set_to_none=True)
                 self.global_step += 1
+                if self.global_step >= self.config.max_steps:
+                    break
+
+        if accum > 0 and accum % self.config.grad_accum_steps != 0:
+            self._optimizer_step()
+            self.scheduler.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            self.global_step += 1
 
     def _optimizer_step(self) -> None:
         r"""Unscale gradients, clip, and perform an optimizer step."""

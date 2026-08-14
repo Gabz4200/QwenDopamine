@@ -1,0 +1,7 @@
+defaults:
+  - base: base
+
+model_type: qwen35_gdn2
+base_model: Qwen/Qwen3.5-0.8B
+block_type: gdn2
+block_layers: [2]

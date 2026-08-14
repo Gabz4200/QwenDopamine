@@ -6,16 +6,19 @@ from typing import Any
 
 from torch import nn
 
+from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
 from qwendopamine.models.qwen35.modular_qwen3_5 import (
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
 )
 
 BLOCKS: dict[str, type] = {
-    "qwen": Qwen3_5DecoderLayer,
     "gdn": Qwen3_5GatedDeltaNet,
+    "gdn2": GatedDeltaNet2,
+    "qwen": Qwen3_5DecoderLayer,
     "qwen35": Qwen3_5DecoderLayer,
     "qwen35_gdn": Qwen3_5GatedDeltaNet,
+    "qwen35_gdn2": GatedDeltaNet2,
 }
 
 

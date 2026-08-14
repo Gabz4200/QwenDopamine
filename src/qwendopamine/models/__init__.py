@@ -1,6 +1,7 @@
 """Qwen3.5 research model layer."""
 
 from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
+from qwendopamine.models.gdn2 import GatedDeltaNet2
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
     build_model,
@@ -20,6 +21,7 @@ from qwendopamine.models.qwen35 import (
 )
 
 __all__ = [
+    "GatedDeltaNet2",
     "LMHead",
     "PositionEmbeddings",
     "Qwen3_5Config",

@@ -50,20 +50,41 @@ REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
 PIP_REPO_URL = "git+" + REPO_URL
 
 
-def _is_qwendopamine_installed() -> bool:
+def _ensure_dependencies() -> None:
+    try:
+        import transformers.masking_utils
+
+        has_mask = hasattr(
+            transformers.masking_utils, "create_recurrent_attention_mask"
+        )
+    except (ImportError, AttributeError):
+        has_mask = False
+
     try:
         importlib.metadata.version("qwendopamine")
-        return True
+        has_qwen = True
     except importlib.metadata.PackageNotFoundError:
-        return False
+        has_qwen = False
+
+    if not (has_mask and has_qwen):
+        print(
+            "[setup] Installing/upgrading dependencies (transformers>=4.49.0, qwendopamine)..."
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "transformers>=4.49.0",
+                PIP_REPO_URL,
+            ],
+            check=True,
+        )
 
 
-if not _is_qwendopamine_installed():
-    print(f"[setup] Installing qwendopamine from {PIP_REPO_URL}...")
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--no-deps", PIP_REPO_URL],
-        check=True,
-    )
+_ensure_dependencies()
 
 from qwendopamine.models.gated_surprise_net import SurpriseMemoryAdam
 from qwendopamine.models.model_factory import ResearchDecoder

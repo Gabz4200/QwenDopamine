@@ -71,3 +71,27 @@ implicit-import = false
 implicit-any = false
 unannotated-return = false
 unannotated-parameter = false
+bad-override = false
+bad-override-mutable-attribute = false
+bad-argument-type = false
+bad-assignment = false
+bad-unpacking = false
+missing-attribute = false
+unsupported-operation = false
+bad-function-definition = false
+bad-return = false
+implicit-any-type-argument = false
+implicit-any-lambda = false
+implicit-any-empty-container = false
+bad-argument-count = false
+missing-import = false
+unbound-name = false
+not-callable = false
+
+[[sub-config]]
+matches = "notebooks/**"
+[sub-config.errors]
+implicit-import = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false

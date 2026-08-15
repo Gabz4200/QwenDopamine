@@ -1,3 +1,7 @@
+# %% [code]
+%pip install "git+https://github.com/Gabz4200/QwenDopamine.git"
+
+# %% [code] {"jupyter":{"outputs_hidden":false}}
 """Kaggle 2xT4 GPU smoke-test + WikiText-2 training for GatedSurpriseNetAdam.
 
 Part 1 — Sanity checks
@@ -29,10 +33,12 @@ import math
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any
 
+import fcntl
 import matplotlib
 
 matplotlib.use("Agg")
@@ -50,38 +56,58 @@ REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
 PIP_REPO_URL = "git+" + REPO_URL
 
 
+_LOCK_PATH = os.path.join(tempfile.gettempdir(), "qwendopamine_setup.lock")
+
+
 def _ensure_dependencies() -> None:
-    try:
-        import transformers.masking_utils
+    def _check() -> tuple[bool, bool]:
+        need_mask = False
+        try:
+            import transformers.masking_utils
 
-        has_mask = hasattr(
-            transformers.masking_utils, "create_recurrent_attention_mask"
-        )
-    except (ImportError, AttributeError):
-        has_mask = False
+            need_mask = not hasattr(
+                transformers.masking_utils, "create_recurrent_attention_mask"
+            )
+        except (ImportError, AttributeError):
+            need_mask = True
 
-    try:
-        importlib.metadata.version("qwendopamine")
-        has_qwen = True
-    except importlib.metadata.PackageNotFoundError:
-        has_qwen = False
+        try:
+            importlib.metadata.version("qwendopamine")
+            need_qwen = False
+        except importlib.metadata.PackageNotFoundError:
+            need_qwen = True
 
-    if not (has_mask and has_qwen):
-        print(
-            "[setup] Installing/upgrading dependencies (transformers>=4.49.0, qwendopamine)..."
-        )
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "transformers>=4.49.0",
-                PIP_REPO_URL,
-            ],
-            check=True,
-        )
+        return need_mask, need_qwen
+
+    need_mask, need_qwen = _check()
+    if not (need_mask or need_qwen):
+        return
+
+    # Kaggle torchrun launches multiple ranks in the same container;
+    # serialize pip installs so two ranks don't race.
+    with open(_LOCK_PATH, "w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            need_mask, need_qwen = _check()
+            if not (need_mask or need_qwen):
+                return
+
+            to_install: list[str] = []
+            if need_mask:
+                to_install.append("transformers>=4.49.0")
+            if need_qwen:
+                to_install.append(PIP_REPO_URL)
+
+            print(
+                "[setup] Installing/upgrading dependencies "
+                f"({', '.join(to_install)})..."
+            )
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade"] + to_install,
+                check=True,
+            )
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 _ensure_dependencies()

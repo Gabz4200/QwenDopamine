@@ -8,12 +8,18 @@ Expected runtime: ~5-10 minutes for the full notebook.
 """
 
 import importlib.metadata
+import os
 import subprocess
 import sys
+import tempfile
 import time
+
+import fcntl
 
 REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
 PIP_REPO_URL = "git+" + REPO_URL
+_LOCK_PATH = os.path.join(tempfile.gettempdir(), "qwendopamine_gdn2_setup.lock")
+
 
 def _is_qwendopamine_installed() -> bool:
     try:
@@ -22,32 +28,37 @@ def _is_qwendopamine_installed() -> bool:
     except importlib.metadata.PackageNotFoundError:
         return False
 
+
 print("[setup] Checking qwendopamine import...")
-if _is_qwendopamine_installed():
-    import qwendopamine
-    print(f"[setup] qwendopamine {qwendopamine.__version__} already installed")
-else:
-    print(f"[setup] Installing from {PIP_REPO_URL} ...")
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--upgrade-strategy",
-            "only-if-needed",
-            PIP_REPO_URL,
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    import qwendopamine
-    print(f"[setup] Installed qwendopamine {qwendopamine.__version__}")
+if not _is_qwendopamine_installed():
+    with open(_LOCK_PATH, "w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if not _is_qwendopamine_installed():
+                print(f"[setup] Installing from {PIP_REPO_URL} ...")
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        "--upgrade-strategy",
+                        "only-if-needed",
+                        PIP_REPO_URL,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                if result.stdout:
+                    print(result.stdout, end="")
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+import qwendopamine
+print(f"[setup] Using qwendopamine {qwendopamine.__version__}")
 
 import torch
 from torch import nn
@@ -59,13 +70,20 @@ from qwendopamine.models.normalization import RMSNorm
 # ---------------------------------------------------------------------------
 # Cell 2: Device and dtype setup
 # ---------------------------------------------------------------------------
-assert torch.cuda.is_available(), "This notebook requires a CUDA GPU (T4/P100)."
-device = torch.device("cuda")
-dtype = torch.bfloat16  # Kaggle T4/P100 support bf16; use float16 if needed
+has_cuda = torch.cuda.is_available()
+device = torch.device("cuda" if has_cuda else "cpu")
+dtype = (
+    torch.bfloat16
+    if (has_cuda and torch.cuda.is_bf16_supported())
+    else (torch.float16 if has_cuda else torch.float32)
+)
 
 print(f"[env] device={device}, dtype={dtype}")
-print(f"[env] GPU: {torch.cuda.get_device_name(0)}")
-print(f"[env] BF16 supported: {torch.cuda.is_bf16_supported()}")
+if has_cuda:
+    print(f"[env] GPU: {torch.cuda.get_device_name(0)}")
+    print(f"[env] BF16 supported: {torch.cuda.is_bf16_supported()}")
+else:
+    print("[env] Running on CPU")
 
 # ---------------------------------------------------------------------------
 # Cell 3: Load real dataset (TinyStories) with fallback

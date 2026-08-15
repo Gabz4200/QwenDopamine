@@ -103,7 +103,15 @@ def _ensure_dependencies() -> None:
                 f"({', '.join(to_install)})..."
             )
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade"] + to_install,
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade-strategy",
+                    "only-if-needed",
+                ]
+                + to_install,
                 check=True,
             )
         finally:
@@ -362,9 +370,15 @@ def train(
     )
     loss_fn = nn.CrossEntropyLoss()
 
-    scaler = torch.cuda.amp.GradScaler(
-        enabled=(device.type == "cuda" and dtype == torch.float16 and cfg.use_amp)
-    )
+    try:
+        scaler = torch.amp.GradScaler(
+            device_type=device.type,
+            enabled=(device.type == "cuda" and dtype == torch.float16 and cfg.use_amp),
+        )
+    except (AttributeError, TypeError):
+        scaler = torch.cuda.amp.GradScaler(
+            enabled=(device.type == "cuda" and dtype == torch.float16 and cfg.use_amp)
+        )
 
     history: dict[str, list[float]] = {
         "train_loss": [],

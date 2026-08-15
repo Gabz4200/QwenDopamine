@@ -6,11 +6,13 @@ import pytest
 import torch
 
 from qwendopamine.models.qwen35 import (
+    Qwen3_5Config,
     Qwen3_5DecoderLayer,
     Qwen3_5ForCausalLM,
     Qwen3_5GatedDeltaNet,
     Qwen3_5TextConfig,
     Qwen3_5TextModel,
+    Qwen3_5VisionConfig,
 )
 
 
@@ -37,6 +39,19 @@ def test_when_default_config_instantiated_then_contains_valid_defaults() -> None
     assert config.num_hidden_layers > 0
     assert config.vocab_size > 0
     assert config.model_type == "qwen3_5_text"
+
+
+def test_when_vision_config_instantiated_then_contains_valid_defaults() -> None:
+    config = Qwen3_5VisionConfig()
+    assert config.out_hidden_size > 0
+    assert config.num_position_embeddings > 0
+
+
+def test_when_multimodal_config_instantiated_then_contains_valid_defaults() -> None:
+    config = Qwen3_5Config()
+    assert config.image_token_id == 248056
+    assert config.vision_start_token_id == 248053
+    assert config.vision_end_token_id == 248054
 
 
 def test_when_text_model_forward_with_mask_then_returns_valid_hidden_states(

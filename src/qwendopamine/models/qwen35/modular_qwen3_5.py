@@ -36,7 +36,16 @@ except ImportError:
 try:
     from transformers import initialization as init
 except ImportError:
-    init = None  # type: ignore[misc, assignment]
+    class _InitFallback:
+        @staticmethod
+        def ones_(tensor: torch.Tensor) -> torch.Tensor:
+            return nn.init.ones_(tensor)
+
+        @staticmethod
+        def copy_(target: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
+            return target.copy_(source)
+
+    init = _InitFallback()  # type: ignore[assignment]
 
 try:
     from transformers.cache_utils import Cache, DynamicCache
@@ -49,9 +58,43 @@ except ImportError:
 
 try:
     from transformers.integrations import (
-        use_kernel_forward_from_hub,
-        use_kernelized_func,
+        use_kernel_forward_from_hub as _hf_use_kernel_forward_from_hub,
     )
+    from transformers.integrations import (
+        use_kernelized_func as _hf_use_kernelized_func,
+    )
+
+    def use_kernel_forward_from_hub(*args: Any, **kwargs: Any) -> Any:
+        try:
+            inner = _hf_use_kernel_forward_from_hub(*args, **kwargs)
+        except Exception:  # noqa: BLE001
+            def noop_decorator(fn: Any) -> Any:
+                return fn
+            return noop_decorator
+
+        def decorator(fn: Any) -> Any:
+            try:
+                return inner(fn)
+            except Exception:  # noqa: BLE001
+                return fn
+
+        return decorator
+
+    def use_kernelized_func(*args: Any, **kwargs: Any) -> Any:
+        try:
+            inner = _hf_use_kernelized_func(*args, **kwargs)
+        except Exception:  # noqa: BLE001
+            def noop_decorator(fn: Any) -> Any:
+                return fn
+            return noop_decorator
+
+        def decorator(fn: Any) -> Any:
+            try:
+                return inner(fn)
+            except Exception:  # noqa: BLE001
+                return fn
+
+        return decorator
 except ImportError:
     def use_kernel_forward_from_hub(*args: Any, **kwargs: Any) -> Any:
         def decorator(fn: Any) -> Any:
@@ -224,18 +267,14 @@ except ImportError:
 try:
     from transformers.utils import (
         TransformersKwargs,
-        auto_docstring,
         can_return_tuple,
         logging,
     )
 except ImportError:
-    def auto_docstring(*args: Any, **kwargs: Any) -> Any:
-        def decorator(cls: Any) -> Any:
-            return cls
-        return decorator
+    def can_return_tuple(fn: Any) -> Any:
+        return fn
 
     TransformersKwargs = Any  # type: ignore[misc, assignment]
-    can_return_tuple = None  # type: ignore[misc, assignment]
     import logging
 
 try:
@@ -249,15 +288,14 @@ except ImportError:
             return fn
         return decorator
 
-    def merge_with_config_defaults(*args: Any, **kwargs: Any) -> Any:
-        def decorator(fn: Any) -> Any:
-            return fn
-        return decorator
+    def merge_with_config_defaults(fn: Any) -> Any:
+        return fn
 
 try:
     from transformers.utils.output_capturing import capture_outputs
 except ImportError:
-    capture_outputs = None  # type: ignore[misc, assignment]
+    def capture_outputs(fn: Any) -> Any:
+        return fn
 
 try:
     from transformers.vision_utils import (
@@ -273,7 +311,6 @@ except ImportError:
 logger = logging.get_logger(__name__)
 
 
-@auto_docstring(checkpoint="Qwen/Qwen3.5-27B")
 @strict
 class Qwen3_5TextConfig(Qwen3NextConfig):
     r"""
@@ -360,7 +397,6 @@ class Qwen3_5TextConfig(Qwen3NextConfig):
             del self.__dict__["mlp_only_layers"]
 
 
-@auto_docstring(checkpoint="Qwen/Qwen3.5-27B")
 @strict
 class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
     r"""
@@ -373,7 +409,6 @@ class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
     deepstack_visual_indexes = AttributeError()
 
 
-@auto_docstring(checkpoint="Qwen/Qwen3.5-27B")
 @strict
 class Qwen3_5Config(Qwen3VLConfig):
     r"""
@@ -799,7 +834,6 @@ class Qwen3_5Model(Qwen3VLModel):
 
     @accepts_precomputed_kwargs(modality="image")
     @can_return_tuple
-    @auto_docstring
     def get_image_features(
         self,
         pixel_values: torch.FloatTensor,
@@ -817,7 +851,6 @@ class Qwen3_5Model(Qwen3VLModel):
 
         return vision_output
 
-    @auto_docstring
     @can_return_tuple
     def forward(
         self,

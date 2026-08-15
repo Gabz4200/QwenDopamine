@@ -11,6 +11,7 @@ from transformers.cache_utils import DynamicCache
 
 from qwendopamine.integrations.gguf import _map_gguf_name_to_hf
 from qwendopamine.integrations.huggingface import (
+    GatedSurpriseNetHFConfig,
     GDN2HFConfig,
     HFIntegration,
 )
@@ -54,6 +55,24 @@ def test_when_register_gdn2_hf_called_then_autoconfig_resolves_gdn2() -> None:
     HFIntegration.register_gdn2_hf()
     cfg = AutoConfig.for_model("gdn2", hidden_size=128, num_heads=4, head_dim=32)
     assert isinstance(cfg, GDN2HFConfig)
+    assert cfg.hidden_size == 128
+
+
+def test_when_gated_surprise_net_hf_block_forward_executed_then_preserves_shape_and_cache() -> None:
+    hf_cfg = HFIntegration.build_gated_surprise_net_hf_config(hidden_size=64, num_heads=2, head_dim=32)
+    block = HFIntegration.build_gated_surprise_net_hf_block(hf_cfg, layer_idx=0)
+    x = torch.randn(2, 4, 64)
+    cache = DynamicCache()
+    out, attn, past_cache = block(x, past_key_values=cache, use_cache=True)
+    assert out.shape == (2, 4, 64)
+    assert attn is None
+    assert past_cache is not None
+
+
+def test_when_register_gated_surprise_net_hf_called_then_autoconfig_resolves() -> None:
+    HFIntegration.register_gdn2_hf()
+    cfg = AutoConfig.for_model("gated_surprise_net", hidden_size=128, num_heads=4, head_dim=32)
+    assert isinstance(cfg, GatedSurpriseNetHFConfig)
     assert cfg.hidden_size == 128
 
 

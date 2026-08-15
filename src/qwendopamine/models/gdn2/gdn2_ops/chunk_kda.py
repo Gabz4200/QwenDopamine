@@ -96,8 +96,13 @@ except (ImportError, RuntimeError, AttributeError):
     exp2 = None
     gather = None
     softplus = None
-    autocast_custom_bwd = lambda *a, **kw: lambda fn: fn
-    autocast_custom_fwd = lambda *a, **kw: lambda fn: fn
+    def _dummy_autocast(fn=None, *args, **kwargs):
+        if fn is not None and callable(fn):
+            return fn
+        return lambda f: f
+
+    autocast_custom_bwd = _dummy_autocast
+    autocast_custom_fwd = _dummy_autocast
     autotune_cache_kwargs = {}
     check_shared_mem = lambda *a, **kw: False
     input_guard = lambda fn: fn

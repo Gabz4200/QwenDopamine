@@ -88,8 +88,13 @@ except (ImportError, RuntimeError, AttributeError):
     prepare_chunk_indices = None
     exp2 = None
     gather = None
-    autocast_custom_bwd = lambda *a, **kw: lambda fn: fn
-    autocast_custom_fwd = lambda *a, **kw: lambda fn: fn
+    def _dummy_autocast(fn=None, *args, **kwargs):
+        if fn is not None and callable(fn):
+            return fn
+        return lambda f: f
+
+    autocast_custom_bwd = _dummy_autocast
+    autocast_custom_fwd = _dummy_autocast
     autotune_cache_kwargs = {}
     check_shared_mem = lambda *a, **kw: False
     input_guard = lambda fn: fn
@@ -1366,6 +1371,21 @@ def chunk_gdn2(
 
     if scale is None:
         scale = k.shape[-1] ** -0.5
+
+    if not _HAS_TRITON_FLA or not q.is_cuda:
+        from qwendopamine.models.gdn2.gdn2 import torch_chunk_gdn2
+
+        return torch_chunk_gdn2(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            b=b,
+            w=w,
+            initial_state=initial_state,
+            output_final_state=output_final_state,
+            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        )
 
     return ChunkGDN2Function.apply(
         q,

@@ -13,10 +13,10 @@ Part 1 — Sanity checks & 1.3B Architecture Inspection
 Part 2 — FineWeb-Edu Micro LM training
   Load bhavnicksm/fineweb-edu-micro (1M tokens, high-quality educational passages),
   build the 1.3B hybrid Transformer + central GatedDeltaNet-2 GPT model, train with
-  gradient checkpointing + AMP + DDP + early stopping, and log cross-entropy loss,
-  perplexity, and negative log-likelihood.
+  8-bit AdamW + gradient checkpointing + AMP + DDP + early stopping, and log
+  cross-entropy loss, perplexity, and negative log-likelihood.
 
-Designed for Kaggle with 2x T4 GPUs. Uses ``torch.distributed`` DDP
+Designed for Kaggle with 2x T4 GPUs (16GB each). Uses ``torch.distributed`` DDP
 when multiple GPUs are detected; falls back to single-GPU/CPU otherwise.
 
 Run on Kaggle::
@@ -26,9 +26,12 @@ Run on Kaggle::
 
 from __future__ import annotations
 
+import os
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import importlib.metadata
 import math
-import os
 import subprocess
 import sys
 import tempfile
@@ -57,7 +60,7 @@ _LOCK_PATH = os.path.join(tempfile.gettempdir(), "qwendopamine_gdn2_setup.lock")
 
 
 def _ensure_dependencies() -> None:
-    def _check() -> tuple[bool, bool]:
+    def _check() -> tuple[bool, bool, bool]:
         need_mask = False
         try:
             import transformers.masking_utils
@@ -74,22 +77,33 @@ def _ensure_dependencies() -> None:
         except importlib.metadata.PackageNotFoundError:
             need_qwen = True
 
-        return need_mask, need_qwen
+        need_bnb = False
+        if torch.cuda.is_available():
+            try:
+                import bitsandbytes
 
-    need_mask, need_qwen = _check()
-    if not (need_mask or need_qwen):
+                need_bnb = False
+            except ImportError:
+                need_bnb = True
+
+        return need_mask, need_qwen, need_bnb
+
+    need_mask, need_qwen, need_bnb = _check()
+    if not (need_mask or need_qwen or need_bnb):
         return
 
     with open(_LOCK_PATH, "w") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            need_mask, need_qwen = _check()
-            if not (need_mask or need_qwen):
+            need_mask, need_qwen, need_bnb = _check()
+            if not (need_mask or need_qwen or need_bnb):
                 return
 
             to_install: list[str] = []
             if need_mask:
                 to_install.append("transformers>=4.49.0")
+            if need_bnb:
+                to_install.append("bitsandbytes>=0.41.0")
             if need_qwen:
                 to_install.append(PIP_REPO_URL)
 
@@ -300,7 +314,7 @@ class FineWebMicroConfig:
     max_seq_len: int = 512
     max_train_examples: int | None = None
     max_val_examples: int | None = None
-    batch_size: int = 2
+    batch_size: int = 1
     val_split_ratio: float = 0.1
     seed: int = 42
 
@@ -375,7 +389,7 @@ class TrainConfig:
     weight_decay: float = 0.1
     warmup_steps: int = 50
     grad_clip: float = 1.0
-    grad_accum_steps: int = 4
+    grad_accum_steps: int = 8
     use_amp: bool = True
     early_stopping_patience: int = 4
     early_stopping_min_delta: float = 1e-3
@@ -443,7 +457,20 @@ def train(
     dtype: torch.dtype,
 ) -> dict[str, list[float]]:
     model.train()
-    optimizer = torch.optim.AdamW(
+
+    optimizer_cls = torch.optim.AdamW
+    if device.type == "cuda":
+        try:
+            import bitsandbytes as bnb
+
+            optimizer_cls = bnb.optim.PagedAdamW8bit
+            if IS_MAIN:
+                print("[opt] Using bitsandbytes PagedAdamW8bit (low memory footprint for 1.3B)")
+        except ImportError:
+            if IS_MAIN:
+                print("[opt] bitsandbytes not found, falling back to standard AdamW")
+
+    optimizer = optimizer_cls(
         model.parameters(),
         lr=cfg.lr,
         betas=(0.9, 0.95),
@@ -716,16 +743,20 @@ def main() -> None:
             dist.destroy_process_group()
         return
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     if IS_MAIN:
         print("\n===== Part 2: FineWeb-Edu Micro 1.3B LM training =====")
 
     data_cfg = FineWebMicroConfig(
         max_seq_len=512,
-        batch_size=2,
+        batch_size=1,
         val_split_ratio=0.1,
     )
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.model_max_length = 1_000_000
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -766,7 +797,7 @@ def main() -> None:
         min_lr=1e-5,
         weight_decay=0.1,
         warmup_steps=50,
-        grad_accum_steps=4,
+        grad_accum_steps=8,
         early_stopping_patience=4,
         early_stopping_min_delta=1e-3,
     )
@@ -782,6 +813,9 @@ def main() -> None:
 
     model = GPT(lm_cfg).to(device=device, dtype=dtype)
     model.gradient_checkpointing_enable()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     if WORLD_SIZE > 1:
         model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)

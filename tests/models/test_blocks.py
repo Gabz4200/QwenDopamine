@@ -83,14 +83,14 @@ def test_when_research_decoder_forward_then_returns_correct_logits(
 
 def test_when_build_model_with_qwen35_config_then_returns_causal_lm() -> None:
     cfg = Qwen3_5TextConfig(
-        hidden_size=64,
-        num_hidden_layers=4,
+        hidden_size=32,
+        num_hidden_layers=2,
         linear_key_head_dim=16,
         linear_value_head_dim=16,
         linear_num_key_heads=2,
         linear_num_value_heads=2,
-        intermediate_size=128,
-        vocab_size=500,
+        intermediate_size=64,
+        vocab_size=100,
         num_attention_heads=2,
         num_key_value_heads=2,
     )

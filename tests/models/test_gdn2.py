@@ -36,25 +36,20 @@ class DummyConfig:
         self.expand_v = 1.0
 
 
-def test_when_gdn2_initialized_with_int_then_creates_valid_module() -> None:
-    layer = GatedDeltaNet2(hidden_size=128, num_heads=4, head_dim=32)
-    assert isinstance(layer, torch.nn.Module)
-    assert layer.hidden_size == 128
-
-
-def test_when_gdn2_initialized_with_config_then_creates_valid_module() -> None:
-    cfg = DummyConfig(hidden_size=128, num_heads=4, head_dim=32)
-    layer = GatedDeltaNet2(cfg, layer_idx=0)
-    assert isinstance(layer, torch.nn.Module)
-    assert layer.hidden_size == 128
-
-
 def test_when_gdn2_forward_cpu_then_preserves_shape() -> None:
     layer = GatedDeltaNet2(hidden_size=128, num_heads=4, head_dim=32)
     x = torch.randn(2, 16, 128, dtype=torch.float32)
     out, attn, _cache = layer(x)
     assert out.shape == (2, 16, 128)
     assert attn is None
+
+
+def test_when_gdn2_initialized_with_config_forward_then_preserves_shape() -> None:
+    cfg = DummyConfig(hidden_size=128, num_heads=4, head_dim=32)
+    layer = GatedDeltaNet2(cfg, layer_idx=0)
+    x = torch.randn(2, 8, 128, dtype=torch.float32)
+    out, _attn, _cache = layer(x)
+    assert out.shape == (2, 8, 128)
 
 
 def test_when_gdn2_backward_then_gradients_flow_to_parameters() -> None:

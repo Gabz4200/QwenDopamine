@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 import torch
 from transformers import AutoConfig
 from transformers.cache_utils import DynamicCache
 
+from qwendopamine.integrations.gguf import _map_gguf_name_to_hf
 from qwendopamine.integrations.huggingface import (
     GDN2HFConfig,
     HFIntegration,
 )
+from qwendopamine.integrations.tokenizer import load_qwen35_tokenizer
 from qwendopamine.models.gdn2.config import GDN2Config
 
 
@@ -50,3 +55,28 @@ def test_when_register_gdn2_hf_called_then_autoconfig_resolves_gdn2() -> None:
     cfg = AutoConfig.for_model("gdn2", hidden_size=128, num_heads=4, head_dim=32)
     assert isinstance(cfg, GDN2HFConfig)
     assert cfg.hidden_size == 128
+
+
+def test_when_map_gguf_name_to_hf_called_then_maps_expected_keys() -> None:
+    assert _map_gguf_name_to_hf("token_embd.weight") == "model.embed_tokens.weight"
+    assert _map_gguf_name_to_hf("output_norm.weight") == "model.norm.weight"
+    assert (
+        _map_gguf_name_to_hf("blk.0.attn_q.weight")
+        == "model.layers.0.self_attn.q_proj.weight"
+    )
+    assert _map_gguf_name_to_hf("unknown.tensor.name") is None
+
+
+def test_when_load_qwen35_tokenizer_all_candidates_fail_then_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from transformers import AutoTokenizer
+
+    def _mock_from_pretrained(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("Simulated connection/file error")
+
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", _mock_from_pretrained)
+
+    with pytest.raises(RuntimeError, match="Failed to load Qwen3.5 tokenizer"):
+        load_qwen35_tokenizer("nonexistent/invalid-model-name")
+

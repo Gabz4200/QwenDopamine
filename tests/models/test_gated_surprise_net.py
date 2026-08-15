@@ -48,12 +48,6 @@ def mock_surprise_config() -> types.SimpleNamespace:
     )
 
 
-def test_when_gated_surprise_net_initialized_default_then_creates_valid_module() -> None:
-    layer = GatedSurpriseNetAdam(hidden_size=64, num_heads=2, head_dim=32)
-    assert isinstance(layer, torch.nn.Module)
-    assert layer.hidden_size == 64
-
-
 def test_when_gated_surprise_net_forward_cpu_then_preserves_shape(
     mock_surprise_config: types.SimpleNamespace,
 ) -> None:

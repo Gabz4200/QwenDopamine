@@ -183,22 +183,24 @@ def apply_rotary_emb(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> torch.Tensor:
-    """Apply rotary position embedding to input tensor."""
+    """Apply rotary position embedding to input tensor with exact dtype preservation."""
+    orig_dtype = x.dtype
+    x_f = x.float()
     rot_dim = cos.size(-1) * 2
-    x_rot = x[..., :rot_dim]
-    x_pass = x[..., rot_dim:]
+    x_rot = x_f[..., :rot_dim]
+    x_pass = x_f[..., rot_dim:]
 
     x1 = x_rot[..., 0::2]
     x2 = x_rot[..., 1::2]
-    cos_expanded = cos.unsqueeze(0).unsqueeze(2)
-    sin_expanded = sin.unsqueeze(0).unsqueeze(2)
+    cos_expanded = cos.float().unsqueeze(0).unsqueeze(2)
+    sin_expanded = sin.float().unsqueeze(0).unsqueeze(2)
 
     y1 = x1 * cos_expanded - x2 * sin_expanded
     y2 = x1 * sin_expanded + x2 * cos_expanded
     y = torch.stack((y1, y2), dim=-1).flatten(-2)
     if x_pass.size(-1) > 0:
-        return torch.cat((y, x_pass), dim=-1)
-    return y
+        y = torch.cat((y, x_pass), dim=-1)
+    return y.to(dtype=orig_dtype)
 
 
 class RMSNorm(nn.Module):

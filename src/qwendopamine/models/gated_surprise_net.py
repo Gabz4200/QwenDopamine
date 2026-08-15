@@ -1,3 +1,42 @@
+"""GatedSurpriseNet: Closed-Form Algebraic Fast-Weight Recurrence on Surprise Optimization.
+
+Mathematical Formulation:
+--------------------------
+1. Fast-Weight Update View:
+   At each token step t, the memory S_t in R^{d_k x d_v} optimizes the local Surprise objective:
+       L_t(S) = 0.5 * ||S - S_bar_t||_F^2 - <S k_t, s_t>
+   where:
+       S_bar_t = Diag(alpha_t) S_{t-1}   (channel-wise decayed memory, alpha_t = exp(g_t))
+       e_t = b_t * k_t                   (erase key with channel-wise erase gate b_t in [0, 1]^{d_k})
+       z_t = w_t * v_t                   (write target with channel-wise write gate w_t in [0, 1]^{d_v})
+       r_t = S_bar_t^T e_t               (memory read / predictive expectation)
+       u_t = sigma(W_u x_t)              (data-dependent surprise / precision gate in [0, 1]^{d_v})
+       s_t = u_t * (z_t - r_t)           (Surprise vector / precision-weighted prediction residual)
+
+   Setting the matrix gradient nabla_S L_t(S) = 0 yields the exact closed-form algebraic update:
+       S_t = S_bar_t + k_t s_t^T = S_bar_t + k_t (u_t * (z_t - S_bar_t^T e_t))^T
+   which in operator form on each value channel j in {1, ..., d_v} is:
+       S_{t, :, j} = (I - u_{t, j} k_t e_t^T) S_bar_{t, :, j} + k_t (u_{t, j} z_{t, j})
+   and readout:
+       o_t = S_t^T q_t.
+
+2. Chunkwise WY Algorithm with Channel-wise Decay & Surprise Inverse:
+   Inside each chunk of length C:
+       - Cumulative decay: G_r = sum_{i<=r} g_i, gamma_r = exp(G_r), gamma_C = exp(G_C)
+       - Normalized keys: k_bar_r = gamma_r^{-1} * k_r, e_bar_r = gamma_r * (b_r * k_r)
+       - Target matrix: Z = W * V
+       - Strictly lower triangular matrix: T = tril(E_bar K_bar^T, -1) in R^{C x C}
+       - Channel-wise Surprise WY inverse system:
+         For each value channel j:
+             L^{(j)} = I_C + Diag(u_{:, j}) T   (unit lower triangular)
+             RHS_{:, j} = Diag(u_{:, j}) (Z_{:, j} - E_bar S_{0, :, j})
+             R_{:, j} = (L^{(j)})^{-1} RHS_{:, j}
+       - End-of-chunk state:
+             S_C = Diag(gamma_C) S_0 + K_tail^T R, where (K_tail)_{r, :} = (gamma_C / gamma_r) * k_r
+       - Chunk output:
+             O = Q_gamma S_0 + A_qk R, where Q_gamma = gamma * Q, A_qk = tril(Q_gamma K_bar^T, 0).
+"""
+
 from __future__ import annotations
 
 import math
@@ -27,10 +66,12 @@ except ImportError:
 
 @dataclass
 class SurpriseRecurrenceState:
+    r"""Recurrence state for GatedSurpriseNet containing fast-weight memory tensor."""
+
     memory: torch.Tensor
-    first_moment: torch.Tensor
-    second_moment: torch.Tensor
-    step: torch.Tensor
+    first_moment: torch.Tensor | None = None
+    second_moment: torch.Tensor | None = None
+    step: torch.Tensor | None = None
 
 
 def l2_normalize_last(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -45,7 +86,7 @@ def gaussian_nll_diag(
     eps: float = 1e-6,
     full: bool = False,
 ) -> torch.Tensor:
-    r"""Compute diagonal Gaussian Negative Log-Likelihood."""
+    r"""Compute diagonal Gaussian Negative Log-Likelihood diagnostic."""
     var = var.clamp_min(eps)
     loss = 0.5 * (torch.log(var) + (target - mean).square() / var)
     if full:
@@ -83,30 +124,23 @@ def torch_pad_input(
     return padded.view(batch_size, seq_len, *hidden_states.shape[1:])
 
 
-class SurpriseMemoryAdam(nn.Module):
-    r"""Local Adam surprise recurrence memory update on diagonal Gaussian NLL."""
+class SurpriseMemory(nn.Module):
+    r"""Algebraic Surprise fast-weight associative memory with serial & chunkwise WY scan."""
 
     def __init__(
         self,
         num_heads: int,
         head_k_dim: int,
         head_v_dim: int,
-        lr: float = 1e-3,
-        beta1: float = 0.9,
-        beta2: float = 0.999,
-        eps: float = 1e-8,
         nll_var_eps: float = 1e-6,
         nll_full: bool = False,
         learnable_init: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.head_k_dim = head_k_dim
         self.head_v_dim = head_v_dim
-        self.lr = lr
-        self.beta1 = beta1
-        self.beta2 = beta2
-        self.eps = eps
         self.nll_var_eps = nll_var_eps
         self.nll_full = nll_full
 
@@ -130,10 +164,7 @@ class SurpriseMemoryAdam(nn.Module):
             .expand(batch_size, -1, -1, -1)
             .clone()
         )
-        m0 = torch.zeros_like(mem0)
-        v0 = torch.zeros_like(mem0)
-        t0 = torch.zeros(batch_size, self.num_heads, 1, 1, device=device, dtype=dtype)
-        return SurpriseRecurrenceState(mem0, m0, v0, t0)
+        return SurpriseRecurrenceState(memory=mem0)
 
     def one_step(
         self,
@@ -144,7 +175,9 @@ class SurpriseMemoryAdam(nn.Module):
         g_t: torch.Tensor,
         b_t: torch.Tensor,
         w_t: torch.Tensor,
+        u_t: torch.Tensor | None = None,
     ) -> tuple[SurpriseRecurrenceState, torch.Tensor, torch.Tensor]:
+        r"""Compute one step of closed-form algebraic surprise fast-weight recurrence."""
         out_dtype = q_t.dtype
         q_f = q_t.float()
         k_f = k_t.float()
@@ -152,31 +185,21 @@ class SurpriseMemoryAdam(nn.Module):
         g_f = g_t.float()
         b_f = b_t.float()
         w_f = w_t.float()
+        u_f = u_t.float() if u_t is not None else torch.ones_like(w_f)
 
         alpha_t = torch.exp(g_f)
-        S_bar = alpha_t.unsqueeze(-1) * state.memory
+        S_bar = alpha_t.unsqueeze(-1) * state.memory.float()
 
         erase_key = b_f * k_f
         target_mu = w_f * v_f
 
         pred_mu = torch.einsum("bhkv,bhk->bhv", S_bar, erase_key)
-        pred_logvar = torch.log1p(pred_mu.square())
-        pred_var = F.softplus(pred_logvar) + self.nll_var_eps
+        surprise_residual = u_f * (target_mu - pred_mu)
 
-        residual_scaled = (pred_mu - target_mu) / pred_var
-        grad = torch.einsum("bhk,bhv->bhkv", erase_key, residual_scaled)
-
-        t = state.step + 1.0
-        m = self.beta1 * state.first_moment + (1.0 - self.beta1) * grad
-        v = self.beta2 * state.second_moment + (1.0 - self.beta2) * grad.square()
-
-        bias_c1 = 1.0 - torch.pow(torch.full_like(t, self.beta1), t)
-        bias_c2 = 1.0 - torch.pow(torch.full_like(t, self.beta2), t)
-        m_hat = m / bias_c1.clamp_min(1e-12)
-        v_hat = v / bias_c2.clamp_min(1e-12)
-
-        memory_new = S_bar - self.lr * m_hat / (v_hat.sqrt() + self.eps)
+        memory_new = S_bar + torch.einsum("bhk,bhv->bhkv", k_f, surprise_residual)
         out_t = torch.einsum("bhkv,bhk->bhv", memory_new, q_f).to(out_dtype)
+
+        pred_var = F.softplus(torch.log1p(pred_mu.square())) + self.nll_var_eps
         nll_t = gaussian_nll_diag(
             target=target_mu,
             mean=pred_mu,
@@ -184,7 +207,8 @@ class SurpriseMemoryAdam(nn.Module):
             eps=self.nll_var_eps,
             full=self.nll_full,
         ).to(out_dtype)
-        new_state = SurpriseRecurrenceState(memory_new, m, v, t)
+
+        new_state = SurpriseRecurrenceState(memory=memory_new)
         return new_state, out_t, nll_t
 
     def serial_scan(
@@ -195,34 +219,31 @@ class SurpriseMemoryAdam(nn.Module):
         g: torch.Tensor,
         b: torch.Tensor,
         w: torch.Tensor,
+        u: torch.Tensor | None = None,
         initial_state: SurpriseRecurrenceState | None = None,
         detach_state_every_step: bool = False,
     ) -> tuple[torch.Tensor, SurpriseRecurrenceState, torch.Tensor]:
+        r"""Token-by-token recurrence serial scan."""
         bs = k.shape[0]
         if initial_state is None:
             state = self.initial_state(bs, device=k.device, dtype=torch.float32)
         else:
-            state = SurpriseRecurrenceState(
-                initial_state.memory.float(),
-                initial_state.first_moment.float(),
-                initial_state.second_moment.float(),
-                initial_state.step.float(),
-            )
+            state = SurpriseRecurrenceState(memory=initial_state.memory.float())
+
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
-        for i in range(k.shape[1]):
+        seq_len = k.shape[1]
+
+        for i in range(seq_len):
+            u_i = u[:, i] if u is not None else None
             state, out_i, nll_i = self.one_step(
-                state, q[:, i], k[:, i], v[:, i], g[:, i], b[:, i], w[:, i]
+                state, q[:, i], k[:, i], v[:, i], g[:, i], b[:, i], w[:, i], u_i
             )
             outputs.append(out_i)
             losses.append(nll_i)
             if detach_state_every_step:
-                state = SurpriseRecurrenceState(
-                    state.memory.detach(),
-                    state.first_moment.detach(),
-                    state.second_moment.detach(),
-                    state.step.detach(),
-                )
+                state = SurpriseRecurrenceState(memory=state.memory.detach())
+
         return torch.stack(outputs, dim=1), state, torch.stack(losses, dim=1)
 
     def chunk_parallel_training_scan(
@@ -233,39 +254,121 @@ class SurpriseMemoryAdam(nn.Module):
         g: torch.Tensor,
         b: torch.Tensor,
         w: torch.Tensor,
-        chunk_size: int,
+        u: torch.Tensor | None = None,
+        chunk_size: int = 128,
         initial_state: SurpriseRecurrenceState | None = None,
     ) -> tuple[torch.Tensor, SurpriseRecurrenceState, torch.Tensor]:
+        r"""Chunkwise WY algorithm for Surprise recurrence with channel-wise decay and WY inverse."""
         bs, ts = k.shape[:2]
+        out_dtype = q.dtype
+
+        q_f = q.float()
+        k_f = k.float()
+        v_f = v.float()
+        g_f = g.float()
+        b_f = b.float()
+        w_f = w.float()
+        u_f = u.float() if u is not None else torch.ones_like(w_f)
+
         state = (
             self.initial_state(bs, device=k.device, dtype=torch.float32)
             if initial_state is None
-            else initial_state
+            else SurpriseRecurrenceState(memory=initial_state.memory.float())
         )
+        S_chunk = state.memory
+
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
+
         for start in range(0, ts, chunk_size):
             end = min(start + chunk_size, ts)
-            out_chunk, state, nll_chunk = self.serial_scan(
-                q=q[:, start:end],
-                k=k[:, start:end],
-                v=v[:, start:end],
-                g=g[:, start:end],
-                b=b[:, start:end],
-                w=w[:, start:end],
-                initial_state=state,
-                detach_state_every_step=False,
+            c_len = end - start
+
+            qc = q_f[:, start:end]
+            kc = k_f[:, start:end]
+            vc = v_f[:, start:end]
+            gc = g_f[:, start:end]
+            bc = b_f[:, start:end]
+            wc = w_f[:, start:end]
+            uc = u_f[:, start:end]
+
+            S_0 = S_chunk
+
+            G = torch.cumsum(gc, dim=1)
+            gamma = torch.exp(G)
+            gamma_last = gamma[:, -1]
+
+            k_bar = kc / gamma.clamp_min(1e-12)
+            e_bar = gamma * (bc * kc)
+            Zc = wc * vc
+
+            E_mat = e_bar.permute(0, 2, 1, 3)
+            K_mat = k_bar.permute(0, 2, 1, 3)
+
+            T_mat = torch.tril(
+                torch.matmul(E_mat, K_mat.transpose(-1, -2)), diagonal=-1
             )
-            outputs.append(out_chunk)
-            losses.append(nll_chunk)
-        return torch.cat(outputs, dim=1), state, torch.cat(losses, dim=1)
+
+            u_mat = uc.permute(0, 2, 3, 1)
+            u_T = u_mat.unsqueeze(-1) * T_mat.unsqueeze(2)
+            eye = torch.eye(c_len, device=q.device, dtype=torch.float32).view(
+                1, 1, 1, c_len, c_len
+            )
+            L = eye + u_T
+
+            S_0_v = S_0.permute(0, 1, 3, 2)
+            ES0 = torch.matmul(S_0_v, E_mat.transpose(-1, -2))
+            Z_mat = Zc.permute(0, 2, 3, 1)
+
+            RHS = u_mat * (Z_mat - ES0)
+            R_vec = torch.linalg.solve_triangular(
+                L, RHS.unsqueeze(-1), upper=False
+            ).squeeze(-1)
+            R = R_vec.permute(0, 1, 3, 2)
+
+            gamma_last_exp = gamma_last.unsqueeze(1)
+            K_tail = ((gamma_last_exp / gamma.clamp_min(1e-12)) * kc).permute(
+                0, 2, 1, 3
+            )
+            S_chunk = gamma_last.unsqueeze(-1) * S_0 + torch.matmul(
+                K_tail.transpose(-1, -2), R
+            )
+
+            Q_gamma = (gamma * qc).permute(0, 2, 1, 3)
+            out_intra_prev = torch.matmul(Q_gamma, S_0)
+            A_qk = torch.tril(
+                torch.matmul(Q_gamma, K_mat.transpose(-1, -2)), diagonal=0
+            )
+            out_intra_new = torch.matmul(A_qk, R)
+
+            O_chunk = (out_intra_prev + out_intra_new).permute(0, 2, 1, 3)
+            outputs.append(O_chunk.to(out_dtype))
+
+            TR = torch.matmul(T_mat, R)
+            pred_mu_c = (ES0.permute(0, 1, 3, 2) + TR).permute(0, 2, 1, 3)
+            pred_var_c = F.softplus(torch.log1p(pred_mu_c.square())) + self.nll_var_eps
+            nll_c = gaussian_nll_diag(
+                target=Zc,
+                mean=pred_mu_c,
+                var=pred_var_c,
+                eps=self.nll_var_eps,
+                full=self.nll_full,
+            ).to(out_dtype)
+            losses.append(nll_c)
+
+        final_state = SurpriseRecurrenceState(memory=S_chunk)
+        return torch.cat(outputs, dim=1), final_state, torch.cat(losses, dim=1)
 
 
-class GatedSurpriseNetAdam(nn.Module):
-    r"""GatedSurpriseNet drop-in token mixer using local Adam surprise recurrence.
+# Aliases for backward compatibility
+SurpriseMemoryAdam = SurpriseMemory
 
-    This module maintains constructor signature and forward contract compatibility
-    with QwenDopamine transformer blocks while running device-agnostically on CPU and GPU.
+
+class GatedSurpriseNet(nn.Module):
+    r"""GatedSurpriseNet token mixer using closed-form algebraic surprise fast-weight recurrence.
+
+    This module provides a drop-in token mixer matching QwenDopamine transformer blocks
+    while implementing the algebraic closed-form Surprise gradient descent and chunkwise WY algorithm.
     """
 
     def __init__(
@@ -283,15 +386,10 @@ class GatedSurpriseNetAdam(nn.Module):
         conv_size: int = 4,
         conv_bias: bool = False,
         norm_eps: float = 1e-5,
-        local_adam_lr: float = 1e-3,
-        local_adam_beta1: float = 0.9,
-        local_adam_beta2: float = 0.999,
-        local_adam_eps: float = 1e-8,
         nll_var_eps: float = 1e-6,
         nll_full: bool = False,
         learnable_init_state: bool = False,
         train_chunk_size: int = 128,
-        ttt_preserve_serial_recurrence: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -314,10 +412,6 @@ class GatedSurpriseNetAdam(nn.Module):
             norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
             allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
             expand_v = getattr(cfg, "expand_v", expand_v)
-            local_adam_lr = getattr(cfg, "local_adam_lr", local_adam_lr)
-            local_adam_beta1 = getattr(cfg, "local_adam_beta1", local_adam_beta1)
-            local_adam_beta2 = getattr(cfg, "local_adam_beta2", local_adam_beta2)
-            local_adam_eps = getattr(cfg, "local_adam_eps", local_adam_eps)
             nll_var_eps = getattr(cfg, "nll_var_eps", nll_var_eps)
             nll_full = getattr(cfg, "nll_full", nll_full)
             learnable_init_state = getattr(
@@ -334,10 +428,6 @@ class GatedSurpriseNetAdam(nn.Module):
             norm_eps = cfg_dict.get("norm_eps", norm_eps)
             allow_neg_eigval = cfg_dict.get("allow_neg_eigval", allow_neg_eigval)
             expand_v = cfg_dict.get("expand_v", expand_v)
-            local_adam_lr = cfg_dict.get("local_adam_lr", local_adam_lr)
-            local_adam_beta1 = cfg_dict.get("local_adam_beta1", local_adam_beta1)
-            local_adam_beta2 = cfg_dict.get("local_adam_beta2", local_adam_beta2)
-            local_adam_eps = cfg_dict.get("local_adam_eps", local_adam_eps)
             nll_var_eps = cfg_dict.get("nll_var_eps", nll_var_eps)
             nll_full = cfg_dict.get("nll_full", nll_full)
             learnable_init_state = cfg_dict.get(
@@ -359,15 +449,10 @@ class GatedSurpriseNetAdam(nn.Module):
         self.layer_idx = layer_idx
         self.norm_eps = norm_eps
 
-        self.local_adam_lr = local_adam_lr
-        self.local_adam_beta1 = local_adam_beta1
-        self.local_adam_beta2 = local_adam_beta2
-        self.local_adam_eps = local_adam_eps
         self.nll_var_eps = nll_var_eps
         self.nll_full = nll_full
         self.learnable_init_state = learnable_init_state
         self.train_chunk_size = train_chunk_size
-        self.ttt_preserve_serial_recurrence = ttt_preserve_serial_recurrence
 
         self.mode = mode
         assert mode in ["chunk", "fused_recurrent"], f"Not supported mode `{mode}`."
@@ -422,6 +507,7 @@ class GatedSurpriseNetAdam(nn.Module):
         )
         self.b_proj = nn.Linear(self.hidden_size, self.key_dim, bias=False)
         self.w_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
+        self.u_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
 
         self.A_log = nn.Parameter(
             torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
@@ -443,14 +529,10 @@ class GatedSurpriseNetAdam(nn.Module):
         self.o_norm = RMSNormGated(self.head_v_dim, eps=norm_eps)
         self.o_proj = nn.Linear(self.value_dim, self.hidden_size, bias=False)
 
-        self.memory = SurpriseMemoryAdam(
+        self.memory = SurpriseMemory(
             num_heads=self.num_v_heads,
             head_k_dim=self.head_k_dim,
             head_v_dim=self.head_v_dim,
-            lr=self.local_adam_lr,
-            beta1=self.local_adam_beta1,
-            beta2=self.local_adam_beta2,
-            eps=self.local_adam_eps,
             nll_var_eps=self.nll_var_eps,
             nll_full=self.nll_full,
             learnable_init=self.learnable_init_state,
@@ -554,6 +636,7 @@ class GatedSurpriseNetAdam(nn.Module):
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
+        torch.Tensor,
         tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None,
     ]:
         new_conv_q, new_conv_k, new_conv_v = None, None, None
@@ -590,6 +673,7 @@ class GatedSurpriseNetAdam(nn.Module):
         ).to(hidden_states.dtype)
         b = self.b_proj(hidden_states).sigmoid()
         w = self.w_proj(hidden_states).sigmoid()
+        u = self.u_proj(hidden_states).sigmoid()
 
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
         k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
@@ -597,6 +681,7 @@ class GatedSurpriseNetAdam(nn.Module):
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
         b_gate = rearrange(b, "... (h d) -> ... h d", d=self.head_k_dim)
         w_gate = rearrange(w, "... (h d) -> ... h d", d=self.head_v_dim)
+        u_gate = rearrange(u, "... (h d) -> ... h d", d=self.head_v_dim)
 
         q = l2_normalize_last(q)
         k = l2_normalize_last(k)
@@ -609,11 +694,12 @@ class GatedSurpriseNetAdam(nn.Module):
 
         if self.allow_neg_eigval:
             b_gate = b_gate * 2.0
+            u_gate = u_gate * 2.0
 
         new_conv_states = (
             (new_conv_q, new_conv_k, new_conv_v) if self.use_short_conv else None
         )
-        return q, k, v, g, b_gate, w_gate, new_conv_states
+        return q, k, v, g, b_gate, w_gate, u_gate, new_conv_states
 
     def forward(
         self,
@@ -644,7 +730,7 @@ class GatedSurpriseNetAdam(nn.Module):
         recurrent_state, conv_states = self._get_cache(past_key_values)
         should_use_cache = bool(use_cache or past_key_values is not None)
 
-        q, k, v, g, b_gate, w_gate, new_conv_states = self._project_inputs(
+        q, k, v, g, b_gate, w_gate, u_gate, new_conv_states = self._project_inputs(
             hidden_states,
             cu_seqlens=cu_seqlens,
             use_cache=should_use_cache,
@@ -666,6 +752,7 @@ class GatedSurpriseNetAdam(nn.Module):
                 g=g,
                 b=b_gate,
                 w=w_gate,
+                u=u_gate,
                 chunk_size=self.train_chunk_size,
                 initial_state=recurrent_state,
             )
@@ -677,6 +764,7 @@ class GatedSurpriseNetAdam(nn.Module):
                 g=g,
                 b=b_gate,
                 w=w_gate,
+                u=u_gate,
                 initial_state=recurrent_state,
                 detach_state_every_step=False,
             )
@@ -701,3 +789,22 @@ class GatedSurpriseNetAdam(nn.Module):
             out = torch_pad_input(out.squeeze(0), indices, batch_size, q_len)
 
         return out, None, past_key_values
+
+
+# Aliases for backward compatibility
+GatedSurpriseNetAdam = GatedSurpriseNet
+GatedSurpriseNetBlock = GatedSurpriseNet
+
+__all__ = [
+    "GatedSurpriseNet",
+    "GatedSurpriseNetAdam",
+    "GatedSurpriseNetBlock",
+    "SurpriseMemory",
+    "SurpriseMemoryAdam",
+    "SurpriseRecurrenceState",
+    "gaussian_nll_diag",
+    "l2_normalize_last",
+    "torch_get_unpad_data",
+    "torch_index_first_axis",
+    "torch_pad_input",
+]

@@ -18,6 +18,7 @@ from qwendopamine.integrations import (
 )
 from qwendopamine.models.blocks.registry import BLOCKS, build_block
 from qwendopamine.models.gated_surprise_net import (
+    SurpriseMemory,
     SurpriseMemoryAdam,
     SurpriseRecurrenceState,
     gaussian_nll_diag,
@@ -121,12 +122,13 @@ def test_when_surprise_memory_adam_scans_then_serial_and_chunk_match() -> None:
     g = -torch.rand(b, t, h, d_k)
     erase_b = torch.sigmoid(torch.randn(b, t, h, d_k))
     write_w = torch.sigmoid(torch.randn(b, t, h, d_v))
+    surprise_u = torch.sigmoid(torch.randn(b, t, h, d_v))
 
     out_serial, state_serial, nll_serial = memory.serial_scan(
-        q, k, v, g, erase_b, write_w
+        q, k, v, g, erase_b, write_w, surprise_u
     )
     out_chunk, state_chunk, nll_chunk = memory.chunk_parallel_training_scan(
-        q, k, v, g, erase_b, write_w, chunk_size=8
+        q, k, v, g, erase_b, write_w, surprise_u, chunk_size=8
     )
 
     assert out_serial.shape == (b, t, h, d_v)
@@ -134,6 +136,53 @@ def test_when_surprise_memory_adam_scans_then_serial_and_chunk_match() -> None:
     assert torch.allclose(out_serial, out_chunk, atol=1e-5)
     assert torch.allclose(state_serial.memory, state_chunk.memory, atol=1e-5)
     assert torch.allclose(nll_serial, nll_chunk, atol=1e-5)
+
+
+def test_when_surprise_memory_non_multiple_chunk_size_then_matches_serial() -> None:
+    memory = SurpriseMemory(num_heads=2, head_k_dim=16, head_v_dim=16)
+    b, t, h, d_k, d_v = 2, 37, 2, 16, 16
+
+    q = l2_normalize_last(torch.randn(b, t, h, d_k))
+    k = l2_normalize_last(torch.randn(b, t, h, d_k))
+    v = torch.randn(b, t, h, d_v)
+    g = -torch.rand(b, t, h, d_k)
+    erase_b = torch.sigmoid(torch.randn(b, t, h, d_k))
+    write_w = torch.sigmoid(torch.randn(b, t, h, d_v))
+    surprise_u = torch.sigmoid(torch.randn(b, t, h, d_v))
+
+    out_serial, state_serial, nll_serial = memory.serial_scan(
+        q, k, v, g, erase_b, write_w, surprise_u
+    )
+    out_chunk, state_chunk, nll_chunk = memory.chunk_parallel_training_scan(
+        q, k, v, g, erase_b, write_w, surprise_u, chunk_size=16
+    )
+
+    assert out_serial.shape == (b, t, h, d_v)
+    assert out_chunk.shape == (b, t, h, d_v)
+    assert torch.allclose(out_serial, out_chunk, atol=1e-5)
+    assert torch.allclose(state_serial.memory, state_chunk.memory, atol=1e-5)
+    assert torch.allclose(nll_serial, nll_chunk, atol=1e-5)
+
+
+def test_when_surprise_gate_scaled_then_modulates_memory_state() -> None:
+    memory = SurpriseMemory(num_heads=1, head_k_dim=8, head_v_dim=8)
+    b, t, h, d_k, d_v = 1, 4, 1, 8, 8
+
+    q = l2_normalize_last(torch.randn(b, t, h, d_k))
+    k = l2_normalize_last(torch.randn(b, t, h, d_k))
+    v = torch.randn(b, t, h, d_v)
+    g = -torch.rand(b, t, h, d_k) * 0.1
+    b_gate = torch.ones(b, t, h, d_k) * 0.5
+    w_gate = torch.ones(b, t, h, d_v) * 0.5
+
+    u_zero = torch.zeros(b, t, h, d_v)
+    u_one = torch.ones(b, t, h, d_v)
+
+    out_z, state_z, _ = memory.serial_scan(q, k, v, g, b_gate, w_gate, u_zero)
+    out_1, state_1, _ = memory.serial_scan(q, k, v, g, b_gate, w_gate, u_one)
+
+    assert not torch.allclose(state_z.memory, state_1.memory)
+    assert not torch.allclose(out_z, out_1)
 
 
 def test_when_gated_surprise_net_forward_with_dict_cache_then_updates_states() -> None:

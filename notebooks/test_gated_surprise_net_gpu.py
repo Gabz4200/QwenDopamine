@@ -154,6 +154,7 @@ from qwendopamine.models.gated_surprise_net import (
     GatedSurpriseNetAdam,
     SurpriseMemory,
     SurpriseMemoryAdam,
+    l2_normalize_last,
 )
 from qwendopamine.models.surprise_gpt import (
     Block,
@@ -321,8 +322,8 @@ def run_serial_chunk_parity() -> bool:
     """Verify parity between serial scan and chunk parallel scan for multi-head algebraic Surprise memory."""
     bs, t, h, d = 2, 32, 4, 16
     torch.manual_seed(42)
-    q = torch.randn(bs, t, h, d, device=device, dtype=dtype)
-    k = torch.randn(bs, t, h, d, device=device, dtype=dtype)
+    q = l2_normalize_last(torch.randn(bs, t, h, d, device=device, dtype=dtype))
+    k = l2_normalize_last(torch.randn(bs, t, h, d, device=device, dtype=dtype))
     v = torch.randn(bs, t, h, d, device=device, dtype=dtype)
     g = torch.randn(bs, t, h, d, device=device, dtype=dtype).abs_().mul_(-1)
     b = torch.rand(bs, t, h, d, device=device, dtype=dtype)

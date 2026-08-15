@@ -48,10 +48,13 @@ import torch.nn.functional as F
 try:
     import triton
     import triton.language as tl
+
+    _HAS_TRITON = True
+except (ImportError, RuntimeError, AttributeError):
+    _HAS_TRITON = False
+
+try:
     from fla.modules.l2norm import l2norm_bwd, l2norm_fwd
-    from fla.ops.backends import dispatch
-    from fla.ops.cp import FLACPContext
-    from fla.ops.cp.comm import all_gather_into_tensor
     from fla.ops.gla.chunk import chunk_gla_fwd_o_gk
     from fla.ops.utils import (
         chunk_local_cumsum,
@@ -74,7 +77,19 @@ try:
         input_guard,
     )
 
-    _HAS_TRITON_FLA = True
+    try:
+        from fla.ops.backends import dispatch
+    except (ImportError, AttributeError):
+        dispatch = lambda *a, **kw: lambda fn: fn
+
+    try:
+        from fla.ops.cp import FLACPContext
+        from fla.ops.cp.comm import all_gather_into_tensor
+    except (ImportError, AttributeError):
+        FLACPContext = None
+        all_gather_into_tensor = None
+
+    _HAS_TRITON_FLA = bool(_HAS_TRITON)
 except (ImportError, RuntimeError, AttributeError):
     _HAS_TRITON_FLA = False
     IS_AMD = False
@@ -96,6 +111,7 @@ except (ImportError, RuntimeError, AttributeError):
     exp2 = None
     gather = None
     softplus = None
+
     def _dummy_autocast(fn=None, *args, **kwargs):
         if fn is not None and callable(fn):
             return fn
@@ -116,6 +132,18 @@ if not _HAS_TRITON_FLA:
     class _DummyConstexpr(metaclass=_ConstexprMeta):
         pass
 
+    class _DummyKernel:
+        def __init__(self, fn=None):
+            self.fn = fn
+
+        def __getitem__(self, grid):
+            return self
+
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "Triton/FLA kernel is not available in the current environment."
+            )
+
     class _DummyTriton:
         constexpr = _DummyConstexpr
 
@@ -126,16 +154,16 @@ if not _HAS_TRITON_FLA:
         @staticmethod
         def jit(*args, **kwargs):
             if len(args) == 1 and callable(args[0]) and not kwargs:
-                return args[0]
-            return lambda fn: fn
+                return _DummyKernel(args[0])
+            return lambda fn: _DummyKernel(fn)
 
         @staticmethod
         def heuristics(*args, **kwargs):
-            return lambda fn: fn
+            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
 
         @staticmethod
         def autotune(*args, **kwargs):
-            return lambda fn: fn
+            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
 
         @staticmethod
         def cdiv(x, y):

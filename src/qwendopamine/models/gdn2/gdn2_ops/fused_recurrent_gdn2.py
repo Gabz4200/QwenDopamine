@@ -69,6 +69,18 @@ if not _HAS_TRITON_FLA:
     class _DummyConstexpr(metaclass=_ConstexprMeta):
         pass
 
+    class _DummyKernel:
+        def __init__(self, fn=None):
+            self.fn = fn
+
+        def __getitem__(self, grid):
+            return self
+
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "Triton/FLA kernel is not available in the current environment."
+            )
+
     class _DummyTriton:
         constexpr = _DummyConstexpr
 
@@ -79,16 +91,16 @@ if not _HAS_TRITON_FLA:
         @staticmethod
         def jit(*args, **kwargs):
             if len(args) == 1 and callable(args[0]) and not kwargs:
-                return args[0]
-            return lambda fn: fn
+                return _DummyKernel(args[0])
+            return lambda fn: _DummyKernel(fn)
 
         @staticmethod
         def heuristics(*args, **kwargs):
-            return lambda fn: fn
+            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
 
         @staticmethod
         def autotune(*args, **kwargs):
-            return lambda fn: fn
+            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
 
         @staticmethod
         def cdiv(x, y):

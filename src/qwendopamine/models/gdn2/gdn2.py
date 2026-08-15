@@ -41,15 +41,24 @@ def _warn_fallback_once(reason: str) -> None:
 # Safe optional Triton/FLA ops imports
 _HAS_TRITON_OPS = False
 try:
-    from .gdn2_ops.chunk_gdn2 import chunk_gdn2 as _triton_chunk_gdn2
+    from .gdn2_ops.chunk_gdn2 import (
+        _HAS_TRITON_FLA as _CHUNK_HAS_TRITON,
+    )
+    from .gdn2_ops.chunk_gdn2 import (
+        chunk_gdn2 as _triton_chunk_gdn2,
+    )
+    from .gdn2_ops.fused_recurrent_gdn2 import (
+        _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON,
+    )
     from .gdn2_ops.fused_recurrent_gdn2 import (
         fused_recurrent_gdn2 as _triton_fused_recurrent_gdn2,
     )
 
-    _HAS_TRITON_OPS = True
-except ImportError as e:
+    _HAS_TRITON_OPS = bool(_CHUNK_HAS_TRITON or _RECURRENT_HAS_TRITON)
+except (ImportError, AttributeError) as e:
     _triton_chunk_gdn2 = None
     _triton_fused_recurrent_gdn2 = None
+    _HAS_TRITON_OPS = False
     _warn_fallback_once(f"Triton ops failed to load: {e}")
 
 
@@ -525,40 +534,45 @@ class GatedDeltaNet2(nn.Module):
         o: torch.Tensor | None = None
 
         if use_cuda_triton:
-            if mode == "chunk" and _triton_chunk_gdn2 is not None:
-                o, recurrent_state = _triton_chunk_gdn2(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b,
-                    w=w,
-                    A_log=self.A_log,
-                    dt_bias=self.dt_bias,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache or False,
-                    use_qk_l2norm_in_kernel=True,
-                    use_gate_in_kernel=False,
-                    cu_seqlens=cu_seqlens,
-                )
-            elif _triton_fused_recurrent_gdn2 is not None:
-                o, recurrent_state = _triton_fused_recurrent_gdn2(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b,
-                    w=w,
-                    A_log=self.A_log,
-                    dt_bias=self.dt_bias,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache or False,
-                    use_qk_l2norm_in_kernel=True,
-                    use_gate_in_kernel=False,
-                    cu_seqlens=cu_seqlens,
-                )
-            else:
+            try:
+                if mode == "chunk" and _triton_chunk_gdn2 is not None:
+                    o, recurrent_state = _triton_chunk_gdn2(
+                        q=q,
+                        k=k,
+                        v=v,
+                        g=g,
+                        b=b,
+                        w=w,
+                        A_log=self.A_log,
+                        dt_bias=self.dt_bias,
+                        initial_state=recurrent_state,
+                        output_final_state=use_cache or False,
+                        use_qk_l2norm_in_kernel=True,
+                        use_gate_in_kernel=False,
+                        cu_seqlens=cu_seqlens,
+                    )
+                elif _triton_fused_recurrent_gdn2 is not None:
+                    o, recurrent_state = _triton_fused_recurrent_gdn2(
+                        q=q,
+                        k=k,
+                        v=v,
+                        g=g,
+                        b=b,
+                        w=w,
+                        A_log=self.A_log,
+                        dt_bias=self.dt_bias,
+                        initial_state=recurrent_state,
+                        output_final_state=use_cache or False,
+                        use_qk_l2norm_in_kernel=True,
+                        use_gate_in_kernel=False,
+                        cu_seqlens=cu_seqlens,
+                    )
+                else:
+                    use_cuda_triton = False
+            except (RuntimeError, TypeError, ValueError, AttributeError, ImportError) as e:
+                _warn_fallback_once(f"Triton kernel failed ({e}), falling back to pure PyTorch")
                 use_cuda_triton = False
+                o = None
 
         if not use_cuda_triton:
             _warn_fallback_once("Triton/CUDA unavailable or CPU tensor")

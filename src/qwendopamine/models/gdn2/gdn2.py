@@ -13,6 +13,7 @@ GDN-2 extends KDA's scalar-beta erase gate to channel-wise erase (`b`) and write
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import Any, Literal, cast
 
@@ -361,7 +362,15 @@ class GatedDeltaNet2(nn.Module):
                 )
             )
         )
-        self.dt_bias = nn.Parameter(torch.ones(self.num_heads))
+        cast(Any, self.A_log)._no_weight_decay = True
+        dt = torch.exp(
+            torch.rand(self.key_dim, dtype=torch.float32)
+            * (math.log(0.1) - math.log(0.001))
+            + math.log(0.001)
+        ).clamp(min=1e-4)
+        inv_dt = dt + torch.log(-torch.expm1(-dt))
+        self.dt_bias = nn.Parameter(inv_dt)
+        cast(Any, self.dt_bias)._no_weight_decay = True
 
         # Output normalization and projection
         self.g_proj = nn.Sequential(
@@ -370,6 +379,17 @@ class GatedDeltaNet2(nn.Module):
         )
         self.o_norm = RMSNormGated(self.head_v_dim, eps=self.norm_eps)
         self.o_proj = nn.Linear(self.value_dim, self.hidden_size, bias=False)
+
+        self.apply(self._initialize_weights)
+
+    def _initialize_weights(self, module: nn.Module) -> None:
+        if getattr(module, "_is_hf_initialized", False):
+            return
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight, gain=2 ** -2.5)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        cast(Any, module)._is_hf_initialized = True
 
     def _get_cache(
         self, past_key_values: Cache | dict[str, Any] | None
@@ -491,11 +511,10 @@ class GatedDeltaNet2(nn.Module):
             k = F.silu(self.k_proj(hidden_states))
             v = F.silu(self.v_proj(hidden_states))
 
-        # Log decay computation
-        g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
-            self.f_proj(hidden_states).float()
-            + self.dt_bias.repeat_interleave(self.head_k_dim)
-        )
+        g = (
+            -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
+            * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
+        ).to(hidden_states.dtype)
 
         # Gates
         b = self.b_proj(hidden_states).sigmoid()

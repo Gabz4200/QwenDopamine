@@ -21,6 +21,7 @@ class GDN2Config:
     norm_eps: float = 1e-5
     block_size: int = 4096
     vocab_size: int = 32000
+    num_layers: int = 24
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> GDN2Config:
@@ -41,6 +42,7 @@ configs = [
         "hidden_size": 2304,
         "num_heads": 18,
         "head_dim": 128,
+        "num_layers": 24,
         "conv_size": 4,
         "norm_eps": 1e-5,
     },

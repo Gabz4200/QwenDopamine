@@ -45,7 +45,7 @@ class GPT(nn.Module):
         self.config = config
         self.embed = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList(
-            [Block(config, i) for i in range(1)]
+            [Block(config, i) for i in range(getattr(config, "num_layers", 24))]
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

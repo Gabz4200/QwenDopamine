@@ -19,6 +19,7 @@ from qwendopamine.models.qwen35 import (
     Qwen3_5TextConfig,
     Qwen3_5TextModel,
 )
+from qwendopamine.models.surprise_gpt import SurpriseGPT, SurpriseGPTConfig
 
 __all__ = [
     "GatedDeltaNet2",
@@ -34,6 +35,8 @@ __all__ = [
     "Qwen3_5TextModel",
     "RMSNorm",
     "ResearchDecoder",
+    "SurpriseGPT",
+    "SurpriseGPTConfig",
     "TokenEmbeddings",
     "build_model",
     "build_reference_model",

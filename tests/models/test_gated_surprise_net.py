@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import torch
+from torch.nn import functional as F
 from transformers.cache_utils import DynamicCache
 
 from qwendopamine.blocks import GatedSurpriseNetAdam, GatedSurpriseNetBlock
@@ -232,3 +233,102 @@ def test_when_gated_surprise_net_cuda_then_runs_on_device() -> None:
     out, _, _ = layer(x)
     assert out.device == device
     assert out.shape == (2, 8, 64)
+
+
+def test_when_hybrid_gpt_config_presets_resolved_then_matches_1b_spec() -> None:
+    from qwendopamine.models.surprise_gpt import (
+        SurpriseGPTConfig,
+        compute_model_params,
+    )
+
+    cfg_1b = SurpriseGPTConfig.from_name("1B")
+    assert cfg_1b.n_layer == 24
+    assert cfg_1b.n_embd == 2048
+    assert cfg_1b.n_head == 16
+    assert cfg_1b.n_query_groups == 8
+    assert cfg_1b.head_size == 128
+    assert cfg_1b.intermediate_size == 5504
+    assert cfg_1b.padded_vocab_size == cfg_1b.vocab_size
+
+    stats = compute_model_params(cfg_1b)
+    assert 1.3e9 <= stats["total"] <= 1.4e9
+    assert stats["num_standard_layers"] == 23
+    assert stats["num_surprise_layers"] == 1
+
+
+def test_when_hybrid_gpt_config_invalid_preset_then_raises_key_error() -> None:
+    from qwendopamine.models.surprise_gpt import SurpriseGPTConfig
+
+    with pytest.raises(KeyError, match="Unknown config name"):
+        SurpriseGPTConfig.from_name("invalid_preset_name")
+
+
+def test_when_causal_self_attention_incompatible_heads_then_raises_value_error() -> None:
+    from qwendopamine.models.surprise_gpt import (
+        CausalSelfAttention,
+        SurpriseGPTConfig,
+    )
+
+    bad_cfg = SurpriseGPTConfig(
+        n_embd=256, n_head=7, n_query_groups=4, head_size=32
+    )
+    with pytest.raises(ValueError, match="divisible by n_query_groups"):
+        CausalSelfAttention(bad_cfg, layer_idx=0, n_embd=256)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+def test_when_apply_rotary_emb_called_then_preserves_exact_dtype(
+    dtype: torch.dtype,
+) -> None:
+    from qwendopamine.models.surprise_gpt import (
+        apply_rotary_emb,
+        build_rope_cache,
+    )
+
+    device = torch.device("cpu")
+    cos, sin = build_rope_cache(16, 32, torch.float32, device)
+    q = torch.randn(2, 16, 4, 32, dtype=dtype)
+    q_rot = apply_rotary_emb(q, cos, sin)
+
+    assert q_rot.dtype == dtype
+    assert q_rot.shape == q.shape
+    assert not torch.isnan(q_rot.float()).any()
+
+
+def test_when_block_constructed_then_routes_center_layer_to_surprise_net() -> None:
+    from qwendopamine.models.surprise_gpt import Block, SurpriseGPTConfig
+
+    cfg4 = SurpriseGPTConfig.from_name("tiny", n_layer=4)
+    assert Block(cfg4, 0).use_surprise_net is False
+    assert Block(cfg4, 1).use_surprise_net is False
+    assert Block(cfg4, 2).use_surprise_net is True
+    assert Block(cfg4, 3).use_surprise_net is False
+
+    cfg6 = SurpriseGPTConfig.from_name("small", n_layer=6)
+    assert Block(cfg6, 3).use_surprise_net is True
+    assert Block(cfg6, 0).use_surprise_net is False
+
+
+def test_when_hybrid_gpt_forward_backward_then_loss_and_gradients_compute() -> None:
+    from qwendopamine.models.surprise_gpt import SurpriseGPT, SurpriseGPTConfig
+
+    cfg = SurpriseGPTConfig.from_name(
+        "tiny", vocab_size=100, block_size=32, train_chunk_size=16
+    )
+    model = SurpriseGPT(cfg)
+    x = torch.randint(0, 100, (2, 16))
+    y = torch.randint(0, 100, (2, 16))
+
+    logits = model(x)
+    assert logits.shape == (2, 16, 100)
+    assert not torch.isnan(logits).any()
+
+    loss = F.cross_entropy(logits.reshape(-1, 100), y.reshape(-1))
+    loss.backward()
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            assert param.grad is not None, f"Parameter {name} missing gradient"
+            assert not torch.isnan(
+                param.grad
+            ).any(), f"Parameter {name} has NaN gradient"

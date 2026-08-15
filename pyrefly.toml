@@ -91,10 +91,3 @@ missing-import = false
 unbound-name = false
 not-callable = false
 
-[[sub-config]]
-matches = "notebooks/**"
-[sub-config.errors]
-implicit-import = false
-implicit-any = false
-unannotated-return = false
-unannotated-parameter = false

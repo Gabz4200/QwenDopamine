@@ -22,7 +22,13 @@ import torch.nn.functional as F
 from torch import nn
 
 try:
-    from huggingface_hub.dataclasses import strict
+    from huggingface_hub.dataclasses import strict as _hf_strict
+
+    def strict(cls: Any) -> Any:
+        try:
+            return _hf_strict(cls)
+        except Exception:  # noqa: BLE001
+            return cls
 except ImportError:
     def strict(cls: Any) -> Any:
         return cls
@@ -112,13 +118,13 @@ except ImportError:
 
 try:
     from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
-except ImportError:
+except Exception:  # noqa: BLE001
     class Qwen3ForCausalLM(nn.Module):  # type: ignore[no-redef]
         pass
 
 try:
     from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
-except ImportError:
+except Exception:  # noqa: BLE001
     class Qwen3NextConfig:  # type: ignore[no-redef]
         pass
 
@@ -136,7 +142,7 @@ try:
         torch_chunk_gated_delta_rule,
         torch_recurrent_gated_delta_rule,
     )
-except ImportError:
+except Exception:  # noqa: BLE001
     class Qwen3NextAttention(nn.Module):  # type: ignore[no-redef]
         pass
 
@@ -166,7 +172,10 @@ try:
         Qwen3VLConfig,
         Qwen3VLVisionConfig,
     )
-except ImportError:
+except Exception:  # noqa: BLE001
+    # transformers 5.x can raise import-time errors (e.g. StrictDataclassDefinitionError
+    # from `huggingface_hub.dataclasses.strict` on old hub) when the class is not a
+    # dataclass at module-import time; fall back to placeholders.
     class Qwen3VLConfig:  # type: ignore[no-redef]
         pass
 
@@ -182,7 +191,10 @@ try:
         Qwen3VLVisionModel,
         Qwen3VLVisionRotaryEmbedding,
     )
-except ImportError:
+except Exception:  # noqa: BLE001
+    # transformers 5.x can raise import-time errors (e.g. StrictDataclassDefinitionError
+    # from `huggingface_hub.dataclasses.strict` on old hub) when a class is not a
+    # dataclass at module-import time; fall back to placeholders.
     class Qwen3VLForConditionalGeneration(nn.Module):  # type: ignore[no-redef]
         pass
 
@@ -439,7 +451,6 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
     ):
         hidden_states = apply_mask_to_padding_states(hidden_states, attention_mask)
 
-        # Set up dimensions for reshapes later
         batch_size, seq_len, _ = hidden_states.shape
         use_precomputed_states = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
 
@@ -530,11 +541,9 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
                 **kwargs,
             )
 
-        # Update cache
         if cache_params is not None:
             cache_params.update_recurrent_state(last_recurrent_state, self.layer_idx)
 
-        # reshape input data into 2D tensor
         core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
         z = z.reshape(-1, self.head_v_dim)
         core_attn_out = self.norm(core_attn_out, z)
@@ -754,7 +763,6 @@ class Qwen3_5TextModel(Qwen3NextModel):
                 "past_key_values": past_key_values,
                 "position_ids": text_position_ids,
             }
-            # Create the masks
             causal_mask_mapping = {
                 "full_attention": create_causal_mask(**mask_kwargs),
                 "linear_attention": create_recurrent_attention_mask(**mask_kwargs),

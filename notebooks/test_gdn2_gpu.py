@@ -1,381 +1,840 @@
-"""GDN-2 GPU smoke test for Kaggle.
+"""Kaggle 2xT4 GPU smoke-test + FineWeb-Edu Micro training for GatedDeltaNet-2 (GDN-2) GPT Model.
 
-Install from GitHub, then run a tiny training run on real text data to verify
-the Gated DeltaNet-2 implementation actually learns on GPU.
+Architecture:
+  Transformer-based GPT Decoder model (1.3B scale specification) with
+  pre-layer RMSNorm, SwiGLU MLP, RoPE positional embeddings, CausalSelfAttention (GQA),
+  and GatedDeltaNet2 token mixer positioned at the center layer.
 
-Expected hardware: 2x T4 or P100 on Kaggle.
-Expected runtime: ~5-10 minutes for the full notebook.
+Part 1 — Sanity checks & 1.3B Architecture Inspection
+  1. 1.3B Model Specification & parameter breakdown inspection (~1.35B params).
+  2. Synthetic overfit on hybrid GPT model with central GatedDeltaNet-2 block.
+  3. GDN-2 Recurrence scan & state validity check via torch_recurrent_gdn2.
+
+Part 2 — FineWeb-Edu Micro LM training
+  Load bhavnicksm/fineweb-edu-micro (1M tokens, high-quality educational passages),
+  build the 1.3B hybrid Transformer + central GatedDeltaNet-2 GPT model, train with
+  gradient checkpointing + AMP + DDP + early stopping, and log cross-entropy loss,
+  perplexity, and negative log-likelihood.
+
+Designed for Kaggle with 2x T4 GPUs. Uses ``torch.distributed`` DDP
+when multiple GPUs are detected; falls back to single-GPU/CPU otherwise.
+
+Run on Kaggle::
+
+    python notebooks/test_gdn2_gpu.py
 """
 
+from __future__ import annotations
+
 import importlib.metadata
+import math
 import os
 import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
+from typing import Any
 
 import fcntl
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import torch
+import torch.distributed as dist
+from datasets import load_dataset
+from matplotlib import ticker
+from torch import nn
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
+from transformers import AutoTokenizer
 
 REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
 PIP_REPO_URL = "git+" + REPO_URL
+
 _LOCK_PATH = os.path.join(tempfile.gettempdir(), "qwendopamine_gdn2_setup.lock")
 
 
-def _is_qwendopamine_installed() -> bool:
-    try:
-        importlib.metadata.version("qwendopamine")
-        return True
-    except importlib.metadata.PackageNotFoundError:
-        return False
+def _ensure_dependencies() -> None:
+    def _check() -> tuple[bool, bool]:
+        need_mask = False
+        try:
+            import transformers.masking_utils
 
+            need_mask = not hasattr(
+                transformers.masking_utils, "create_recurrent_attention_mask"
+            )
+        except (ImportError, AttributeError):
+            need_mask = True
 
-print("[setup] Checking qwendopamine import...")
-if not _is_qwendopamine_installed():
+        try:
+            importlib.metadata.version("qwendopamine")
+            need_qwen = False
+        except importlib.metadata.PackageNotFoundError:
+            need_qwen = True
+
+        return need_mask, need_qwen
+
+    need_mask, need_qwen = _check()
+    if not (need_mask or need_qwen):
+        return
+
     with open(_LOCK_PATH, "w") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            if not _is_qwendopamine_installed():
-                print(f"[setup] Installing from {PIP_REPO_URL} ...")
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "pip",
-                        "install",
-                        "--upgrade-strategy",
-                        "only-if-needed",
-                        PIP_REPO_URL,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                if result.stdout:
-                    print(result.stdout, end="")
-                if result.stderr:
-                    print(result.stderr, end="", file=sys.stderr)
+            need_mask, need_qwen = _check()
+            if not (need_mask or need_qwen):
+                return
+
+            to_install: list[str] = []
+            if need_mask:
+                to_install.append("transformers>=4.49.0")
+            if need_qwen:
+                to_install.append(PIP_REPO_URL)
+
+            print(
+                "[setup] Installing/upgrading dependencies "
+                f"({', '.join(to_install)})..."
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade-strategy",
+                    "only-if-needed",
+                ]
+                + to_install,
+                check=True,
+            )
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
-import qwendopamine
-print(f"[setup] Using qwendopamine {qwendopamine.__version__}")
 
-import torch
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
+_ensure_dependencies()
 
-from qwendopamine.blocks import GatedDeltaNet2Block
-from qwendopamine.models.normalization import RMSNorm
+from qwendopamine.models.gdn2.gdn2 import (
+    GatedDeltaNet2,
+    torch_recurrent_gdn2,
+)
+from qwendopamine.models.surprise_gpt import (
+    Block,
+    CausalSelfAttention,
+    GDN2GPT,
+    GDN2GPTConfig,
+    LLaMAMLP,
+    RMSNorm,
+    SwiGLU,
+    apply_rotary_emb,
+    build_rope_cache,
+    compute_model_params,
+)
 
-# ---------------------------------------------------------------------------
-# Cell 2: Device and dtype setup
-# ---------------------------------------------------------------------------
+GPT = GDN2GPT
+Config = GDN2GPTConfig
+
+LOCAL_RANK = int(os.environ.get("LOCAL_RANK", "0"))
+RANK = int(os.environ.get("RANK", "0"))
+WORLD_SIZE = int(os.environ.get("WORLD_SIZE", "1"))
+
 has_cuda = torch.cuda.is_available()
-device = torch.device("cuda" if has_cuda else "cpu")
-dtype = (
-    torch.bfloat16
-    if (has_cuda and torch.cuda.is_bf16_supported())
-    else (torch.float16 if has_cuda else torch.float32)
-)
-
-print(f"[env] device={device}, dtype={dtype}")
 if has_cuda:
-    print(f"[env] GPU: {torch.cuda.get_device_name(0)}")
-    print(f"[env] BF16 supported: {torch.cuda.is_bf16_supported()}")
+    if WORLD_SIZE > 1 and not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+        torch.cuda.set_device(LOCAL_RANK)
+    device = torch.device("cuda", LOCAL_RANK)
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 else:
-    print("[env] Running on CPU")
+    if WORLD_SIZE > 1 and not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+    device = torch.device("cpu")
+    dtype = torch.float32
 
-# ---------------------------------------------------------------------------
-# Cell 3: Load real dataset (TinyStories) with fallback
-# ---------------------------------------------------------------------------
-# TinyStories is a small LM-friendly dataset of short stories.
-# We stream a small subset to keep download and training time low.
-# If dataset loading fails (e.g. no internet), we fall back to a small
-# embedded real text corpus.
-
-USE_DATASET = True
-NUM_TRAIN_EXAMPLES = 2000
-SEQ_LEN = 128
-
-try:
-    from datasets import load_dataset
-
-    print("[data] Loading TinyStories (streaming, small subset)...")
-    ds = load_dataset(
-        "roneneldan/TinyStories",
-        split="train",
-        streaming=True,
-        trust_remote_code=True,
-    )
-    ds_iter = iter(ds.take(NUM_TRAIN_EXAMPLES))
-    texts = [row["text"] for row in ds_iter if row["text"].strip()]
-    print(f"[data] Loaded {len(texts)} real stories from TinyStories")
-except (OSError, RuntimeError, ValueError, ImportError) as e:
-    print(f"[data] Could not load dataset ({e}); using embedded real text fallback")
-    USE_DATASET = False
-    # A small slice of real public-domain text (Shakespeare, etc.)
-    # This is real language, just much smaller.
-    texts = [
-        (
-            "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer "
-            "The slings and arrows of outrageous fortune, Or to take arms against a sea of troubles "
-            "And by opposing end them. To die: to sleep; No more; and by a sleep to say we end "
-            "The heart-ache and the thousand natural shocks That flesh is heir to: 'tis a consummation "
-            "Devoutly to be wish'd. To die, to sleep; To sleep: perchance to dream: ay, there's the rub; "
-            "For in that sleep of death what dreams may come When we have shuffled off this mortal coil, "
-            "Must give us pause."
-        ),
-        (
-            "All the world's a stage, And all the men and women merely players; They have their exits "
-            "and their entrances, And one man in his time plays many parts, His acts being seven ages. "
-            "At first the infant, Mewling and puking in the nurse's arms; And then the whining schoolboy, "
-            "with his satchel And shining morning face, creeping like snail Unwillingly to school."
-        ),
-        (
-            "Shall I compare thee to a summer's day? Thou art more lovely and more temperate: "
-            "Rough winds do shake the darling buds of May, And summer's lease hath all too short a date; "
-            "Sometime too hot the eye of heaven shines, And often is his gold complexion dimm'd; "
-            "And every fair from fair sometime declines, By chance, or nature's changing course untrimm'd."
-        ),
-        (
-            "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age "
-            "of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season "
-            "of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair."
-        ),
-        (
-            "Call me Ishmael. Some years ago, never mind how long precisely, having little or no money in "
-            "my purse, and nothing particular to interest me on shore, I thought I would sail about a little "
-            "and see the watery part of the world. It is a way I have of driving off the spleen and "
-            "regulating the circulation."
-        ),
-        (
-            "In the beginning God created the heaven and the earth. And the earth was without form, and "
-            "void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face "
-            "of the waters. And God said, Let there be light: and there was light. And God saw the light, "
-            "that it was good: and God divided the light from the darkness."
-        ),
-        (
-            "It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his "
-            "chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through "
-            "the glass doors of Victory Mansions, though not quickly enough to prevent a swirl of gritty "
-            "dust from entering along with him."
-        ),
-        (
-            "Mr. and Mrs. Dursley, of number four, Privet Drive, were proud to say that they were "
-            "perfectly normal, thank you very much. They were the last people you'd expect to be involved "
-            "in anything strange or mysterious, because they just didn't hold with such nonsense."
-        ),
-        (
-            "The man in black fled across the desert, and the gunslinger followed. The desert was the "
-            "apotheosis of all deserts, and the gunslinger had been in many. He was a creature of the "
-            "old world, a relic of a time when men walked the earth in search of something other than "
-            "their own reflections."
-        ),
-        (
-            "Sitting at his desk, Winston dipped his pen into the ink and stared at the blank page "
-            "before him. The telescreen on the wall was broadcasting a speech about the victories of "
-            "the Party, but he was not listening. His mind was on the forbidden thought that had crept "
-            "into his consciousness like a thief in the night."
-        ),
-    ] * 200  # repeat to get enough data
-    print(f"[data] Using embedded real text fallback ({len(texts)} passages)")
-
-# ---------------------------------------------------------------------------
-# Cell 4: Build character-level tokenizer (no extra downloads)
-# ---------------------------------------------------------------------------
-# Character-level tokenization is robust, requires no pretrained tokenizer,
-# and works on any text. For a smoke test, it's sufficient to verify that
-# the model can learn real language statistics.
-
-class CharTokenizer:
-    def __init__(self, texts: list[str]):
-        # Build vocabulary from all characters in the text
-        chars = sorted(set("".join(texts)))
-        self.vocab = {ch: i for i, ch in enumerate(chars)}
-        self.vocab["<pad>"] = len(self.vocab)
-        self.vocab["<unk>"] = len(self.vocab)
-        self.inv_vocab = {i: ch for ch, i in self.vocab.items()}
-        self.vocab_size = len(self.vocab)
-
-    def encode(self, text: str) -> list[int]:
-        return [self.vocab.get(ch, self.vocab["<unk>"]) for ch in text]
-
-    def decode(self, ids: list[int]) -> str:
-        return "".join(self.inv_vocab.get(i, "<unk>") for i in ids)
-
-
-tokenizer = CharTokenizer(texts)
-print(f"[data] Char vocab size: {tokenizer.vocab_size}")
-
-# ---------------------------------------------------------------------------
-# Cell 5: Prepare dataset
-# ---------------------------------------------------------------------------
-# Encode all texts, then create fixed-length sequences.
-# Target = input shifted by 1 token (next-token prediction).
-
-torch.manual_seed(42)
-
-all_tokens: list[int] = []
-for text in texts:
-    all_tokens.extend(tokenizer.encode(text))
-
-print(f"[data] Total tokens: {len(all_tokens):,}")
-
-# Create sequences
-seqs = []
-for i in range(0, len(all_tokens) - SEQ_LEN - 1, SEQ_LEN):
-    seqs.append(all_tokens[i : i + SEQ_LEN + 1])  # input + target
-
-# Filter out any sequences that contain unknown tokens (shouldn't happen)
-seqs = [s for s in seqs if max(s) < tokenizer.vocab_size and min(s) >= 0]
-
-if not seqs:
-    raise RuntimeError("No valid sequences created. Check tokenization.")
-
-inputs = torch.tensor([s[:-1] for s in seqs], dtype=torch.long)
-targets = torch.tensor([s[1:] for s in seqs], dtype=torch.long)
-
-print(f"[data] Sequences: {inputs.shape[0]}, seq_len={SEQ_LEN}")
-
-train_ds = TensorDataset(inputs, targets)
-train_dl = DataLoader(train_ds, batch_size=16, shuffle=True, drop_last=True)
-
-# ---------------------------------------------------------------------------
-# Cell 6: Model config
-# ---------------------------------------------------------------------------
-class ModelConfig:
-    hidden_size: int = 256
-    num_heads: int = 8
-    head_dim: int = 32
-    expand_v: float = 1.0
-    num_v_heads: int = 8
-    rms_norm_eps: float = 1e-6
-    conv_size: int = 4
-    conv_bias: bool = False
-    allow_neg_eigval: bool = False
-    gdn2_kernel_mode: str = "chunk"  # use GPU kernel when available
-
-config = ModelConfig()
-
-# ---------------------------------------------------------------------------
-# Cell 7: Build model
-# ---------------------------------------------------------------------------
-class TinyGDN2LM(nn.Module):
-    def __init__(self, cfg: ModelConfig, vocab_size: int):
-        super().__init__()
-        self.cfg = cfg
-        self.vocab_size = vocab_size
-        self.hidden_size = cfg.hidden_size
-
-        self.embed = nn.Embedding(vocab_size, cfg.hidden_size)
-        self.block = GatedDeltaNet2Block(cfg, layer_idx=0)
-        self.norm_out = RMSNorm(cfg.hidden_size, eps=cfg.rms_norm_eps)
-        self.lm_head = nn.Linear(cfg.hidden_size, vocab_size, bias=False)
-
-        self._init_weights()
-
-    def _init_weights(self):
-        nn.init.normal_(self.embed.weight, std=0.02)
-        nn.init.normal_(self.lm_head.weight, std=0.02)
-
-    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        x = self.embed(input_ids)
-        x = self.block(x)
-        x = self.norm_out(x)
-        return self.lm_head(x)
-
-
-model = TinyGDN2LM(config, vocab_size=tokenizer.vocab_size).to(device=device, dtype=dtype)
-
-total_params = sum(p.numel() for p in model.parameters())
-trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"[model] total params: {total_params:,}")
-print(f"[model] trainable params: {trainable_params:,}")
-
-# Warm-up forward pass
-model.eval()
-with torch.no_grad():
-    dummy = torch.zeros(1, SEQ_LEN, dtype=torch.long, device=device)
-    _ = model(dummy)
-print("[model] forward pass OK")
-
-# ---------------------------------------------------------------------------
-# Cell 8: Training loop
-# ---------------------------------------------------------------------------
-model.train()
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-loss_fn = nn.CrossEntropyLoss()
-
-num_steps = 500
-log_interval = 50
-loss_history = []
-
-print(f"[train] starting for {num_steps} steps...")
-t0 = time.time()
-
-for step, (xb, yb) in enumerate(train_dl):
-    xb = xb.to(device)
-    yb = yb.to(device)
-
-    logits = model(xb)
-    loss = loss_fn(logits.reshape(-1, tokenizer.vocab_size), yb.reshape(-1))
-
-    optimizer.zero_grad()
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    optimizer.step()
-
-    loss_val = loss.item()
-    loss_history.append(loss_val)
-
-    if step % log_interval == 0:
-        elapsed = time.time() - t0
-        print(f"  step {step:4d}/{num_steps}  loss={loss_val:.4f}  "
-              f"time={elapsed:.1f}s")
-
-    if step >= num_steps:
-        break
-
-print(f"[train] done in {time.time() - t0:.1f}s")
-print(f"[train] final loss: {loss_history[-1]:.4f}")
-print(f"[train] first loss: {loss_history[0]:.4f}")
-print(f"[train] loss reduction: {loss_history[0] - loss_history[-1]:.4f}")
-
-# ---------------------------------------------------------------------------
-# Cell 9: Sanity checks
-# ---------------------------------------------------------------------------
-initial_loss = loss_history[0]
-final_loss = loss_history[-1]
-
-assert final_loss < initial_loss * 0.5, (
-    f"GDN-2 did not learn: loss went from {initial_loss:.4f} to {final_loss:.4f}"
+print(
+    f"[env] rank={RANK}/{WORLD_SIZE}  local_rank={LOCAL_RANK}  "
+    f"device={device}  dtype={dtype}"
 )
-print("[check] Loss decreased by >50%: PASS")
+if has_cuda:
+    print(f"[env] GPU: {torch.cuda.get_device_name(LOCAL_RANK)}")
 
-assert torch.isfinite(torch.tensor(final_loss)), "Final loss is not finite"
-print("[check] Final loss is finite: PASS")
+IS_MAIN = RANK == 0
 
-model.eval()
-with torch.no_grad():
-    xb_check, yb_check = next(iter(train_dl))
-    xb_check = xb_check.to(device)
-    yb_check = yb_check.to(device)
-    logits_check = model(xb_check)
-    loss_check = loss_fn(logits_check.reshape(-1, tokenizer.vocab_size), yb_check.reshape(-1))
-    assert torch.isfinite(loss_check), "Eval loss is not finite"
-print("[check] Eval loss finite: PASS")
 
-# Decode a sample to verify model sees real text structure
-sample_input = inputs[0][:SEQ_LEN].tolist()
-sample_text = tokenizer.decode(sample_input)
-print(f"\n[sample] Real text from dataset:\n{sample_text[:200]}...")
+def inspect_1b_architecture() -> None:
+    """Inspect and print the 1.3B scale model specification."""
+    cfg_1b = Config.from_name("1B", mixer_type="gdn2")
+    stats = compute_model_params(cfg_1b)
+    center_idx = cfg_1b.n_layer // 2
 
-print("\n[summary]")
-print("  Model: TinyGDN2LM (1x GatedDeltaNet2Block)")
-print(f"  Params: {total_params:,}")
-print(f"  Device: {device}")
-print(f"  Data: {'TinyStories' if USE_DATASET else 'embedded real text'}")
-print(f"  Kernel mode: {config.gdn2_kernel_mode}")
-print(f"  Training steps: {num_steps}")
-print(f"  Loss: {initial_loss:.4f} -> {final_loss:.4f}")
-print("  Result: GDN-2 learns on real text with GPU kernel.")
+    print("=" * 60)
+    print(f"1.3B Model Specification ({cfg_1b.name} - GatedDeltaNet2)")
+    print("=" * 60)
+    print(
+        f"  Total Parameters:        {stats['total']:,} (~{stats['total']/1e9:.2f}B)"
+    )
+    print(f"  Layers (n_layer):        {cfg_1b.n_layer}")
+    print(f"  Hidden Dim (n_embd):     {cfg_1b.n_embd}")
+    print(
+        f"  Attention Heads:         {cfg_1b.n_head} (head_size={cfg_1b.head_size})"
+    )
+    print(f"  GQA KV Groups:           {cfg_1b.n_query_groups}")
+    print(f"  SwiGLU Intermediate:     {cfg_1b.intermediate_size}")
+    print(f"  Vocabulary Size:         {cfg_1b.vocab_size:,}")
+    print(f"  Max Context Length:      {cfg_1b.block_size:,}")
+    print(f"  Center Layer Index:      Layer {center_idx} (GatedDeltaNet2)")
+    print(
+        f"  Standard Layers:         {stats['num_standard_layers']}x CausalSelfAttention"
+    )
+    print(
+        f"  GDN-2 Layers:            {stats['num_surprise_layers']}x GatedDeltaNet2"
+    )
+    print(f"  Standard Block Params:   {stats['standard_block']:,}")
+    print(f"  Center GDN-2 Block:      {stats['surprise_block']:,}")
+    print(f"  Token Embeddings:        {stats['embed']:,}")
+    print("=" * 60)
+
+
+def run_synthetic_overfit() -> tuple[float, float, bool]:
+    """Verify learning on a small GPT model with central GatedDeltaNet2."""
+    torch.manual_seed(0)
+    vocab_size = 64
+    seq_len = 32
+    batch_size = 4
+    synth_steps = 200
+
+    cfg = Config(
+        name="synthetic_hybrid_gdn2",
+        block_size=seq_len,
+        vocab_size=vocab_size,
+        padded_vocab_size=vocab_size,
+        n_layer=4,
+        n_head=4,
+        n_embd=128,
+        head_size=32,
+        n_query_groups=4,
+        intermediate_size=344,
+        norm_eps=1e-5,
+        train_chunk_size=seq_len,
+        mixer_type="gdn2",
+    )
+    model = GPT(cfg).to(device=device, dtype=dtype)
+
+    if WORLD_SIZE > 1:
+        model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
+
+    model.train()
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    if IS_MAIN:
+        print(f"[synth] params: {total_params:,}  trainable: {trainable:,}")
+        center_layer = cfg.n_layer // 2
+        print(f"[synth] Center GatedDeltaNet2 placed at layer {center_layer}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    loss_fn = nn.CrossEntropyLoss()
+
+    x = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+    y = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+
+    initial_loss = 0.0
+    final_loss_val = 0.0
+    for step in range(synth_steps):
+        optimizer.zero_grad()
+        logits = model(x)
+        loss = loss_fn(logits.reshape(-1, vocab_size), y.reshape(-1))
+        loss.backward()
+        optimizer.step()
+        if step == 0:
+            initial_loss = float(loss.item())
+        final_loss_val = float(loss.item())
+        if step % 50 == 0 and IS_MAIN:
+            print(f"[synth] step {step:03d}  loss={loss.item():.4f}")
+
+    if IS_MAIN:
+        print(f"[synth] initial={initial_loss:.4f}  final={final_loss_val:.4f}")
+
+    passed = final_loss_val < initial_loss * 0.5 and math.isfinite(
+        final_loss_val
+    )
+    return initial_loss, final_loss_val, passed
+
+
+@torch.no_grad()
+def run_serial_chunk_parity() -> bool:
+    """Verify validity and finiteness of GDN-2 recurrent scan."""
+    bs, t, h, d_k, d_v = 2, 32, 4, 16, 16
+    torch.manual_seed(42)
+    q = torch.randn(bs, t, h, d_k, device=device, dtype=dtype)
+    k = torch.randn(bs, t, h, d_k, device=device, dtype=dtype)
+    v = torch.randn(bs, t, h, d_v, device=device, dtype=dtype)
+    g = torch.randn(bs, t, h, d_k, device=device, dtype=dtype).abs_().mul_(-1)
+    b = torch.rand(bs, t, h, d_k, device=device, dtype=dtype)
+    w = torch.rand(bs, t, h, d_v, device=device, dtype=dtype)
+
+    out_1, state_1 = torch_recurrent_gdn2(
+        q,
+        k,
+        v,
+        g,
+        b,
+        w,
+        initial_state=None,
+        output_final_state=True,
+        use_qk_l2norm_in_kernel=True,
+    )
+
+    passed = torch.all(torch.isfinite(out_1)).item() and (
+        state_1 is not None and torch.all(torch.isfinite(state_1)).item()
+    )
+    if not passed and IS_MAIN:
+        print("[parity] GDN-2 recurrence scan: FAIL")
+    return bool(passed)
+
+
+@dataclass
+class FineWebMicroConfig:
+    dataset_name: str = "bhavnicksm/fineweb-edu-micro"
+    max_seq_len: int = 512
+    max_train_examples: int | None = None
+    max_val_examples: int | None = None
+    batch_size: int = 2
+    val_split_ratio: float = 0.1
+    seed: int = 42
+
+
+def load_fineweb_micro_tokenized(
+    cfg: FineWebMicroConfig, tokenizer: Any
+) -> tuple[TensorDataset, TensorDataset]:
+    """Load and tokenize passages from bhavnicksm/fineweb-edu-micro."""
+    if IS_MAIN:
+        print(f"[data] Loading dataset '{cfg.dataset_name}' ...")
+    try:
+        ds = load_dataset(cfg.dataset_name)
+    except TypeError:
+        ds = load_dataset(cfg.dataset_name, trust_remote_code=True)
+
+    raw_train = ds["train"]
+    split = raw_train.train_test_split(
+        test_size=cfg.val_split_ratio, seed=cfg.seed
+    )
+
+    def encode_split(split_data: Any, max_examples: int | None) -> list[list[int]]:
+        texts: list[str] = []
+        for ex in split_data:
+            txt = ex.get("text", "").strip()
+            if txt:
+                texts.append(txt)
+            if max_examples is not None and len(texts) >= max_examples:
+                break
+        if IS_MAIN:
+            print(f"[data] Loaded {len(texts)} educational passages")
+
+        all_tokens: list[int] = []
+        eos_id = tokenizer.eos_token_id or 50256
+        for txt in texts:
+            ids = tokenizer(txt, truncation=False, add_special_tokens=False)[
+                "input_ids"
+            ]
+            all_tokens.extend(ids)
+            all_tokens.append(eos_id)
+
+        seqs: list[list[int]] = []
+        for i in range(0, len(all_tokens) - cfg.max_seq_len, cfg.max_seq_len):
+            seqs.append(all_tokens[i : i + cfg.max_seq_len + 1])
+        return seqs
+
+    train_seqs = encode_split(split["train"], cfg.max_train_examples)
+    val_seqs = encode_split(split["test"], cfg.max_val_examples)
+
+    if not train_seqs or not val_seqs:
+        raise RuntimeError("Failed to generate tokenized sequences from dataset.")
+
+    train_in = torch.tensor([s[:-1] for s in train_seqs], dtype=torch.long)
+    train_tgt = torch.tensor([s[1:] for s in train_seqs], dtype=torch.long)
+    val_in = torch.tensor([s[:-1] for s in val_seqs], dtype=torch.long)
+    val_tgt = torch.tensor([s[1:] for s in val_seqs], dtype=torch.long)
+
+    if IS_MAIN:
+        print(
+            f"[data] train sequences: {train_in.shape[0]} | "
+            f"val sequences: {val_in.shape[0]} (seq_len={cfg.max_seq_len})"
+        )
+    return TensorDataset(train_in, train_tgt), TensorDataset(val_in, val_tgt)
+
+
+@dataclass
+class TrainConfig:
+    num_steps: int = 1000
+    log_interval: int = 25
+    eval_interval: int = 100
+    lr: float = 3e-4
+    min_lr: float = 1e-5
+    weight_decay: float = 0.1
+    warmup_steps: int = 50
+    grad_clip: float = 1.0
+    grad_accum_steps: int = 4
+    use_amp: bool = True
+    early_stopping_patience: int = 4
+    early_stopping_min_delta: float = 1e-3
+
+
+def evaluate(
+    model: nn.Module,
+    val_dl: DataLoader,
+    loss_fn: nn.Module,
+    device: torch.device,
+    dtype: torch.dtype,
+    max_batches: int | None = None,
+) -> dict[str, float]:
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    nll_total = 0.0
+    eval_t0 = time.perf_counter()
+
+    with torch.no_grad():
+        for batch_idx, (xb, yb) in enumerate(val_dl):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+            xb = xb.to(device)
+            yb = yb.to(device)
+            with torch.autocast(
+                device_type=device.type,
+                dtype=dtype,
+                enabled=(device.type == "cuda"),
+            ):
+                logits = model(xb)
+            loss = loss_fn(logits.reshape(-1, logits.shape[-1]), yb.reshape(-1))
+            batch_tokens = yb.numel()
+            total_loss += float(loss.item()) * batch_tokens
+            total_tokens += batch_tokens
+            nll_total += float(loss.item()) * batch_tokens
+
+    eval_time = time.perf_counter() - eval_t0
+
+    if WORLD_SIZE > 1:
+        stats = torch.tensor(
+            [total_loss, total_tokens, nll_total], device=device
+        )
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+        total_loss, total_tokens, nll_total = stats.tolist()
+
+    avg_loss = total_loss / max(total_tokens, 1.0)
+    perplexity = math.exp(min(avg_loss, 50))
+    tps = total_tokens / max(eval_time, 1e-9)
+    return {
+        "val_loss": avg_loss,
+        "val_perplexity": perplexity,
+        "val_nll": nll_total,
+        "val_tokens": total_tokens,
+        "val_tps": tps,
+    }
+
+
+def train(
+    model: nn.Module,
+    train_dl: DataLoader,
+    val_dl: DataLoader,
+    cfg: TrainConfig,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> dict[str, list[float]]:
+    model.train()
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=cfg.lr,
+        betas=(0.9, 0.95),
+        weight_decay=cfg.weight_decay,
+        eps=1e-8,
+    )
+    loss_fn = nn.CrossEntropyLoss()
+
+    try:
+        scaler = torch.amp.GradScaler(
+            device.type,
+            enabled=(
+                device.type == "cuda"
+                and dtype == torch.float16
+                and cfg.use_amp
+            ),
+        )
+    except (AttributeError, TypeError):
+        scaler = torch.cuda.amp.GradScaler(
+            enabled=(
+                device.type == "cuda"
+                and dtype == torch.float16
+                and cfg.use_amp
+            )
+        )
+
+    history: dict[str, list[float]] = {
+        "train_loss": [],
+        "train_steps": [],
+        "val_loss": [],
+        "val_perplexity": [],
+        "val_nll": [],
+        "val_tps": [],
+        "val_steps": [],
+        "tokens_seen": [],
+        "lr": [],
+        "step_time_s": [],
+    }
+    tokens_seen = 0
+    t0 = time.perf_counter()
+    step = 0
+    epoch = 0
+    accum_loss = 0.0
+
+    best_val_loss = float("inf")
+    patience_counter = 0
+
+    while step < cfg.num_steps:
+        if isinstance(train_dl.sampler, DistributedSampler):
+            train_dl.sampler.set_epoch(epoch)
+        epoch += 1
+
+        for xb, yb in train_dl:
+            if step >= cfg.num_steps:
+                break
+
+            xb = xb.to(device)
+            yb = yb.to(device)
+
+            if step < cfg.warmup_steps:
+                lr = cfg.lr * (step + 1) / cfg.warmup_steps
+            else:
+                progress = (step - cfg.warmup_steps) / max(
+                    cfg.num_steps - cfg.warmup_steps, 1
+                )
+                lr = cfg.min_lr + (cfg.lr - cfg.min_lr) * 0.5 * (
+                    1.0 + math.cos(math.pi * progress)
+                )
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr
+
+            with torch.autocast(
+                device_type=device.type,
+                dtype=dtype,
+                enabled=(device.type == "cuda"),
+            ):
+                logits = model(xb)
+                loss = loss_fn(
+                    logits.reshape(-1, logits.shape[-1]), yb.reshape(-1)
+                )
+                loss = loss / cfg.grad_accum_steps
+
+            scaler.scale(loss).backward()
+            accum_loss += float(loss.item()) * cfg.grad_accum_steps
+            tokens_seen += yb.numel()
+
+            if (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == cfg.num_steps:
+                if cfg.grad_clip > 0:
+                    scaler.unscale_(optimizer)
+                    nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+
+            step_time = time.perf_counter() - t0
+
+            if step % cfg.log_interval == 0 and IS_MAIN:
+                avg_train_loss = accum_loss / max(
+                    1, (step % cfg.grad_accum_steps) + 1
+                )
+                history["train_loss"].append(avg_train_loss)
+                history["train_steps"].append(float(step))
+                history["tokens_seen"].append(float(tokens_seen))
+                history["lr"].append(lr)
+                history["step_time_s"].append(step_time)
+                print(
+                    f"[train] step {step:5d}  loss={avg_train_loss:.4f}  "
+                    f"lr={lr:.2e}  tok/s={tokens_seen / max(step_time, 1e-9):.0f}"
+                )
+                accum_loss = 0.0
+
+            if step % cfg.eval_interval == 0 and step > 0:
+                metrics = evaluate(
+                    model, val_dl, loss_fn, device, dtype, max_batches=50
+                )
+                if IS_MAIN:
+                    val_loss = metrics["val_loss"]
+                    history["val_loss"].append(val_loss)
+                    history["val_perplexity"].append(metrics["val_perplexity"])
+                    history["val_nll"].append(metrics["val_nll"])
+                    history["val_tps"].append(metrics["val_tps"])
+                    history["val_steps"].append(float(step))
+                    print(
+                        f"[eval]  step {step:5d}  loss={val_loss:.4f}  "
+                        f"ppl={metrics['val_perplexity']:.2f}  "
+                        f"nll={metrics['val_nll']:.2f}  "
+                        f"tps={metrics['val_tps']:.0f}"
+                    )
+
+                    # Early stopping check
+                    if val_loss < best_val_loss - cfg.early_stopping_min_delta:
+                        best_val_loss = val_loss
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                        if patience_counter >= cfg.early_stopping_patience:
+                            print(
+                                f"[early_stop] Validation loss plateaued for {patience_counter} "
+                                f"evaluations (best={best_val_loss:.4f}). Stopping early."
+                            )
+                            break
+                model.train()
+
+            step += 1
+
+        if patience_counter >= cfg.early_stopping_patience:
+            break
+
+    metrics = evaluate(model, val_dl, loss_fn, device, dtype)
+    if IS_MAIN:
+        history["val_loss"].append(metrics["val_loss"])
+        history["val_perplexity"].append(metrics["val_perplexity"])
+        history["val_nll"].append(metrics["val_nll"])
+        history["val_tps"].append(metrics["val_tps"])
+        history["val_steps"].append(float(step))
+        print(
+            f"[final] loss={metrics['val_loss']:.4f}  "
+            f"ppl={metrics['val_perplexity']:.2f}  "
+            f"nll={metrics['val_nll']:.2f}  "
+            f"tps={metrics['val_tps']:.0f}"
+        )
+    return history
+
+
+def plot_metrics(
+    history: dict[str, list[float]], save_path: str = "metrics.png"
+) -> None:
+    if not IS_MAIN:
+        return
+
+    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+    fig.suptitle(
+        "GatedDeltaNet-2 Hybrid GPT (1.3B) — FineWeb-Edu Micro Training Metrics",
+        fontsize=13,
+    )
+
+    plots = [
+        (
+            axes[0, 0],
+            "train_steps",
+            "train_loss",
+            "Train Loss",
+            "Loss",
+            "tab:blue",
+        ),
+        (axes[0, 1], "val_steps", "val_loss", "Val Loss", "Loss", "tab:orange"),
+        (
+            axes[0, 2],
+            "val_steps",
+            "val_perplexity",
+            "Val Perplexity",
+            "Perplexity",
+            "tab:green",
+        ),
+        (axes[1, 0], "val_steps", "val_nll", "Val NLL", "NLL", "tab:red"),
+        (
+            axes[1, 1],
+            "val_steps",
+            "val_tps",
+            "Val Throughput",
+            "Tokens / sec",
+            "tab:purple",
+        ),
+        (axes[1, 2], "train_steps", "lr", "Learning Rate", "LR", "tab:brown"),
+    ]
+
+    for ax, x_key, y_key, title, ylabel, color in plots:
+        x_data = history.get(x_key, [])
+        y_data = history.get(y_key, [])
+        if x_data and y_data and len(x_data) == len(y_data):
+            ax.plot(x_data, y_data, marker="o", color=color)
+            ax.set_title(title)
+            ax.set_xlabel("Step")
+            ax.set_ylabel(ylabel)
+            ax.grid(True)
+
+    axes[1, 2].yaxis.set_major_formatter(ticker.FormatStrFormatter("%.0e"))
+
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    print(f"[plot] Saved metrics plot to {save_path}")
+    plt.close(fig)
+
+
+def main() -> None:
+    if IS_MAIN:
+        inspect_1b_architecture()
+
+    sanity_ok = True
+
+    if IS_MAIN:
+        print("\n===== Sanity check 1: synthetic overfit =====")
+    initial_loss, final_loss, synth_ok = run_synthetic_overfit()
+    if not synth_ok:
+        sanity_ok = False
+        if IS_MAIN:
+            print(
+                f"[check] Synthetic overfit: FAIL — loss {initial_loss:.4f} -> {final_loss:.4f}"
+            )
+    elif IS_MAIN:
+        print("[check] Synthetic overfit: PASS")
+
+    if IS_MAIN:
+        print("\n===== Sanity check 2: serial scan & state check =====")
+    parity_ok = run_serial_chunk_parity()
+    if not parity_ok:
+        sanity_ok = False
+        if IS_MAIN:
+            print("[check] GDN-2 recurrence scan: FAIL")
+    elif IS_MAIN:
+        print("[check] GDN-2 recurrence scan: PASS")
+
+    if WORLD_SIZE > 1:
+        sanity_tensor = torch.tensor([1 if sanity_ok else 0], device=device)
+        dist.broadcast(sanity_tensor, src=0)
+        sanity_ok = bool(sanity_tensor.item())
+
+    if IS_MAIN:
+        if sanity_ok:
+            print(
+                "[check] All sanity checks passed. Proceeding to FineWeb-Edu Micro training."
+            )
+        else:
+            print(
+                "[check] One or more sanity checks failed. Skipping FineWeb-Edu Micro training."
+            )
+
+    if not sanity_ok:
+        if WORLD_SIZE > 1:
+            dist.destroy_process_group()
+        return
+
+    if IS_MAIN:
+        print("\n===== Part 2: FineWeb-Edu Micro 1.3B LM training =====")
+
+    data_cfg = FineWebMicroConfig(
+        max_seq_len=512,
+        batch_size=2,
+        val_split_ratio=0.1,
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    train_ds, val_ds = load_fineweb_micro_tokenized(data_cfg, tokenizer)
+
+    train_sampler = (
+        DistributedSampler(train_ds, shuffle=True) if WORLD_SIZE > 1 else None
+    )
+    val_sampler = (
+        DistributedSampler(val_ds, shuffle=False) if WORLD_SIZE > 1 else None
+    )
+
+    pin_memory = device.type == "cuda"
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=data_cfg.batch_size,
+        sampler=train_sampler,
+        shuffle=(train_sampler is None),
+        drop_last=True,
+        num_workers=2,
+        pin_memory=pin_memory,
+    )
+    val_dl = DataLoader(
+        val_ds,
+        batch_size=data_cfg.batch_size,
+        sampler=val_sampler,
+        shuffle=False,
+        drop_last=True,
+        num_workers=2,
+        pin_memory=pin_memory,
+    )
+
+    train_cfg = TrainConfig(
+        num_steps=1000,
+        log_interval=25,
+        eval_interval=100,
+        lr=3e-4,
+        min_lr=1e-5,
+        weight_decay=0.1,
+        warmup_steps=50,
+        grad_accum_steps=4,
+        early_stopping_patience=4,
+        early_stopping_min_delta=1e-3,
+    )
+
+    lm_cfg = Config.from_name(
+        "1B",
+        block_size=max(data_cfg.max_seq_len, 2048),
+        vocab_size=tokenizer.vocab_size,
+        padded_vocab_size=tokenizer.vocab_size,
+        mixer_type="gdn2",
+        gradient_checkpointing=True,
+    )
+
+    model = GPT(lm_cfg).to(device=device, dtype=dtype)
+    model.gradient_checkpointing_enable()
+
+    if WORLD_SIZE > 1:
+        model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    if IS_MAIN:
+        center_layer = lm_cfg.n_layer // 2
+        print(
+            f"[model] GPT Hybrid 1.3B LM  params={total_params:,}  "
+            f"layers={lm_cfg.n_layer} (Center GatedDeltaNet2 at layer {center_layer})"
+        )
+
+    history = train(model, train_dl, val_dl, train_cfg, device, dtype)
+
+    plot_metrics(history, save_path="metrics.png")
+
+    if WORLD_SIZE > 1:
+        dist.barrier()
+
+    if IS_MAIN:
+        print("\n===== Summary =====")
+        final_train = (
+            history["train_loss"][-1]
+            if history["train_loss"]
+            else float("nan")
+        )
+        final_ppl = (
+            history["val_perplexity"][-1]
+            if history["val_perplexity"]
+            else float("nan")
+        )
+        final_nll = (
+            history["val_nll"][-1] if history["val_nll"] else float("nan")
+        )
+        final_tps = (
+            history["val_tps"][-1] if history["val_tps"] else float("nan")
+        )
+        print(f"  Train loss (last logged): {final_train:.4f}")
+        print(f"  Val perplexity:          {final_ppl:.2f}")
+        print(f"  Val NLL:                 {final_nll:.2f}")
+        print(f"  Val throughput:          {final_tps:.0f} tok/s")
+        print(f"  Params:                  {total_params:,}")
+        print(f"  GPUs:                    {WORLD_SIZE}x T4")
+        print("  Data:                    bhavnicksm/fineweb-edu-micro")
+        print(
+            f"  Architecture:            GPT Hybrid (1.3B, Layers: {lm_cfg.n_layer}, Center: GatedDeltaNet2)"
+        )
+        print(f"  Train steps:             {train_cfg.num_steps}")
+        print("  Result: Hybrid GPT 1.3B LM training complete.")
+
+    if WORLD_SIZE > 1:
+        dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

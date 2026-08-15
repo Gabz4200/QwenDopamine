@@ -19,9 +19,16 @@ from qwendopamine.models.qwen35 import (
     Qwen3_5TextConfig,
     Qwen3_5TextModel,
 )
-from qwendopamine.models.surprise_gpt import SurpriseGPT, SurpriseGPTConfig
+from qwendopamine.models.surprise_gpt import (
+    GDN2GPT,
+    GDN2GPTConfig,
+    SurpriseGPT,
+    SurpriseGPTConfig,
+)
 
 __all__ = [
+    "GDN2GPT",
+    "GDN2GPTConfig",
     "GatedDeltaNet2",
     "LMHead",
     "PositionEmbeddings",

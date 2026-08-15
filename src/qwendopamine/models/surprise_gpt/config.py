@@ -34,6 +34,8 @@ class SurpriseGPTConfig:
     expand_v: float = 1.0
     use_short_conv: bool = True
     train_chunk_size: int = 128
+    mixer_type: str = "surprise"
+    gradient_checkpointing: bool = False
 
     def __post_init__(self) -> None:
         if self.padded_vocab_size is None:

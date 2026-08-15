@@ -1,21 +1,21 @@
-"""Kaggle 2xT4 GPU smoke-test + WikiText-2 training for GatedSurpriseNetAdam GPT Model.
+"""Kaggle 2xT4 GPU smoke-test + FineWeb-Edu Micro training for GatedSurpriseNetAdam GPT Model.
 
 Architecture:
-  Transformer-based GPT Decoder model (1B scale specification) with
-  pre-layer RMSNorm, SwiGLU MLP, RoPE positional embeddings, CausalSelfAttention,
+  Transformer-based GPT Decoder model (1.3B scale specification) with
+  pre-layer RMSNorm, SwiGLU MLP, RoPE positional embeddings, CausalSelfAttention (GQA),
   and GatedSurpriseNetAdam token mixer positioned at the center layer.
 
-Part 1 — Sanity checks & 1B Architecture Inspection
-  1. 1B Model Specification & parameter breakdown inspection.
+Part 1 — Sanity checks & 1.3B Architecture Inspection
+  1. 1.3B Model Specification & parameter breakdown inspection (~1.35B params).
   2. Synthetic overfit on hybrid GPT model with central GatedSurpriseNet block.
   3. Serial-vs-chunk parity: SurpriseMemoryAdam.serial_scan and
      chunk_parallel_training_scan match within tight tolerance.
 
-Part 2 — WikiText-2 LM training
-  Load Salesforce/wikitext, build the hybrid Transformer + central
-  GatedSurpriseNet GPT model, train for a fixed number of steps with
-  DDP + AMP, and log cross-entropy loss, perplexity, and negative
-  log-likelihood.
+Part 2 — FineWeb-Edu Micro LM training
+  Load bhavnicksm/fineweb-edu-micro (1M tokens, high-quality educational passages),
+  build the 1.3B hybrid Transformer + central GatedSurpriseNet GPT model, train with
+  gradient checkpointing + AMP + DDP + early stopping, and log cross-entropy loss,
+  perplexity, and negative log-likelihood.
 
 Designed for Kaggle with 2x T4 GPUs. Uses ``torch.distributed`` DDP
 when multiple GPUs are detected; falls back to single-GPU/CPU otherwise.
@@ -47,7 +47,6 @@ import torch.distributed as dist
 from datasets import load_dataset
 from matplotlib import ticker
 from torch import nn
-from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 from transformers import AutoTokenizer
@@ -165,13 +164,13 @@ IS_MAIN = RANK == 0
 
 
 def inspect_1b_architecture() -> None:
-    """Inspect and print the 1B scale model specification."""
-    cfg_1b = Config.from_name("1B")
+    """Inspect and print the 1.3B scale model specification."""
+    cfg_1b = Config.from_name("1B", mixer_type="surprise")
     stats = compute_model_params(cfg_1b)
     center_idx = cfg_1b.n_layer // 2
 
     print("=" * 60)
-    print(f"1B Model Specification ({cfg_1b.name})")
+    print(f"1.3B Model Specification ({cfg_1b.name} - GatedSurpriseNetAdam)")
     print("=" * 60)
     print(
         f"  Total Parameters:        {stats['total']:,} (~{stats['total']/1e9:.2f}B)"
@@ -219,6 +218,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
         intermediate_size=344,
         norm_eps=1e-5,
         train_chunk_size=seq_len,
+        mixer_type="surprise",
     )
     model = GPT(cfg).to(device=device, dtype=dtype)
 
@@ -295,67 +295,72 @@ def run_serial_chunk_parity() -> bool:
 
 
 @dataclass
-class WikiTextConfig:
-    dataset_name: str = "Salesforce/wikitext"
-    dataset_config: str = "wikitext-2-raw-v1"
-    max_seq_len: int = 128
-    max_train_examples: int | None = 5000
-    max_val_examples: int | None = 1000
-    batch_size: int = 16
+class FineWebMicroConfig:
+    dataset_name: str = "bhavnicksm/fineweb-edu-micro"
+    max_seq_len: int = 512
+    max_train_examples: int | None = None
+    max_val_examples: int | None = None
+    batch_size: int = 2
+    val_split_ratio: float = 0.1
+    seed: int = 42
 
 
-def load_wikitext_tokenized(
-    cfg: WikiTextConfig, tokenizer: Any
+def load_fineweb_micro_tokenized(
+    cfg: FineWebMicroConfig, tokenizer: Any
 ) -> tuple[TensorDataset, TensorDataset]:
+    """Load and tokenize passages from bhavnicksm/fineweb-edu-micro."""
     if IS_MAIN:
-        print(f"[data] Loading {cfg.dataset_name} ({cfg.dataset_config}) ...")
+        print(f"[data] Loading dataset '{cfg.dataset_name}' ...")
     try:
-        ds = load_dataset(cfg.dataset_name, cfg.dataset_config)
+        ds = load_dataset(cfg.dataset_name)
     except TypeError:
-        ds = load_dataset(
-            cfg.dataset_name, cfg.dataset_config, trust_remote_code=True
-        )
+        ds = load_dataset(cfg.dataset_name, trust_remote_code=True)
 
-    def encode_split(split: str, max_examples: int | None) -> list[list[int]]:
+    raw_train = ds["train"]
+    split = raw_train.train_test_split(
+        test_size=cfg.val_split_ratio, seed=cfg.seed
+    )
+
+    def encode_split(split_data: Any, max_examples: int | None) -> list[list[int]]:
         texts: list[str] = []
-        for ex in ds[split]:
+        for ex in split_data:
             txt = ex.get("text", "").strip()
             if txt:
                 texts.append(txt)
             if max_examples is not None and len(texts) >= max_examples:
                 break
         if IS_MAIN:
-            print(f"[data] {split}: {len(texts)} passages")
-        seqs: list[list[int]] = []
+            print(f"[data] Loaded {len(texts)} educational passages")
+
+        all_tokens: list[int] = []
+        eos_id = tokenizer.eos_token_id or 50256
         for txt in texts:
             ids = tokenizer(txt, truncation=False, add_special_tokens=False)[
                 "input_ids"
             ]
-            if len(ids) < 2:
-                continue
-            for i in range(0, len(ids) - cfg.max_seq_len, cfg.max_seq_len):
-                window = ids[i : i + cfg.max_seq_len + 1]
-                if len(window) == cfg.max_seq_len + 1:
-                    seqs.append(window)
+            all_tokens.extend(ids)
+            all_tokens.append(eos_id)
+
+        seqs: list[list[int]] = []
+        for i in range(0, len(all_tokens) - cfg.max_seq_len, cfg.max_seq_len):
+            seqs.append(all_tokens[i : i + cfg.max_seq_len + 1])
         return seqs
 
-    train_seqs = encode_split("train", cfg.max_train_examples)
-    val_seqs = encode_split("validation", cfg.max_val_examples)
+    train_seqs = encode_split(split["train"], cfg.max_train_examples)
+    val_seqs = encode_split(split["test"], cfg.max_val_examples)
 
-    if not train_seqs:
-        raise RuntimeError("No training sequences produced.")
+    if not train_seqs or not val_seqs:
+        raise RuntimeError("Failed to generate tokenized sequences from dataset.")
 
-    def to_tensor(seqs: list[list[int]]) -> tuple[torch.Tensor, torch.Tensor]:
-        inputs = torch.tensor([s[:-1] for s in seqs], dtype=torch.long)
-        targets = torch.tensor([s[1:] for s in seqs], dtype=torch.long)
-        return inputs, targets
+    train_in = torch.tensor([s[:-1] for s in train_seqs], dtype=torch.long)
+    train_tgt = torch.tensor([s[1:] for s in train_seqs], dtype=torch.long)
+    val_in = torch.tensor([s[:-1] for s in val_seqs], dtype=torch.long)
+    val_tgt = torch.tensor([s[1:] for s in val_seqs], dtype=torch.long)
 
-    train_in, train_tgt = to_tensor(train_seqs)
-    val_in, val_tgt = to_tensor(val_seqs)
     if IS_MAIN:
         print(
-            f"[data] train sequences: {train_in.shape[0]}  "
-            f"val sequences: {val_in.shape[0]}"
+            f"[data] train sequences: {train_in.shape[0]} | "
+            f"val sequences: {val_in.shape[0]} (seq_len={cfg.max_seq_len})"
         )
     return TensorDataset(train_in, train_tgt), TensorDataset(val_in, val_tgt)
 
@@ -363,14 +368,17 @@ def load_wikitext_tokenized(
 @dataclass
 class TrainConfig:
     num_steps: int = 1000
-    log_interval: int = 50
-    eval_interval: int = 200
+    log_interval: int = 25
+    eval_interval: int = 100
     lr: float = 3e-4
+    min_lr: float = 1e-5
     weight_decay: float = 0.1
-    warmup_steps: int = 100
+    warmup_steps: int = 50
     grad_clip: float = 1.0
+    grad_accum_steps: int = 4
     use_amp: bool = True
-    chunk_size: int = 128
+    early_stopping_patience: int = 4
+    early_stopping_min_delta: float = 1e-3
 
 
 def evaluate(
@@ -436,7 +444,11 @@ def train(
 ) -> dict[str, list[float]]:
     model.train()
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
+        model.parameters(),
+        lr=cfg.lr,
+        betas=(0.9, 0.95),
+        weight_decay=cfg.weight_decay,
+        eps=1e-8,
     )
     loss_fn = nn.CrossEntropyLoss()
 
@@ -474,6 +486,10 @@ def train(
     t0 = time.perf_counter()
     step = 0
     epoch = 0
+    accum_loss = 0.0
+
+    best_val_loss = float("inf")
+    patience_counter = 0
 
     while step < cfg.num_steps:
         if isinstance(train_dl.sampler, DistributedSampler):
@@ -493,11 +509,12 @@ def train(
                 progress = (step - cfg.warmup_steps) / max(
                     cfg.num_steps - cfg.warmup_steps, 1
                 )
-                lr = cfg.lr * (0.5 * (1.0 + math.cos(math.pi * progress)))
+                lr = cfg.min_lr + (cfg.lr - cfg.min_lr) * 0.5 * (
+                    1.0 + math.cos(math.pi * progress)
+                )
             for pg in optimizer.param_groups:
                 pg["lr"] = lr
 
-            optimizer.zero_grad()
             with torch.autocast(
                 device_type=device.type,
                 dtype=dtype,
@@ -507,47 +524,73 @@ def train(
                 loss = loss_fn(
                     logits.reshape(-1, logits.shape[-1]), yb.reshape(-1)
                 )
+                loss = loss / cfg.grad_accum_steps
 
             scaler.scale(loss).backward()
-            if cfg.grad_clip > 0:
-                scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
-
+            accum_loss += float(loss.item()) * cfg.grad_accum_steps
             tokens_seen += yb.numel()
+
+            if (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == cfg.num_steps:
+                if cfg.grad_clip > 0:
+                    scaler.unscale_(optimizer)
+                    nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+
             step_time = time.perf_counter() - t0
 
             if step % cfg.log_interval == 0 and IS_MAIN:
-                history["train_loss"].append(float(loss.item()))
+                avg_train_loss = accum_loss / max(
+                    1, (step % cfg.grad_accum_steps) + 1
+                )
+                history["train_loss"].append(avg_train_loss)
                 history["train_steps"].append(float(step))
                 history["tokens_seen"].append(float(tokens_seen))
                 history["lr"].append(lr)
                 history["step_time_s"].append(step_time)
                 print(
-                    f"[train] step {step:5d}  loss={loss.item():.4f}  "
+                    f"[train] step {step:5d}  loss={avg_train_loss:.4f}  "
                     f"lr={lr:.2e}  tok/s={tokens_seen / max(step_time, 1e-9):.0f}"
                 )
+                accum_loss = 0.0
 
             if step % cfg.eval_interval == 0 and step > 0:
                 metrics = evaluate(
                     model, val_dl, loss_fn, device, dtype, max_batches=50
                 )
                 if IS_MAIN:
-                    history["val_loss"].append(metrics["val_loss"])
+                    val_loss = metrics["val_loss"]
+                    history["val_loss"].append(val_loss)
                     history["val_perplexity"].append(metrics["val_perplexity"])
                     history["val_nll"].append(metrics["val_nll"])
                     history["val_tps"].append(metrics["val_tps"])
                     history["val_steps"].append(float(step))
                     print(
-                        f"[eval]  step {step:5d}  loss={metrics['val_loss']:.4f}  "
+                        f"[eval]  step {step:5d}  loss={val_loss:.4f}  "
                         f"ppl={metrics['val_perplexity']:.2f}  "
                         f"nll={metrics['val_nll']:.2f}  "
                         f"tps={metrics['val_tps']:.0f}"
                     )
+
+                    # Early stopping check
+                    if val_loss < best_val_loss - cfg.early_stopping_min_delta:
+                        best_val_loss = val_loss
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                        if patience_counter >= cfg.early_stopping_patience:
+                            print(
+                                f"[early_stop] Validation loss plateaued for {patience_counter} "
+                                f"evaluations (best={best_val_loss:.4f}). Stopping early."
+                            )
+                            break
                 model.train()
 
             step += 1
+
+        if patience_counter >= cfg.early_stopping_patience:
+            break
 
     metrics = evaluate(model, val_dl, loss_fn, device, dtype)
     if IS_MAIN:
@@ -573,7 +616,7 @@ def plot_metrics(
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
     fig.suptitle(
-        "GatedSurpriseNetAdam Hybrid GPT — WikiText-2 Training Metrics",
+        "GatedSurpriseNetAdam Hybrid GPT (1.3B) — FineWeb-Edu Micro Training Metrics",
         fontsize=13,
     )
 
@@ -661,11 +704,11 @@ def main() -> None:
     if IS_MAIN:
         if sanity_ok:
             print(
-                "[check] All sanity checks passed. Proceeding to WikiText-2 training."
+                "[check] All sanity checks passed. Proceeding to FineWeb-Edu Micro training."
             )
         else:
             print(
-                "[check] One or more sanity checks failed. Skipping WikiText-2 training."
+                "[check] One or more sanity checks failed. Skipping FineWeb-Edu Micro training."
             )
 
     if not sanity_ok:
@@ -674,20 +717,19 @@ def main() -> None:
         return
 
     if IS_MAIN:
-        print("\n===== Part 2: WikiText-2 training =====")
+        print("\n===== Part 2: FineWeb-Edu Micro 1.3B LM training =====")
 
-    wt_cfg = WikiTextConfig(
-        max_seq_len=128,
-        max_train_examples=5000,
-        max_val_examples=1000,
-        batch_size=16,
+    data_cfg = FineWebMicroConfig(
+        max_seq_len=512,
+        batch_size=2,
+        val_split_ratio=0.1,
     )
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    train_ds, val_ds = load_wikitext_tokenized(wt_cfg, tokenizer)
+    train_ds, val_ds = load_fineweb_micro_tokenized(data_cfg, tokenizer)
 
     train_sampler = (
         DistributedSampler(train_ds, shuffle=True) if WORLD_SIZE > 1 else None
@@ -699,7 +741,7 @@ def main() -> None:
     pin_memory = device.type == "cuda"
     train_dl = DataLoader(
         train_ds,
-        batch_size=wt_cfg.batch_size,
+        batch_size=data_cfg.batch_size,
         sampler=train_sampler,
         shuffle=(train_sampler is None),
         drop_last=True,
@@ -708,7 +750,7 @@ def main() -> None:
     )
     val_dl = DataLoader(
         val_ds,
-        batch_size=wt_cfg.batch_size,
+        batch_size=data_cfg.batch_size,
         sampler=val_sampler,
         shuffle=False,
         drop_last=True,
@@ -718,30 +760,29 @@ def main() -> None:
 
     train_cfg = TrainConfig(
         num_steps=1000,
-        log_interval=50,
-        eval_interval=200,
+        log_interval=25,
+        eval_interval=100,
         lr=3e-4,
+        min_lr=1e-5,
         weight_decay=0.1,
-        warmup_steps=100,
-        chunk_size=128,
+        warmup_steps=50,
+        grad_accum_steps=4,
+        early_stopping_patience=4,
+        early_stopping_min_delta=1e-3,
     )
 
-    lm_cfg = Config(
-        name="hybrid_lm",
-        block_size=max(wt_cfg.max_seq_len, 2048),
+    lm_cfg = Config.from_name(
+        "1B",
+        block_size=max(data_cfg.max_seq_len, 2048),
         vocab_size=tokenizer.vocab_size,
         padded_vocab_size=tokenizer.vocab_size,
-        n_layer=4,
-        n_head=4,
-        n_embd=256,
-        head_size=64,
-        n_query_groups=4,
-        intermediate_size=688,
-        norm_eps=1e-5,
-        train_chunk_size=train_cfg.chunk_size,
+        mixer_type="surprise",
+        gradient_checkpointing=True,
     )
 
     model = GPT(lm_cfg).to(device=device, dtype=dtype)
+    model.gradient_checkpointing_enable()
+
     if WORLD_SIZE > 1:
         model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
 
@@ -749,8 +790,8 @@ def main() -> None:
     if IS_MAIN:
         center_layer = lm_cfg.n_layer // 2
         print(
-            f"[model] GPT Hybrid LM  params={total_params:,}  "
-            f"layers={lm_cfg.n_layer} (Center SurpriseNet at layer {center_layer})"
+            f"[model] GPT Hybrid 1.3B LM  params={total_params:,}  "
+            f"layers={lm_cfg.n_layer} (Center GatedSurpriseNet at layer {center_layer})"
         )
 
     history = train(model, train_dl, val_dl, train_cfg, device, dtype)
@@ -784,12 +825,12 @@ def main() -> None:
         print(f"  Val throughput:          {final_tps:.0f} tok/s")
         print(f"  Params:                  {total_params:,}")
         print(f"  GPUs:                    {WORLD_SIZE}x T4")
-        print("  Data:                    Salesforce/wikitext-2-raw-v1")
+        print("  Data:                    bhavnicksm/fineweb-edu-micro")
         print(
-            f"  Architecture:            GPT Hybrid (Layers: {lm_cfg.n_layer}, Center: GatedSurpriseNetAdam)"
+            f"  Architecture:            GPT Hybrid (1.3B, Layers: {lm_cfg.n_layer}, Center: GatedSurpriseNetAdam)"
         )
         print(f"  Train steps:             {train_cfg.num_steps}")
-        print("  Result: Hybrid GPT LM training complete.")
+        print("  Result: Hybrid GPT 1.3B LM training complete.")
 
     if WORLD_SIZE > 1:
         dist.destroy_process_group()

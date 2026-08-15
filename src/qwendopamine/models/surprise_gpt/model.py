@@ -10,6 +10,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from qwendopamine.models.gated_surprise_net import GatedSurpriseNetAdam
+from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
 from qwendopamine.models.surprise_gpt.config import SurpriseGPTConfig
 
 RoPECache = tuple[torch.Tensor, torch.Tensor]
@@ -211,18 +212,31 @@ class Block(nn.Module):
             self.use_surprise_net = layer_idx == (config.n_layer // 2)
 
         if self.use_surprise_net:
-            self.attn = GatedSurpriseNetAdam(
-                hidden_size=config.n_embd,
-                num_heads=config.n_head,
-                head_dim=config.head_size,
-                num_v_heads=config.n_head,
-                layer_idx=layer_idx,
-                norm_eps=config.norm_eps,
-                conv_size=config.conv_size,
-                expand_v=config.expand_v,
-                use_short_conv=config.use_short_conv,
-                train_chunk_size=config.train_chunk_size,
-            )
+            if config.mixer_type == "gdn2":
+                self.attn = GatedDeltaNet2(
+                    hidden_size=config.n_embd,
+                    num_heads=config.n_head,
+                    head_dim=config.head_size,
+                    num_v_heads=config.n_head,
+                    layer_idx=layer_idx,
+                    norm_eps=config.norm_eps,
+                    conv_size=config.conv_size,
+                    expand_v=config.expand_v,
+                    use_short_conv=config.use_short_conv,
+                )
+            else:
+                self.attn = GatedSurpriseNetAdam(
+                    hidden_size=config.n_embd,
+                    num_heads=config.n_head,
+                    head_dim=config.head_size,
+                    num_v_heads=config.n_head,
+                    layer_idx=layer_idx,
+                    norm_eps=config.norm_eps,
+                    conv_size=config.conv_size,
+                    expand_v=config.expand_v,
+                    use_short_conv=config.use_short_conv,
+                    train_chunk_size=config.train_chunk_size,
+                )
         else:
             self.attn = CausalSelfAttention(
                 config, layer_idx=layer_idx, n_embd=config.n_embd
@@ -372,8 +386,18 @@ class SurpriseGPT(nn.Module):
         x = self.wte(idx)
 
         if not use_kv_cache:
-            for block in self.h:
-                x, _ = block(x, rope, max_seq_length)
+            if self.config.gradient_checkpointing and self.training:
+                for block in self.h:
+                    x, _ = torch.utils.checkpoint.checkpoint(
+                        block,
+                        x,
+                        rope,
+                        max_seq_length,
+                        use_reentrant=False,
+                    )
+            else:
+                for block in self.h:
+                    x, _ = block(x, rope, max_seq_length)
         else:
             start_pos = int(input_pos[0].item()) if input_pos is not None else 0
             if start_pos == 0:
@@ -395,6 +419,12 @@ class SurpriseGPT(nn.Module):
 
         x = self.ln_f(x)
         return self.lm_head(x)
+
+    def gradient_checkpointing_enable(self) -> None:
+        self.config.gradient_checkpointing = True
+
+    def gradient_checkpointing_disable(self) -> None:
+        self.config.gradient_checkpointing = False
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> SurpriseGPT:

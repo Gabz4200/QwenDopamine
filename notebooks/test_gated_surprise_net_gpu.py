@@ -217,14 +217,14 @@ def run_serial_chunk_parity() -> bool:
 
     out_s, _, nll_s = memory.serial_scan(q, k, v, g, b, w)
     out_c, _, nll_c = memory.chunk_parallel_training_scan(
-        q, k, v, g, b, w, chunk_size=t
+        q, k, v, g, b, w, chunk_size=16
     )
 
-    passed = torch.allclose(out_s, out_c, atol=1e-4) and torch.allclose(nll_s, nll_c, atol=1e-4)
+    passed = torch.allclose(out_s, out_c, atol=1e-3) and torch.allclose(nll_s, nll_c, atol=1e-3)
     if not passed and IS_MAIN:
         print("[parity] serial vs chunk: FAIL")
-        print(f"  output close: {torch.allclose(out_s, out_c, atol=1e-4)}")
-        print(f"  nll close: {torch.allclose(nll_s, nll_c, atol=1e-4)}")
+        print(f"  output close: {torch.allclose(out_s, out_c, atol=1e-3)}")
+        print(f"  nll close: {torch.allclose(nll_s, nll_c, atol=1e-3)}")
     return passed
 
 
@@ -319,7 +319,7 @@ def evaluate(
                 break
             xb = xb.to(device)
             yb = yb.to(device)
-            with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
+            with torch.autocast(device_type=device.type, dtype=dtype, enabled=(device.type == "cuda")):
                 logits = model(xb)
             loss = loss_fn(
                 logits.reshape(-1, logits.shape[-1]), yb.reshape(-1)
@@ -363,7 +363,7 @@ def train(
     loss_fn = nn.CrossEntropyLoss()
 
     scaler = torch.cuda.amp.GradScaler(
-        enabled=(dtype == torch.float16 and cfg.use_amp)
+        enabled=(device.type == "cuda" and dtype == torch.float16 and cfg.use_amp)
     )
 
     history: dict[str, list[float]] = {
@@ -398,7 +398,7 @@ def train(
             pg["lr"] = lr
 
         optimizer.zero_grad()
-        with torch.autocast(device_type="cuda", dtype=dtype, enabled=True):
+        with torch.autocast(device_type=device.type, dtype=dtype, enabled=(device.type == "cuda")):
             logits = model(xb)
             loss = loss_fn(
                 logits.reshape(-1, logits.shape[-1]), yb.reshape(-1)

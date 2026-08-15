@@ -64,6 +64,20 @@ def test_when_gated_surprise_net_forward_cpu_then_preserves_shape(
     assert not torch.isnan(out).any()
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+def test_when_gated_surprise_net_forward_dtypes_then_preserves_dtype_and_shape(
+    dtype: torch.dtype,
+) -> None:
+    layer = GatedSurpriseNetAdam(hidden_size=64, num_heads=2, head_dim=32).to(dtype)
+    x = torch.randn(2, 16, 64, dtype=dtype)
+    out, attn, cache = layer(x)
+    assert out.shape == (2, 16, 64)
+    assert out.dtype == dtype
+    assert attn is None
+    assert cache is None
+    assert not torch.isnan(out).any()
+
+
 @pytest.mark.parametrize("use_short_conv", [True, False])
 @pytest.mark.parametrize("allow_neg_eigval", [True, False])
 def test_when_gated_surprise_net_forward_variants_then_preserves_shape(

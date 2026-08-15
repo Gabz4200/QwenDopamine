@@ -116,6 +116,8 @@ class SurpriseMemoryAdam(nn.Module):
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> SurpriseRecurrenceState:
+        device = device if device is not None else self.memory_init.device
+        dtype = dtype if dtype is not None else torch.float32
         mem0 = self.memory_init.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1, -1, -1).clone()
         m0 = torch.zeros_like(mem0)
         v0 = torch.zeros_like(mem0)
@@ -132,11 +134,19 @@ class SurpriseMemoryAdam(nn.Module):
         b_t: torch.Tensor,
         w_t: torch.Tensor,
     ) -> tuple[SurpriseRecurrenceState, torch.Tensor, torch.Tensor]:
-        alpha_t = torch.exp(g_t)
+        out_dtype = q_t.dtype
+        q_f = q_t.float()
+        k_f = k_t.float()
+        v_f = v_t.float()
+        g_f = g_t.float()
+        b_f = b_t.float()
+        w_f = w_t.float()
+
+        alpha_t = torch.exp(g_f)
         S_bar = alpha_t.unsqueeze(-1) * state.memory
 
-        erase_key = b_t * k_t
-        target_mu = w_t * v_t
+        erase_key = b_f * k_f
+        target_mu = w_f * v_f
 
         pred_mu = torch.einsum("bhkv,bhk->bhv", S_bar, erase_key)
         pred_logvar = torch.log1p(pred_mu.square())
@@ -155,14 +165,14 @@ class SurpriseMemoryAdam(nn.Module):
         v_hat = v / bias_c2.clamp_min(1e-12)
 
         memory_new = S_bar - self.lr * m_hat / (v_hat.sqrt() + self.eps)
-        out_t = torch.einsum("bhkv,bhk->bhv", memory_new, q_t)
+        out_t = torch.einsum("bhkv,bhk->bhv", memory_new, q_f).to(out_dtype)
         nll_t = gaussian_nll_diag(
             target=target_mu,
             mean=pred_mu,
             var=pred_var,
             eps=self.nll_var_eps,
             full=self.nll_full,
-        )
+        ).to(out_dtype)
         new_state = SurpriseRecurrenceState(memory_new, m, v, t)
         return new_state, out_t, nll_t
 
@@ -178,7 +188,15 @@ class SurpriseMemoryAdam(nn.Module):
         detach_state_every_step: bool = False,
     ) -> tuple[torch.Tensor, SurpriseRecurrenceState, torch.Tensor]:
         bs = k.shape[0]
-        state = self.initial_state(bs, device=k.device, dtype=k.dtype) if initial_state is None else initial_state
+        if initial_state is None:
+            state = self.initial_state(bs, device=k.device, dtype=torch.float32)
+        else:
+            state = SurpriseRecurrenceState(
+                initial_state.memory.float(),
+                initial_state.first_moment.float(),
+                initial_state.second_moment.float(),
+                initial_state.step.float(),
+            )
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
         for i in range(k.shape[1]):
@@ -206,7 +224,11 @@ class SurpriseMemoryAdam(nn.Module):
         initial_state: SurpriseRecurrenceState | None = None,
     ) -> tuple[torch.Tensor, SurpriseRecurrenceState, torch.Tensor]:
         bs, ts = k.shape[:2]
-        state = self.initial_state(bs, device=k.device, dtype=k.dtype) if initial_state is None else initial_state
+        state = (
+            self.initial_state(bs, device=k.device, dtype=torch.float32)
+            if initial_state is None
+            else initial_state
+        )
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
         for start in range(0, ts, chunk_size):
@@ -540,7 +562,7 @@ class GatedSurpriseNetAdam(nn.Module):
         g = (
             -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
             * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
-        )
+        ).to(hidden_states.dtype)
         b = self.b_proj(hidden_states).sigmoid()
         w = self.w_proj(hidden_states).sigmoid()
 

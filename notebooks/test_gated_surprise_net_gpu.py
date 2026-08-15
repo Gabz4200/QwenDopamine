@@ -392,78 +392,94 @@ def train(
 
     history: dict[str, list[float]] = {
         "train_loss": [],
+        "train_steps": [],
         "val_loss": [],
         "val_perplexity": [],
         "val_nll": [],
         "val_tps": [],
-        "step": [],
+        "val_steps": [],
         "tokens_seen": [],
         "lr": [],
         "step_time_s": [],
     }
     tokens_seen = 0
     t0 = time.perf_counter()
+    step = 0
+    epoch = 0
 
-    for step, (xb, yb) in enumerate(train_dl):
-        if step >= cfg.num_steps:
-            break
+    while step < cfg.num_steps:
+        if isinstance(train_dl.sampler, DistributedSampler):
+            train_dl.sampler.set_epoch(epoch)
+        epoch += 1
 
-        xb = xb.to(device)
-        yb = yb.to(device)
+        for xb, yb in train_dl:
+            if step >= cfg.num_steps:
+                break
 
-        if step < cfg.warmup_steps:
-            lr = cfg.lr * (step + 1) / cfg.warmup_steps
-        else:
-            progress = (step - cfg.warmup_steps) / max(
-                cfg.num_steps - cfg.warmup_steps, 1
-            )
-            lr = cfg.lr * (0.5 * (1.0 + math.cos(math.pi * progress)))
-        for pg in optimizer.param_groups:
-            pg["lr"] = lr
+            xb = xb.to(device)
+            yb = yb.to(device)
 
-        optimizer.zero_grad()
-        with torch.autocast(device_type=device.type, dtype=dtype, enabled=(device.type == "cuda")):
-            logits = model(xb)
-            loss = loss_fn(
-                logits.reshape(-1, logits.shape[-1]), yb.reshape(-1)
-            )
-
-        scaler.scale(loss).backward()
-        if cfg.grad_clip > 0:
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
-
-        tokens_seen += yb.numel()
-        step_time = time.perf_counter() - t0
-
-        if step % cfg.log_interval == 0 and IS_MAIN:
-            history["train_loss"].append(float(loss.item()))
-            history["step"].append(float(step))
-            history["tokens_seen"].append(float(tokens_seen))
-            history["lr"].append(lr)
-            history["step_time_s"].append(step_time)
-            print(
-                f"[train] step {step:5d}  loss={loss.item():.4f}  "
-                f"lr={lr:.2e}  tok/s={tokens_seen / max(step_time, 1e-9):.0f}"
-            )
-
-        if step % cfg.eval_interval == 0 and step > 0:
-            metrics = evaluate(model, val_dl, loss_fn, device, dtype, max_batches=50)
-            if IS_MAIN:
-                history["val_loss"].append(metrics["val_loss"])
-                history["val_perplexity"].append(metrics["val_perplexity"])
-                history["val_nll"].append(metrics["val_nll"])
-                history["val_tps"].append(metrics["val_tps"])
-                history["step"].append(float(step))
-                print(
-                    f"[eval]  step {step:5d}  loss={metrics['val_loss']:.4f}  "
-                    f"ppl={metrics['val_perplexity']:.2f}  "
-                    f"nll={metrics['val_nll']:.2f}  "
-                    f"tps={metrics['val_tps']:.0f}"
+            if step < cfg.warmup_steps:
+                lr = cfg.lr * (step + 1) / cfg.warmup_steps
+            else:
+                progress = (step - cfg.warmup_steps) / max(
+                    cfg.num_steps - cfg.warmup_steps, 1
                 )
-            model.train()
+                lr = cfg.lr * (0.5 * (1.0 + math.cos(math.pi * progress)))
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr
+
+            optimizer.zero_grad()
+            with torch.autocast(
+                device_type=device.type,
+                dtype=dtype,
+                enabled=(device.type == "cuda"),
+            ):
+                logits = model(xb)
+                loss = loss_fn(
+                    logits.reshape(-1, logits.shape[-1]), yb.reshape(-1)
+                )
+
+            scaler.scale(loss).backward()
+            if cfg.grad_clip > 0:
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+
+            tokens_seen += yb.numel()
+            step_time = time.perf_counter() - t0
+
+            if step % cfg.log_interval == 0 and IS_MAIN:
+                history["train_loss"].append(float(loss.item()))
+                history["train_steps"].append(float(step))
+                history["tokens_seen"].append(float(tokens_seen))
+                history["lr"].append(lr)
+                history["step_time_s"].append(step_time)
+                print(
+                    f"[train] step {step:5d}  loss={loss.item():.4f}  "
+                    f"lr={lr:.2e}  tok/s={tokens_seen / max(step_time, 1e-9):.0f}"
+                )
+
+            if step % cfg.eval_interval == 0 and step > 0:
+                metrics = evaluate(
+                    model, val_dl, loss_fn, device, dtype, max_batches=50
+                )
+                if IS_MAIN:
+                    history["val_loss"].append(metrics["val_loss"])
+                    history["val_perplexity"].append(metrics["val_perplexity"])
+                    history["val_nll"].append(metrics["val_nll"])
+                    history["val_tps"].append(metrics["val_tps"])
+                    history["val_steps"].append(float(step))
+                    print(
+                        f"[eval]  step {step:5d}  loss={metrics['val_loss']:.4f}  "
+                        f"ppl={metrics['val_perplexity']:.2f}  "
+                        f"nll={metrics['val_nll']:.2f}  "
+                        f"tps={metrics['val_tps']:.0f}"
+                    )
+                model.train()
+
+            step += 1
 
     metrics = evaluate(model, val_dl, loss_fn, device, dtype)
     if IS_MAIN:
@@ -471,7 +487,7 @@ def train(
         history["val_perplexity"].append(metrics["val_perplexity"])
         history["val_nll"].append(metrics["val_nll"])
         history["val_tps"].append(metrics["val_tps"])
-        history["step"].append(float(cfg.num_steps))
+        history["val_steps"].append(float(step))
         print(
             f"[final] loss={metrics['val_loss']:.4f}  "
             f"ppl={metrics['val_perplexity']:.2f}  "
@@ -489,20 +505,23 @@ def plot_metrics(history: dict[str, list[float]], save_path: str = "metrics.png"
     fig.suptitle("GatedSurpriseNetAdam — WikiText-2 Training Metrics", fontsize=13)
 
     plots = [
-        (axes[0, 0], "train_loss", "Train Loss", "Loss", "tab:blue"),
-        (axes[0, 1], "val_loss", "Val Loss", "Loss", "tab:orange"),
-        (axes[0, 2], "val_perplexity", "Val Perplexity", "Perplexity", "tab:green"),
-        (axes[1, 0], "val_nll", "Val NLL", "NLL", "tab:red"),
-        (axes[1, 1], "val_tps", "Val Throughput", "Tokens / sec", "tab:purple"),
-        (axes[1, 2], "lr", "Learning Rate", "LR", "tab:brown"),
+        (axes[0, 0], "train_steps", "train_loss", "Train Loss", "Loss", "tab:blue"),
+        (axes[0, 1], "val_steps", "val_loss", "Val Loss", "Loss", "tab:orange"),
+        (axes[0, 2], "val_steps", "val_perplexity", "Val Perplexity", "Perplexity", "tab:green"),
+        (axes[1, 0], "val_steps", "val_nll", "Val NLL", "NLL", "tab:red"),
+        (axes[1, 1], "val_steps", "val_tps", "Val Throughput", "Tokens / sec", "tab:purple"),
+        (axes[1, 2], "train_steps", "lr", "Learning Rate", "LR", "tab:brown"),
     ]
 
-    for ax, key, title, ylabel, color in plots:
-        ax.plot(history["step"], history[key], marker="o", color=color)
-        ax.set_title(title)
-        ax.set_xlabel("Step")
-        ax.set_ylabel(ylabel)
-        ax.grid(True)
+    for ax, x_key, y_key, title, ylabel, color in plots:
+        x_data = history.get(x_key, [])
+        y_data = history.get(y_key, [])
+        if x_data and y_data and len(x_data) == len(y_data):
+            ax.plot(x_data, y_data, marker="o", color=color)
+            ax.set_title(title)
+            ax.set_xlabel("Step")
+            ax.set_ylabel(ylabel)
+            ax.grid(True)
 
     axes[1, 2].yaxis.set_major_formatter(ticker.FormatStrFormatter("%.0e"))
 
@@ -577,7 +596,7 @@ def main() -> None:
         sampler=train_sampler,
         shuffle=(train_sampler is None),
         drop_last=True,
-        num_workers=4,
+        num_workers=2,
         pin_memory=pin_memory,
     )
     val_dl = DataLoader(
@@ -586,8 +605,18 @@ def main() -> None:
         sampler=val_sampler,
         shuffle=False,
         drop_last=True,
-        num_workers=4,
+        num_workers=2,
         pin_memory=pin_memory,
+    )
+
+    train_cfg = TrainConfig(
+        num_steps=1000,
+        log_interval=50,
+        eval_interval=200,
+        lr=3e-4,
+        weight_decay=0.1,
+        warmup_steps=100,
+        chunk_size=128,
     )
 
     lm_cfg = TinySurpriseConfig()
@@ -608,29 +637,31 @@ def main() -> None:
     if IS_MAIN:
         print(f"[model] GatedSurpriseNetAdam LM  params={total_params:,}")
 
-    train_cfg = TrainConfig(
-        num_steps=1000,
-        log_interval=50,
-        eval_interval=200,
-        lr=3e-4,
-        weight_decay=0.1,
-        warmup_steps=100,
-        chunk_size=128,
-    )
-
     history = train(model, train_dl, val_dl, train_cfg, device, dtype)
+
+    plot_metrics(history, save_path="metrics.png")
 
     if WORLD_SIZE > 1:
         dist.barrier()
 
-    plot_metrics(history, save_path="metrics.png")
-
     if IS_MAIN:
         print("\n===== Summary =====")
-        final_train = history["train_loss"][-1]
-        final_ppl = history["val_perplexity"][-1]
-        final_nll = history["val_nll"][-1]
-        final_tps = history["val_tps"][-1]
+        final_train = (
+            history["train_loss"][-1]
+            if history["train_loss"]
+            else float("nan")
+        )
+        final_ppl = (
+            history["val_perplexity"][-1]
+            if history["val_perplexity"]
+            else float("nan")
+        )
+        final_nll = (
+            history["val_nll"][-1] if history["val_nll"] else float("nan")
+        )
+        final_tps = (
+            history["val_tps"][-1] if history["val_tps"] else float("nan")
+        )
         print(f"  Train loss (last logged): {final_train:.4f}")
         print(f"  Val perplexity:          {final_ppl:.2f}")
         print(f"  Val NLL:                 {final_nll:.2f}")

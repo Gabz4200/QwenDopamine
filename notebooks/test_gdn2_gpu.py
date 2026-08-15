@@ -1,13 +1,22 @@
-"""Kaggle 2xT4 GPU smoke-test + FineWeb-Edu Micro training for Pure Recurrent GatedDeltaNet-2 (GDN-2) Model.
+"""Kaggle 2xT4 GPU smoke-test + FineWeb-Edu Micro training for Pure Recurrent Multi-Head GatedDeltaNet-2 (1.3B).
 
 Architecture:
-  Pure Recurrent Transformer-like Decoder model (1.3B scale specification) with
-  pre-layer RMSNorm, SwiGLU MLP, and GatedDeltaNet2 token mixer across ALL layers
+  Multi-Head Pure Recurrent Transformer-like Decoder model (1.3B scale specification)
+  with 16 recurrent memory heads (head_size=128, hidden_dim=2048), pre-layer RMSNorm,
+  SwiGLU MLP (intermediate=5504), and GatedDeltaNet2 token mixer across ALL 24 layers
   (0 Self-Attention layers).
 
+Pre-training Hyperparameters (Production 1.3B Scale):
+  - Optimizer: 8-bit AdamW (betas=(0.9, 0.95), eps=1e-8) with decoupled weight decay (0.1 on 2D weights, 0.0 on 1D norms/biases)
+  - Learning Rate: 3.0e-4 peak, 3.0e-5 min with linear warmup and cosine decay
+  - Gradient Clipping: 1.0
+  - Normalization: RMSNorm (eps=1e-6)
+  - Chunk Size: 128 (chunk-parallel recurrence)
+  - Short Conv: Causal 1D depthwise convolution (kernel_size=4)
+
 Part 1 — Sanity checks & 1.3B Architecture Inspection
-  1. 1.3B Model Specification & parameter breakdown inspection (100% Recurrent Blocks).
-  2. Synthetic overfit on pure recurrent GPT model (all layers GatedDeltaNet-2).
+  1. 1.3B Multi-Head Model Specification & parameter breakdown inspection (16 heads, 24 layers).
+  2. Synthetic overfit on multi-head pure recurrent GPT model (all layers GatedDeltaNet-2).
   3. GDN-2 Recurrence scan & state validity check via torch_recurrent_gdn2.
 
 Part 2 — FineWeb-Edu Micro LM training
@@ -177,12 +186,19 @@ IS_MAIN = RANK == 0
 
 
 def inspect_1b_architecture() -> None:
-    """Inspect and print the 1.3B scale pure recurrent model specification."""
-    cfg_1b = Config.from_name("1B", mixer_type="gdn2", surprise_net_per_layer=1)
+    """Inspect and print the 1.3B scale multi-head pure recurrent model specification."""
+    cfg_1b = Config.from_name(
+        "1B_mha",
+        mixer_type="gdn2",
+        surprise_net_per_layer=1,
+        train_chunk_size=128,
+        use_short_conv=True,
+        norm_eps=1e-6,
+    )
     stats = compute_model_params(cfg_1b)
 
     print("=" * 60)
-    print(f"1.3B Pure Recurrent Model Specification ({cfg_1b.name} - GatedDeltaNet2)")
+    print(f"1.3B Multi-Head Pure Recurrent Model Specification ({cfg_1b.name} - GatedDeltaNet2)")
     print("=" * 60)
     print(
         f"  Total Parameters:        {stats['total']:,} (~{stats['total']/1e9:.2f}B)"
@@ -190,13 +206,13 @@ def inspect_1b_architecture() -> None:
     print(f"  Layers (n_layer):        {cfg_1b.n_layer}")
     print(f"  Hidden Dim (n_embd):     {cfg_1b.n_embd}")
     print(
-        f"  Heads (n_head):          {cfg_1b.n_head} (head_size={cfg_1b.head_size})"
+        f"  Recurrent Heads:         {cfg_1b.n_head} (head_k_dim={cfg_1b.head_size}, head_v_dim={cfg_1b.head_size})"
     )
-    print(f"  SwiGLU Intermediate:     {cfg_1b.intermediate_size}")
+    print(f"  SwiGLU Intermediate:     {cfg_1b.intermediate_size} (~8/3 x hidden_dim)")
     print(f"  Vocabulary Size:         {cfg_1b.vocab_size:,}")
     print(f"  Max Context Length:      {cfg_1b.block_size:,}")
     print(
-        f"  Recurrent Layers:        {stats['num_surprise_layers']}x GatedDeltaNet2 (All layers)"
+        f"  Recurrent Layers:        {stats['num_surprise_layers']}x GatedDeltaNet2 (All 24 layers)"
     )
     print(
         f"  Self-Attention Layers:   {stats['num_standard_layers']} (Zero self-attention)"
@@ -207,7 +223,7 @@ def inspect_1b_architecture() -> None:
 
 
 def run_synthetic_overfit() -> tuple[float, float, bool]:
-    """Verify learning on a small pure recurrent GPT model (all layers GatedDeltaNet-2)."""
+    """Verify learning on a small multi-head pure recurrent GPT model (all layers GatedDeltaNet-2)."""
     torch.manual_seed(0)
     vocab_size = 64
     seq_len = 32
@@ -225,7 +241,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
         head_size=32,
         n_query_groups=4,
         intermediate_size=344,
-        norm_eps=1e-5,
+        norm_eps=1e-6,
         train_chunk_size=seq_len,
         surprise_net_per_layer=1,
         mixer_type="gdn2",
@@ -241,7 +257,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     if IS_MAIN:
         print(f"[synth] params: {total_params:,}  trainable: {trainable:,}")
-        print(f"[synth] All {cfg.n_layer} layers use GatedDeltaNet2 (0 self-attention)")
+        print(f"[synth] Multi-head: {cfg.n_head} heads | All {cfg.n_layer} layers use GatedDeltaNet2 (0 self-attention)")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     loss_fn = nn.CrossEntropyLoss()
@@ -274,7 +290,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
 
 @torch.no_grad()
 def run_serial_chunk_parity() -> bool:
-    """Verify validity and finiteness of GDN-2 recurrent scan."""
+    """Verify validity and finiteness of multi-head GDN-2 recurrent scan."""
     bs, t, h, d_k, d_v = 2, 32, 4, 16, 16
     torch.manual_seed(42)
     q = torch.randn(bs, t, h, d_k, device=device, dtype=dtype)
@@ -381,7 +397,7 @@ class TrainConfig:
     log_interval: int = 25
     eval_interval: int = 100
     lr: float = 3e-4
-    min_lr: float = 1e-5
+    min_lr: float = 3e-5
     weight_decay: float = 0.1
     warmup_steps: int = 50
     grad_clip: float = 1.0
@@ -389,6 +405,53 @@ class TrainConfig:
     use_amp: bool = True
     early_stopping_patience: int = 4
     early_stopping_min_delta: float = 1e-3
+
+
+def configure_optimizers(
+    model: nn.Module,
+    lr: float,
+    weight_decay: float,
+    betas: tuple[float, float],
+    eps: float,
+    device_type: str,
+) -> torch.optim.Optimizer:
+    """Create optimizer applying decoupled weight decay exclusively to 2D weight matrices."""
+    decay_params: list[torch.nn.Parameter] = []
+    no_decay_params: list[torch.nn.Parameter] = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if (
+            param.ndim >= 2
+            and not getattr(param, "_no_weight_decay", False)
+            and "norm" not in name.lower()
+            and "bias" not in name.lower()
+        ):
+            decay_params.append(param)
+        else:
+            no_decay_params.append(param)
+
+    param_groups = [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+
+    optimizer_cls = torch.optim.AdamW
+    if device_type == "cuda":
+        try:
+            import bitsandbytes as bnb
+
+            optimizer_cls = bnb.optim.PagedAdamW8bit
+            if IS_MAIN:
+                print(
+                    f"[opt] Using bitsandbytes PagedAdamW8bit (decay={len(decay_params)} tensors, no_decay={len(no_decay_params)} tensors)"
+                )
+        except ImportError:
+            if IS_MAIN:
+                print("[opt] bitsandbytes not found, falling back to standard AdamW")
+
+    return optimizer_cls(param_groups, lr=lr, betas=betas, eps=eps)
 
 
 def evaluate(
@@ -454,24 +517,13 @@ def train(
 ) -> dict[str, list[float]]:
     model.train()
 
-    optimizer_cls = torch.optim.AdamW
-    if device.type == "cuda":
-        try:
-            import bitsandbytes as bnb
-
-            optimizer_cls = bnb.optim.PagedAdamW8bit
-            if IS_MAIN:
-                print("[opt] Using bitsandbytes PagedAdamW8bit (low memory footprint for 1.3B)")
-        except ImportError:
-            if IS_MAIN:
-                print("[opt] bitsandbytes not found, falling back to standard AdamW")
-
-    optimizer = optimizer_cls(
-        model.parameters(),
+    optimizer = configure_optimizers(
+        model=model,
         lr=cfg.lr,
-        betas=(0.9, 0.95),
         weight_decay=cfg.weight_decay,
+        betas=(0.9, 0.95),
         eps=1e-8,
+        device_type=device.type,
     )
     loss_fn = nn.CrossEntropyLoss()
 
@@ -639,7 +691,7 @@ def plot_metrics(
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
     fig.suptitle(
-        "Pure Recurrent GatedDeltaNet-2 (1.3B) — FineWeb-Edu Micro Training Metrics",
+        "Multi-Head Pure Recurrent GatedDeltaNet-2 (1.3B) — FineWeb-Edu Micro Training Metrics",
         fontsize=13,
     )
 
@@ -790,7 +842,7 @@ def main() -> None:
         log_interval=25,
         eval_interval=100,
         lr=3e-4,
-        min_lr=1e-5,
+        min_lr=3e-5,
         weight_decay=0.1,
         warmup_steps=50,
         grad_accum_steps=8,
@@ -799,12 +851,15 @@ def main() -> None:
     )
 
     lm_cfg = Config.from_name(
-        "1B",
+        "1B_mha",
         block_size=max(data_cfg.max_seq_len, 2048),
         vocab_size=tokenizer.vocab_size,
         padded_vocab_size=tokenizer.vocab_size,
         mixer_type="gdn2",
         surprise_net_per_layer=1,
+        train_chunk_size=128,
+        use_short_conv=True,
+        norm_eps=1e-6,
         gradient_checkpointing=True,
     )
 
@@ -820,8 +875,8 @@ def main() -> None:
     total_params = sum(p.numel() for p in model.parameters())
     if IS_MAIN:
         print(
-            f"[model] Pure Recurrent 1.3B LM  params={total_params:,}  "
-            f"layers={lm_cfg.n_layer} (100% GatedDeltaNet2, 0 self-attention)"
+            f"[model] Multi-Head Pure Recurrent 1.3B LM  params={total_params:,}  "
+            f"layers={lm_cfg.n_layer} (16 heads, 100% GatedDeltaNet2, 0 self-attention)"
         )
 
     history = train(model, train_dl, val_dl, train_cfg, device, dtype)
@@ -857,10 +912,10 @@ def main() -> None:
         print(f"  GPUs:                    {WORLD_SIZE}x T4")
         print("  Data:                    bhavnicksm/fineweb-edu-micro")
         print(
-            f"  Architecture:            Pure Recurrent (1.3B, Layers: {lm_cfg.n_layer}, Mixer: GatedDeltaNet2, 0 Self-Attention)"
+            f"  Architecture:            Multi-Head Pure Recurrent (1.3B, Layers: {lm_cfg.n_layer}, Heads: {lm_cfg.n_head}, Mixer: GatedDeltaNet2, 0 Self-Attention)"
         )
         print(f"  Train steps:             {train_cfg.num_steps}")
-        print("  Result: Pure Recurrent GatedDeltaNet2 1.3B LM training complete.")
+        print("  Result: Multi-Head Pure Recurrent GatedDeltaNet2 1.3B LM training complete.")
 
     if WORLD_SIZE > 1:
         dist.destroy_process_group()

@@ -1,19 +1,19 @@
-"""Kaggle 2xT4 GPU smoke-test + FineWeb-Edu Micro training for GatedSurpriseNetAdam GPT Model.
+"""Kaggle 2xT4 GPU smoke-test + FineWeb-Edu Micro training for Pure Recurrent GatedSurpriseNetAdam Model.
 
 Architecture:
-  Transformer-based GPT Decoder model (1.3B scale specification) with
-  pre-layer RMSNorm, SwiGLU MLP, RoPE positional embeddings, CausalSelfAttention (GQA),
-  and GatedSurpriseNetAdam token mixer positioned at the center layer.
+  Pure Recurrent Transformer-like Decoder model (1.3B scale specification) with
+  pre-layer RMSNorm, SwiGLU MLP, and GatedSurpriseNetAdam token mixer across ALL layers
+  (0 Self-Attention layers).
 
 Part 1 — Sanity checks & 1.3B Architecture Inspection
-  1. 1.3B Model Specification & parameter breakdown inspection (~1.35B params).
-  2. Synthetic overfit on hybrid GPT model with central GatedSurpriseNet block.
+  1. 1.3B Model Specification & parameter breakdown inspection (100% Recurrent Blocks).
+  2. Synthetic overfit on pure recurrent GPT model (all layers GatedSurpriseNetAdam).
   3. Serial-vs-chunk parity: SurpriseMemoryAdam.serial_scan and
      chunk_parallel_training_scan match within tight tolerance.
 
 Part 2 — FineWeb-Edu Micro LM training
   Load bhavnicksm/fineweb-edu-micro (1M tokens, high-quality educational passages),
-  build the 1.3B hybrid Transformer + central GatedSurpriseNet GPT model, train with
+  build the 1.3B pure recurrent GatedSurpriseNet model, train with
   8-bit AdamW + gradient checkpointing + AMP + DDP + early stopping, and log
   cross-entropy loss, perplexity, and negative log-likelihood.
 
@@ -178,13 +178,12 @@ IS_MAIN = RANK == 0
 
 
 def inspect_1b_architecture() -> None:
-    """Inspect and print the 1.3B scale model specification."""
-    cfg_1b = Config.from_name("1B", mixer_type="surprise")
+    """Inspect and print the 1.3B scale pure recurrent model specification."""
+    cfg_1b = Config.from_name("1B", mixer_type="surprise", surprise_net_per_layer=1)
     stats = compute_model_params(cfg_1b)
-    center_idx = cfg_1b.n_layer // 2
 
     print("=" * 60)
-    print(f"1.3B Model Specification ({cfg_1b.name} - GatedSurpriseNetAdam)")
+    print(f"1.3B Pure Recurrent Model Specification ({cfg_1b.name} - GatedSurpriseNetAdam)")
     print("=" * 60)
     print(
         f"  Total Parameters:        {stats['total']:,} (~{stats['total']/1e9:.2f}B)"
@@ -192,27 +191,24 @@ def inspect_1b_architecture() -> None:
     print(f"  Layers (n_layer):        {cfg_1b.n_layer}")
     print(f"  Hidden Dim (n_embd):     {cfg_1b.n_embd}")
     print(
-        f"  Attention Heads:         {cfg_1b.n_head} (head_size={cfg_1b.head_size})"
+        f"  Heads (n_head):          {cfg_1b.n_head} (head_size={cfg_1b.head_size})"
     )
-    print(f"  GQA KV Groups:           {cfg_1b.n_query_groups}")
     print(f"  SwiGLU Intermediate:     {cfg_1b.intermediate_size}")
     print(f"  Vocabulary Size:         {cfg_1b.vocab_size:,}")
     print(f"  Max Context Length:      {cfg_1b.block_size:,}")
-    print(f"  Center Layer Index:      Layer {center_idx} (GatedSurpriseNetAdam)")
     print(
-        f"  Standard Layers:         {stats['num_standard_layers']}x CausalSelfAttention"
+        f"  Recurrent Layers:        {stats['num_surprise_layers']}x GatedSurpriseNetAdam (All layers)"
     )
     print(
-        f"  Surprise Net Layers:     {stats['num_surprise_layers']}x GatedSurpriseNetAdam"
+        f"  Self-Attention Layers:   {stats['num_standard_layers']} (Zero self-attention)"
     )
-    print(f"  Standard Block Params:   {stats['standard_block']:,}")
-    print(f"  Center Surprise Block:   {stats['surprise_block']:,}")
+    print(f"  Recurrent Block Params:  {stats['surprise_block']:,}")
     print(f"  Token Embeddings:        {stats['embed']:,}")
     print("=" * 60)
 
 
 def run_synthetic_overfit() -> tuple[float, float, bool]:
-    """Verify learning on a small GPT model with central GatedSurpriseNetAdam."""
+    """Verify learning on a small pure recurrent GPT model (all layers GatedSurpriseNetAdam)."""
     torch.manual_seed(0)
     vocab_size = 64
     seq_len = 32
@@ -220,7 +216,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
     synth_steps = 200
 
     cfg = Config(
-        name="synthetic_hybrid",
+        name="synthetic_recurrent_surprise",
         block_size=seq_len,
         vocab_size=vocab_size,
         padded_vocab_size=vocab_size,
@@ -232,6 +228,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
         intermediate_size=344,
         norm_eps=1e-5,
         train_chunk_size=seq_len,
+        surprise_net_per_layer=1,
         mixer_type="surprise",
     )
     model = GPT(cfg).to(device=device, dtype=dtype)
@@ -245,8 +242,7 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     if IS_MAIN:
         print(f"[synth] params: {total_params:,}  trainable: {trainable:,}")
-        center_layer = cfg.n_layer // 2
-        print(f"[synth] Center GatedSurpriseNet placed at layer {center_layer}")
+        print(f"[synth] All {cfg.n_layer} layers use GatedSurpriseNetAdam (0 self-attention)")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     loss_fn = nn.CrossEntropyLoss()
@@ -643,7 +639,7 @@ def plot_metrics(
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
     fig.suptitle(
-        "GatedSurpriseNetAdam Hybrid GPT (1.3B) — FineWeb-Edu Micro Training Metrics",
+        "Pure Recurrent GatedSurpriseNetAdam (1.3B) — FineWeb-Edu Micro Training Metrics",
         fontsize=13,
     )
 
@@ -808,6 +804,7 @@ def main() -> None:
         vocab_size=tokenizer.vocab_size,
         padded_vocab_size=tokenizer.vocab_size,
         mixer_type="surprise",
+        surprise_net_per_layer=1,
         gradient_checkpointing=True,
     )
 
@@ -822,10 +819,9 @@ def main() -> None:
 
     total_params = sum(p.numel() for p in model.parameters())
     if IS_MAIN:
-        center_layer = lm_cfg.n_layer // 2
         print(
-            f"[model] GPT Hybrid 1.3B LM  params={total_params:,}  "
-            f"layers={lm_cfg.n_layer} (Center GatedSurpriseNet at layer {center_layer})"
+            f"[model] Pure Recurrent 1.3B LM  params={total_params:,}  "
+            f"layers={lm_cfg.n_layer} (100% GatedSurpriseNetAdam, 0 self-attention)"
         )
 
     history = train(model, train_dl, val_dl, train_cfg, device, dtype)
@@ -861,10 +857,10 @@ def main() -> None:
         print(f"  GPUs:                    {WORLD_SIZE}x T4")
         print("  Data:                    bhavnicksm/fineweb-edu-micro")
         print(
-            f"  Architecture:            GPT Hybrid (1.3B, Layers: {lm_cfg.n_layer}, Center: GatedSurpriseNetAdam)"
+            f"  Architecture:            Pure Recurrent (1.3B, Layers: {lm_cfg.n_layer}, Mixer: GatedSurpriseNetAdam, 0 Self-Attention)"
         )
         print(f"  Train steps:             {train_cfg.num_steps}")
-        print("  Result: Hybrid GPT 1.3B LM training complete.")
+        print("  Result: Pure Recurrent GatedSurpriseNetAdam 1.3B LM training complete.")
 
     if WORLD_SIZE > 1:
         dist.destroy_process_group()

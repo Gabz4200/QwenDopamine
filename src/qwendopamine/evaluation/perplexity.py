@@ -7,7 +7,9 @@ import torch
 from qwendopamine.utils import get_model_device
 
 
-def compute_perplexity(model: torch.nn.Module, dataloader: Any, max_steps: int = 500) -> float:
+def compute_perplexity(
+    model: torch.nn.Module, dataloader: Any, max_steps: int = 500
+) -> float:
     r"""Estimate perplexity over a dataloader.
 
     Accumulates cross-entropy loss token-wise and exponentiates the average
@@ -32,7 +34,10 @@ def compute_perplexity(model: torch.nn.Module, dataloader: Any, max_steps: int =
         for step, batch in enumerate(dataloader):
             if step >= max_steps:
                 break
-            batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            batch = {
+                k: v.to(device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
             outputs = model(**batch)
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
             total_loss += loss.item() * batch["input_ids"].numel()

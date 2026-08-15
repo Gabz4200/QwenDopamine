@@ -53,11 +53,15 @@ def gaussian_nll_diag(
     return loss.sum(dim=-1)
 
 
-def torch_get_unpad_data(attention_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, int]:
+def torch_get_unpad_data(
+    attention_mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
     r"""Pure PyTorch helper for unpadding 2D attention masks."""
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
-    max_seqlen_in_batch = int(seqlens_in_batch.max().item()) if seqlens_in_batch.numel() > 0 else 0
+    max_seqlen_in_batch = (
+        int(seqlens_in_batch.max().item()) if seqlens_in_batch.numel() > 0 else 0
+    )
     cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
     return indices, cu_seqlens, max_seqlen_in_batch
 
@@ -72,7 +76,9 @@ def torch_pad_input(
 ) -> torch.Tensor:
     r"""Pad flattened sequence back to [batch_size, seq_len, ...] shape."""
     output_shape = (batch_size * seq_len,) + hidden_states.shape[1:]
-    padded = torch.zeros(output_shape, dtype=hidden_states.dtype, device=hidden_states.device)
+    padded = torch.zeros(
+        output_shape, dtype=hidden_states.dtype, device=hidden_states.device
+    )
     padded[indices] = hidden_states
     return padded.view(batch_size, seq_len, *hidden_states.shape[1:])
 
@@ -118,7 +124,12 @@ class SurpriseMemoryAdam(nn.Module):
     ) -> SurpriseRecurrenceState:
         device = device if device is not None else self.memory_init.device
         dtype = dtype if dtype is not None else torch.float32
-        mem0 = self.memory_init.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1, -1, -1).clone()
+        mem0 = (
+            self.memory_init.to(device=device, dtype=dtype)
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1, -1)
+            .clone()
+        )
         m0 = torch.zeros_like(mem0)
         v0 = torch.zeros_like(mem0)
         t0 = torch.zeros(batch_size, self.num_heads, 1, 1, device=device, dtype=dtype)
@@ -200,7 +211,9 @@ class SurpriseMemoryAdam(nn.Module):
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
         for i in range(k.shape[1]):
-            state, out_i, nll_i = self.one_step(state, q[:, i], k[:, i], v[:, i], g[:, i], b[:, i], w[:, i])
+            state, out_i, nll_i = self.one_step(
+                state, q[:, i], k[:, i], v[:, i], g[:, i], b[:, i], w[:, i]
+            )
             outputs.append(out_i)
             losses.append(nll_i)
             if detach_state_every_step:
@@ -287,27 +300,19 @@ class GatedSurpriseNetAdam(nn.Module):
             hidden_size_or_config, "n_embd"
         ):
             cfg = hidden_size_or_config
-            hidden_size = getattr(
-                cfg, "hidden_size", getattr(cfg, "n_embd", 2048)
-            )
-            num_heads = getattr(
-                cfg, "num_heads", getattr(cfg, "n_head", 16)
-            )
-            head_dim = getattr(
-                cfg, "head_dim", getattr(cfg, "head_size", 128)
-            )
+            hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", 2048))
+            num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", 16))
+            head_dim = getattr(cfg, "head_dim", getattr(cfg, "head_size", 128))
             num_v_heads = getattr(
-                cfg, "num_v_heads", getattr(cfg, "n_query_groups", num_v_heads or num_heads)
+                cfg,
+                "num_v_heads",
+                getattr(cfg, "n_query_groups", num_v_heads or num_heads),
             )
             conv_size = getattr(
                 cfg, "conv_size", getattr(cfg, "conv_kernel_size", conv_size)
             )
-            norm_eps = getattr(
-                cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps)
-            )
-            allow_neg_eigval = getattr(
-                cfg, "allow_neg_eigval", allow_neg_eigval
-            )
+            norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
+            allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
             expand_v = getattr(cfg, "expand_v", expand_v)
             local_adam_lr = getattr(cfg, "local_adam_lr", local_adam_lr)
             local_adam_beta1 = getattr(cfg, "local_adam_beta1", local_adam_beta1)
@@ -315,7 +320,9 @@ class GatedSurpriseNetAdam(nn.Module):
             local_adam_eps = getattr(cfg, "local_adam_eps", local_adam_eps)
             nll_var_eps = getattr(cfg, "nll_var_eps", nll_var_eps)
             nll_full = getattr(cfg, "nll_full", nll_full)
-            learnable_init_state = getattr(cfg, "learnable_init_state", learnable_init_state)
+            learnable_init_state = getattr(
+                cfg, "learnable_init_state", learnable_init_state
+            )
             train_chunk_size = getattr(cfg, "train_chunk_size", train_chunk_size)
         elif isinstance(hidden_size_or_config, dict):
             cfg_dict = hidden_size_or_config
@@ -333,7 +340,9 @@ class GatedSurpriseNetAdam(nn.Module):
             local_adam_eps = cfg_dict.get("local_adam_eps", local_adam_eps)
             nll_var_eps = cfg_dict.get("nll_var_eps", nll_var_eps)
             nll_full = cfg_dict.get("nll_full", nll_full)
-            learnable_init_state = cfg_dict.get("learnable_init_state", learnable_init_state)
+            learnable_init_state = cfg_dict.get(
+                "learnable_init_state", learnable_init_state
+            )
             train_chunk_size = cfg_dict.get("train_chunk_size", train_chunk_size)
         elif hidden_size is None:
             hidden_size = int(hidden_size_or_config)
@@ -368,7 +377,9 @@ class GatedSurpriseNetAdam(nn.Module):
         self.key_dim = int(self.num_heads * self.head_k_dim)
         self.value_dim = int(self.num_v_heads * self.head_v_dim)
 
-        if not math.isclose(self.num_v_heads * self.head_dim * expand_v, self.value_dim, rel_tol=1e-5):
+        if not math.isclose(
+            self.num_v_heads * self.head_dim * expand_v, self.value_dim, rel_tol=1e-5
+        ):
             raise ValueError(
                 f"expand_v={expand_v} does not produce an integer value when multiplied by key_dim={self.key_dim}."
             )
@@ -412,10 +423,14 @@ class GatedSurpriseNetAdam(nn.Module):
         self.b_proj = nn.Linear(self.hidden_size, self.key_dim, bias=False)
         self.w_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
 
-        self.A_log = nn.Parameter(torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16)))
+        self.A_log = nn.Parameter(
+            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
+        )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
-            torch.rand(self.key_dim, dtype=torch.float32) * (math.log(0.1) - math.log(0.001)) + math.log(0.001)
+            torch.rand(self.key_dim, dtype=torch.float32)
+            * (math.log(0.1) - math.log(0.001))
+            + math.log(0.001)
         ).clamp(min=1e-4)
         inv_dt = dt + torch.log(-torch.expm1(-dt))
         self.dt_bias = nn.Parameter(inv_dt)
@@ -447,7 +462,7 @@ class GatedSurpriseNetAdam(nn.Module):
         if getattr(module, "_is_hf_initialized", False):
             return
         if isinstance(module, nn.Linear):
-            nn.init.xavier_uniform_(module.weight, gain=2 ** -2.5)
+            nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
         cast(Any, module)._is_hf_initialized = True
@@ -476,7 +491,9 @@ class GatedSurpriseNetAdam(nn.Module):
             return None, None
 
         if isinstance(past_key_values, dict):
-            return past_key_values.get("recurrent_state"), past_key_values.get("conv_state")
+            return past_key_values.get("recurrent_state"), past_key_values.get(
+                "conv_state"
+            )
 
         return None, None
 
@@ -484,7 +501,8 @@ class GatedSurpriseNetAdam(nn.Module):
         self,
         past_key_values: Cache | dict[str, Any] | None,
         recurrent_state: SurpriseRecurrenceState | None,
-        conv_state: tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None,
+        conv_state: tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
+        | None,
     ) -> None:
         if past_key_values is None:
             return
@@ -503,13 +521,17 @@ class GatedSurpriseNetAdam(nn.Module):
                     and hasattr(past_key_values, "update_recurrent_state")
                     and recurrent_state is not None
                 ):
-                    past_key_values.update_recurrent_state(cast(Any, recurrent_state), self.layer_idx)
+                    past_key_values.update_recurrent_state(
+                        cast(Any, recurrent_state), self.layer_idx
+                    )
                 if (
                     is_recurrent_layer
                     and hasattr(past_key_values, "update_conv_state")
                     and conv_state is not None
                 ):
-                    past_key_values.update_conv_state(cast(Any, conv_state), self.layer_idx)
+                    past_key_values.update_conv_state(
+                        cast(Any, conv_state), self.layer_idx
+                    )
         elif isinstance(past_key_values, dict):
             if recurrent_state is not None:
                 past_key_values["recurrent_state"] = recurrent_state
@@ -521,7 +543,10 @@ class GatedSurpriseNetAdam(nn.Module):
         hidden_states: torch.Tensor,
         cu_seqlens: torch.Tensor | None = None,
         use_cache: bool = False,
-        conv_states: tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None = None,
+        conv_states: tuple[
+            torch.Tensor | None, torch.Tensor | None, torch.Tensor | None
+        ]
+        | None = None,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
@@ -579,14 +604,15 @@ class GatedSurpriseNetAdam(nn.Module):
         if self.num_v_heads > self.num_heads:
             groups = self.num_v_heads // self.num_heads
             q, k, g, b_gate = (
-                repeat(x, "... h d -> ... (h g) d", g=groups)
-                for x in (q, k, g, b_gate)
+                repeat(x, "... h d -> ... (h g) d", g=groups) for x in (q, k, g, b_gate)
             )
 
         if self.allow_neg_eigval:
             b_gate = b_gate * 2.0
 
-        new_conv_states = (new_conv_q, new_conv_k, new_conv_v) if self.use_short_conv else None
+        new_conv_states = (
+            (new_conv_q, new_conv_k, new_conv_v) if self.use_short_conv else None
+        )
         return q, k, v, g, b_gate, w_gate, new_conv_states
 
     def forward(
@@ -628,7 +654,9 @@ class GatedSurpriseNetAdam(nn.Module):
         if self.training:
             mode = "chunk"
         else:
-            mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
+            mode = (
+                "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
+            )
 
         if mode == "chunk":
             out, final_recurrent_state, _ = self.memory.chunk_parallel_training_scan(
@@ -662,7 +690,9 @@ class GatedSurpriseNetAdam(nn.Module):
                 conv_state=new_conv_states,
             )
 
-        gate = rearrange(self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim)
+        gate = rearrange(
+            self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
+        )
         out = self.o_norm(out, gate)
         out = rearrange(out, "b t h d -> b t (h d)")
         out = self.o_proj(out)

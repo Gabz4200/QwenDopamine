@@ -20,17 +20,23 @@ class DummyLM(torch.nn.Module):
         self.embedding = torch.nn.Embedding(vocab_size, 16)
         self.lm_head = torch.nn.Linear(16, vocab_size)
 
-    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor | None = None, **kwargs: Any) -> Any:
+    def forward(
+        self, input_ids: torch.Tensor, labels: torch.Tensor | None = None, **kwargs: Any
+    ) -> Any:
         hidden = self.embedding(input_ids)
         logits = self.lm_head(hidden)
         loss = None
         if labels is not None:
-            loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+            loss = torch.nn.functional.cross_entropy(
+                logits.view(-1, logits.size(-1)), labels.view(-1)
+            )
         return types.SimpleNamespace(logits=logits, loss=loss)
 
     def generate(self, input_ids: torch.Tensor, **kwargs: Any) -> torch.Tensor:
         batch_size = input_ids.shape[0]
-        new_tokens = torch.zeros(batch_size, 4, dtype=torch.long, device=input_ids.device)
+        new_tokens = torch.zeros(
+            batch_size, 4, dtype=torch.long, device=input_ids.device
+        )
         return torch.cat([input_ids, new_tokens], dim=-1)
 
 
@@ -46,7 +52,10 @@ class DummyTokenizer:
 
 def test_when_compute_perplexity_called_then_returns_finite_float() -> None:
     model = DummyLM(vocab_size=50)
-    batch = {"input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long), "labels": torch.tensor([[1, 2, 3, 4]], dtype=torch.long)}
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
+        "labels": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
+    }
     dataloader = [batch, batch]
 
     ppl = compute_perplexity(model, dataloader, max_steps=2)

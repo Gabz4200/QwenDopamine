@@ -30,12 +30,15 @@ try:
         except Exception:  # noqa: BLE001
             return cls
 except ImportError:
+
     def strict(cls: Any) -> Any:
         return cls
+
 
 try:
     from transformers import initialization as init
 except ImportError:
+
     class _InitFallback:
         @staticmethod
         def ones_(tensor: torch.Tensor) -> torch.Tensor:
@@ -50,11 +53,13 @@ except ImportError:
 try:
     from transformers.cache_utils import Cache, DynamicCache
 except ImportError:
+
     class Cache:  # type: ignore[no-redef]
         pass
 
     class DynamicCache(Cache):  # type: ignore[no-redef]
         pass
+
 
 try:
     from transformers.integrations import (
@@ -68,8 +73,10 @@ try:
         try:
             inner = _hf_use_kernel_forward_from_hub(*args, **kwargs)
         except Exception:  # noqa: BLE001
+
             def noop_decorator(fn: Any) -> Any:
                 return fn
+
             return noop_decorator
 
         def decorator(fn: Any) -> Any:
@@ -84,8 +91,10 @@ try:
         try:
             inner = _hf_use_kernelized_func(*args, **kwargs)
         except Exception:  # noqa: BLE001
+
             def noop_decorator(fn: Any) -> Any:
                 return fn
+
             return noop_decorator
 
         def decorator(fn: Any) -> Any:
@@ -96,15 +105,19 @@ try:
 
         return decorator
 except ImportError:
+
     def use_kernel_forward_from_hub(*args: Any, **kwargs: Any) -> Any:
         def decorator(fn: Any) -> Any:
             return fn
+
         return decorator
 
     def use_kernelized_func(*args: Any, **kwargs: Any) -> Any:
         def decorator(fn: Any) -> Any:
             return fn
+
         return decorator
+
 
 try:
     from transformers.masking_utils import (
@@ -115,11 +128,13 @@ except ImportError:
     try:
         from transformers.masking_utils import create_causal_mask
     except ImportError:
+
         def create_causal_mask(*args: Any, **kwargs: Any) -> Any:
             return None
 
     def create_recurrent_attention_mask(*args: Any, **kwargs: Any) -> Any:
         return None
+
 
 try:
     from transformers.modeling_layers import (
@@ -128,6 +143,7 @@ try:
         GradientCheckpointingLayer,
     )
 except ImportError:
+
     class GenericForSequenceClassification:  # type: ignore[no-redef]
         pass
 
@@ -137,6 +153,7 @@ except ImportError:
     class GradientCheckpointingLayer(nn.Module):  # type: ignore[no-redef]
         pass
 
+
 try:
     from transformers.modeling_outputs import (
         BaseModelOutputWithPast,
@@ -144,6 +161,7 @@ try:
         SequenceClassifierOutputWithPast,
     )
 except ImportError:
+
     class BaseModelOutputWithPast:  # type: ignore[no-redef]
         pass
 
@@ -153,23 +171,30 @@ except ImportError:
     class SequenceClassifierOutputWithPast:  # type: ignore[no-redef]
         pass
 
+
 try:
     from transformers.modeling_utils import PreTrainedModel
 except ImportError:
+
     class PreTrainedModel(nn.Module):  # type: ignore[no-redef]
         pass
+
 
 try:
     from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
 except Exception:  # noqa: BLE001
+
     class Qwen3ForCausalLM(nn.Module):  # type: ignore[no-redef]
         pass
+
 
 try:
     from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
 except Exception:  # noqa: BLE001
+
     class Qwen3NextConfig:  # type: ignore[no-redef]
         pass
+
 
 try:
     from transformers.models.qwen3_next.modeling_qwen3_next import (
@@ -186,6 +211,7 @@ try:
         torch_recurrent_gated_delta_rule,
     )
 except Exception:  # noqa: BLE001
+
     class Qwen3NextAttention(nn.Module):  # type: ignore[no-redef]
         pass
 
@@ -225,6 +251,7 @@ except Exception:  # noqa: BLE001
     class Qwen3VLVisionConfig:  # type: ignore[no-redef]
         pass
 
+
 try:
     from transformers.models.qwen3_vl.modeling_qwen3_vl import (
         Qwen3VLForConditionalGeneration,
@@ -256,6 +283,7 @@ except Exception:  # noqa: BLE001
     class Qwen3VLVisionRotaryEmbedding(nn.Module):  # type: ignore[no-redef]
         pass
 
+
 try:
     from typing import Unpack
 except ImportError:
@@ -271,6 +299,7 @@ try:
         logging,
     )
 except ImportError:
+
     def can_return_tuple(fn: Any) -> Any:
         return fn
 
@@ -283,19 +312,24 @@ try:
         merge_with_config_defaults,
     )
 except ImportError:
+
     def accepts_precomputed_kwargs(*args: Any, **kwargs: Any) -> Any:
         def decorator(fn: Any) -> Any:
             return fn
+
         return decorator
 
     def merge_with_config_defaults(fn: Any) -> Any:
         return fn
 
+
 try:
     from transformers.utils.output_capturing import capture_outputs
 except ImportError:
+
     def capture_outputs(fn: Any) -> Any:
         return fn
+
 
 try:
     from transformers.vision_utils import (
@@ -359,7 +393,10 @@ class Qwen3_5TextConfig(Qwen3NextConfig):
         "layers.*.linear_attn.out_proj": "colwise_gather_output",
     }
     base_model_ep_plan = None  # no Moe
-    ignore_keys_at_rope_validation: ClassVar[set[str]] = {"mrope_section", "mrope_interleaved"}
+    ignore_keys_at_rope_validation: ClassVar[set[str]] = {
+        "mrope_section",
+        "mrope_interleaved",
+    }
 
     vocab_size: int = 248320
     hidden_size: int = 4096
@@ -449,7 +486,10 @@ class Qwen3_5TextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
         _ = kwargs
         base = config.rope_parameters["rope_theta"]
         partial_rotary_factor = config.rope_parameters.get("partial_rotary_factor", 1.0)
-        head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+        head_dim = (
+            getattr(config, "head_dim", None)
+            or config.hidden_size // config.num_attention_heads
+        )
         dim = int(head_dim * partial_rotary_factor)
 
         attention_factor = 1.0  # Unused in this type of RoPE
@@ -460,7 +500,12 @@ class Qwen3_5TextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
 
 @use_kernel_forward_from_hub("Qwen3_5GatedDeltaNet")
 @use_kernelized_func(
-    [torch_recurrent_gated_delta_rule, torch_chunk_gated_delta_rule, causal_conv1d_fn, causal_conv1d_update]
+    [
+        torch_recurrent_gated_delta_rule,
+        torch_chunk_gated_delta_rule,
+        causal_conv1d_fn,
+        causal_conv1d_update,
+    ]
 )
 class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
     def __init__(self, config: Qwen3_5Config | Qwen3_5TextConfig, layer_idx: int):
@@ -469,7 +514,9 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         del self.in_proj_qkvz
         del self.in_proj_ba
 
-        self.in_proj_qkv = nn.Linear(self.hidden_size, self.key_dim * 2 + self.value_dim, bias=False)
+        self.in_proj_qkv = nn.Linear(
+            self.hidden_size, self.key_dim * 2 + self.value_dim, bias=False
+        )
         self.in_proj_z = nn.Linear(self.hidden_size, self.value_dim, bias=False)
         self.in_proj_b = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
         self.in_proj_a = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
@@ -487,7 +534,9 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         hidden_states = apply_mask_to_padding_states(hidden_states, attention_mask)
 
         batch_size, seq_len, _ = hidden_states.shape
-        use_precomputed_states = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
+        use_precomputed_states = (
+            cache_params is not None and cache_params.has_previous_state(self.layer_idx)
+        )
 
         mixed_qkv = self.in_proj_qkv(hidden_states)
         mixed_qkv = mixed_qkv.transpose(1, 2)
@@ -498,7 +547,11 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         b = self.in_proj_b(hidden_states)
         a = self.in_proj_a(hidden_states)
 
-        if use_precomputed_states and seq_len == 1 and not cache_params.layers[self.layer_idx].record_past:
+        if (
+            use_precomputed_states
+            and seq_len == 1
+            and not cache_params.layers[self.layer_idx].record_past
+        ):
             conv_state = cache_params.layers[self.layer_idx].conv_states[0]
             # Single-token cached decode: the fused per-step kernel updates the conv state in-place.
             mixed_qkv = causal_conv1d_update(
@@ -548,7 +601,11 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
             query = query.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
             key = key.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
 
-        recurrent_state = cache_params.layers[self.layer_idx].recurrent_states[0] if use_precomputed_states else None
+        recurrent_state = (
+            cache_params.layers[self.layer_idx].recurrent_states[0]
+            if use_precomputed_states
+            else None
+        )
         if use_precomputed_states and seq_len == 1:
             core_attn_out, last_recurrent_state = torch_recurrent_gated_delta_rule(
                 query,
@@ -612,8 +669,12 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
         elif self.block_type == "full_attention":
             self.self_attn = Qwen3_5Attention(config, layer_idx)
         self.mlp = Qwen3_5MLP(config, config.intermediate_size)
-        self.input_layernorm = Qwen3_5RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = Qwen3_5RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = Qwen3_5RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_attention_layernorm = Qwen3_5RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -660,7 +721,10 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
 
 class Qwen3_5PreTrainedModel(Qwen3NextPreTrainedModel):
     config: Qwen3_5Config
-    _no_split_modules: ClassVar[list[str]] = ["Qwen3_5DecoderLayer", "Qwen3_5VisionBlock"]
+    _no_split_modules: ClassVar[list[str]] = [
+        "Qwen3_5DecoderLayer",
+        "Qwen3_5VisionBlock",
+    ]
     _can_record_outputs: ClassVar[dict[str, type]] = {
         "hidden_states": Qwen3_5DecoderLayer,
         "attentions": Qwen3_5Attention,
@@ -674,13 +738,18 @@ class Qwen3_5PreTrainedModel(Qwen3NextPreTrainedModel):
             # Lower bound kept away from 0 so log(A) never becomes -inf
             init.copy_(
                 module.A_log,
-                torch.empty(module.num_v_heads, device=module.A_log.device).uniform_(0.01, 16).log_(),
+                torch.empty(module.num_v_heads, device=module.A_log.device)
+                .uniform_(0.01, 16)
+                .log_(),
             )
         # We initialize with 0s to be 1 centered as the RMSNorm here does (1 + weight)
         elif isinstance(module, Qwen3_5RMSNorm):
             init.zeros_(module.weight)
         elif isinstance(module, Qwen3_5VisionRotaryEmbedding):
-            inv_freq = 1.0 / (module.theta ** (torch.arange(0, module.dim, 2, dtype=torch.float) / module.dim))
+            inv_freq = 1.0 / (
+                module.theta
+                ** (torch.arange(0, module.dim, 2, dtype=torch.float) / module.dim)
+            )
             init.copy_(module.inv_freq, inv_freq)
 
 
@@ -695,7 +764,9 @@ class Qwen3_5VisionModel(Qwen3VLVisionModel):
 
     @merge_with_config_defaults
     @capture_outputs
-    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(
+        self, hidden_states: torch.Tensor, grid_thw: torch.Tensor, **kwargs
+    ) -> torch.Tensor:
         """
         Args:
             hidden_states (`torch.Tensor` of shape `(seq_len, hidden_size)`):
@@ -714,11 +785,17 @@ class Qwen3_5VisionModel(Qwen3VLVisionModel):
             spatial_merge_size=self.config.spatial_merge_size,
             kwargs=kwargs,
         )
-        position_ids = get_vision_position_ids(grid_thw, self.spatial_merge_size, kwargs=kwargs)
-        cu_seqlens, max_seqlen = get_vision_attention_seqlens(grid_thw, self.config, kwargs=kwargs)
+        position_ids = get_vision_position_ids(
+            grid_thw, self.spatial_merge_size, kwargs=kwargs
+        )
+        cu_seqlens, max_seqlen = get_vision_attention_seqlens(
+            grid_thw, self.config, kwargs=kwargs
+        )
 
         hidden_states = self.patch_embed(hidden_states)
-        pos_embeds = (self.pos_embed(interp_indices) * interp_weights[:, :, None]).sum(1)
+        pos_embeds = (self.pos_embed(interp_indices) * interp_weights[:, :, None]).sum(
+            1
+        )
         hidden_states = hidden_states + pos_embeds.to(hidden_states.dtype)
         rotary_pos_emb = self.rotary_pos_emb(position_ids)
 
@@ -767,7 +844,9 @@ class Qwen3_5TextModel(Qwen3NextModel):
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+            raise ValueError(
+                "You must specify exactly one of input_ids or inputs_embeds"
+            )
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -777,9 +856,16 @@ class Qwen3_5TextModel(Qwen3NextModel):
 
         # the hard coded `4` is for text, temporal, height and width.
         if position_ids is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
-            position_ids = position_ids.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
+            past_seen_tokens = (
+                past_key_values.get_seq_length() if past_key_values is not None else 0
+            )
+            position_ids = (
+                torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device)
+                + past_seen_tokens
+            )
+            position_ids = position_ids.view(1, 1, -1).expand(
+                4, inputs_embeds.shape[0], -1
+            )
         elif position_ids.ndim == 2:
             position_ids = position_ids[None, ...].expand(4, position_ids.shape[0], -1)
 
@@ -826,7 +912,10 @@ class Qwen3_5TextModel(Qwen3NextModel):
 
 
 class Qwen3_5Model(Qwen3VLModel):
-    _no_split_modules: ClassVar[list[str]] = ["Qwen3_5DecoderLayer", "Qwen3_5VisionBlock"]
+    _no_split_modules: ClassVar[list[str]] = [
+        "Qwen3_5DecoderLayer",
+        "Qwen3_5VisionBlock",
+    ]
 
     def get_video_features(self, **super_kwargs) -> tuple | BaseModelOutputWithPooling:
         # Same implementation as for images
@@ -845,7 +934,9 @@ class Qwen3_5Model(Qwen3VLModel):
             pixel_values, grid_thw=image_grid_thw, return_dict=True, **kwargs
         )
         image_embeds = vision_output.pooler_output
-        split_sizes = (image_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+        split_sizes = (
+            image_grid_thw.prod(-1) // self.visual.spatial_merge_size**2
+        ).tolist()
         image_embeds = torch.split(image_embeds, split_sizes)
         vision_output.pooler_output = image_embeds
 
@@ -867,7 +958,9 @@ class Qwen3_5Model(Qwen3VLModel):
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | Qwen3_5ModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+            raise ValueError(
+                "You must specify exactly one of input_ids or inputs_embeds"
+            )
 
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
@@ -877,7 +970,9 @@ class Qwen3_5Model(Qwen3VLModel):
                 pixel_values, image_grid_thw, return_dict=True, **kwargs
             )
             image_embeds = image_outputs.pooler_output
-            image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+            image_embeds = torch.cat(image_embeds, dim=0).to(
+                inputs_embeds.device, inputs_embeds.dtype
+            )
             image_mask, _ = self.get_placeholder_mask(
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
             )
@@ -888,7 +983,9 @@ class Qwen3_5Model(Qwen3VLModel):
                 pixel_values_videos, video_grid_thw, return_dict=True, **kwargs
             )
             video_embeds = video_outputs.pooler_output
-            video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+            video_embeds = torch.cat(video_embeds, dim=0).to(
+                inputs_embeds.device, inputs_embeds.dtype
+            )
             _, video_mask = self.get_placeholder_mask(
                 input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
             )
@@ -922,14 +1019,19 @@ class Qwen3_5Model(Qwen3VLModel):
 
 class Qwen3_5ForCausalLM(Qwen3ForCausalLM):
     config: Qwen3_5TextConfig
-    _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [r"^mtp.*", r"^model.visual.*"]
+    _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
+        r"^mtp.*",
+        r"^model.visual.*",
+    ]
 
     def __init__(self, config):
         super().__init__(config)
         self.model = Qwen3_5TextModel(config)
 
 
-class Qwen3_5ForTokenClassification(GenericForTokenClassification, Qwen3_5PreTrainedModel):
+class Qwen3_5ForTokenClassification(
+    GenericForTokenClassification, Qwen3_5PreTrainedModel
+):
     config: Qwen3_5Config
 
 
@@ -941,12 +1043,16 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration):
         return super().get_image_features(**super_kwargs)
 
 
-class Qwen3_5TextForSequenceClassification(GenericForSequenceClassification, Qwen3_5PreTrainedModel):
+class Qwen3_5TextForSequenceClassification(
+    GenericForSequenceClassification, Qwen3_5PreTrainedModel
+):
     config: Qwen3_5TextConfig
     input_modalities = ("text",)
 
 
-class Qwen3_5ForSequenceClassification(GenericForSequenceClassification, Qwen3_5PreTrainedModel):
+class Qwen3_5ForSequenceClassification(
+    GenericForSequenceClassification, Qwen3_5PreTrainedModel
+):
     def forward(
         self,
         input_ids: torch.LongTensor = None,

@@ -25,7 +25,9 @@ def test_when_make_quantization_config_int8_then_returns_bitsandbytes_config() -
 
 
 def test_when_make_quantization_config_int4_then_returns_4bit_config() -> None:
-    qconfig = HFIntegration.make_quantization_config(method="int4", compute_dtype="bfloat16")
+    qconfig = HFIntegration.make_quantization_config(
+        method="int4", compute_dtype="bfloat16"
+    )
     assert getattr(qconfig, "load_in_4bit", False) is True
     assert getattr(qconfig, "bnb_4bit_compute_dtype", None) == torch.bfloat16
 
@@ -41,7 +43,9 @@ def test_when_gdn2_hf_config_created_then_roundtrips_to_gdn2_config() -> None:
 
 
 def test_when_gdn2_hf_block_forward_executed_then_preserves_shape_and_cache() -> None:
-    hf_cfg = HFIntegration.build_gdn2_hf_config(hidden_size=64, num_heads=2, head_dim=32)
+    hf_cfg = HFIntegration.build_gdn2_hf_config(
+        hidden_size=64, num_heads=2, head_dim=32
+    )
     block = HFIntegration.build_gdn2_hf_block(hf_cfg, layer_idx=0)
     x = torch.randn(2, 4, 64)
     cache = DynamicCache()
@@ -58,8 +62,12 @@ def test_when_register_gdn2_hf_called_then_autoconfig_resolves_gdn2() -> None:
     assert cfg.hidden_size == 128
 
 
-def test_when_gated_surprise_net_hf_block_forward_executed_then_preserves_shape_and_cache() -> None:
-    hf_cfg = HFIntegration.build_gated_surprise_net_hf_config(hidden_size=64, num_heads=2, head_dim=32)
+def test_when_gated_surprise_net_hf_block_forward_executed_then_preserves_shape_and_cache() -> (
+    None
+):
+    hf_cfg = HFIntegration.build_gated_surprise_net_hf_config(
+        hidden_size=64, num_heads=2, head_dim=32
+    )
     block = HFIntegration.build_gated_surprise_net_hf_block(hf_cfg, layer_idx=0)
     x = torch.randn(2, 4, 64)
     cache = DynamicCache()
@@ -71,7 +79,9 @@ def test_when_gated_surprise_net_hf_block_forward_executed_then_preserves_shape_
 
 def test_when_register_gated_surprise_net_hf_called_then_autoconfig_resolves() -> None:
     HFIntegration.register_gdn2_hf()
-    cfg = AutoConfig.for_model("gated_surprise_net", hidden_size=128, num_heads=4, head_dim=32)
+    cfg = AutoConfig.for_model(
+        "gated_surprise_net", hidden_size=128, num_heads=4, head_dim=32
+    )
     assert isinstance(cfg, GatedSurpriseNetHFConfig)
     assert cfg.hidden_size == 128
 
@@ -98,4 +108,3 @@ def test_when_load_qwen35_tokenizer_all_candidates_fail_then_raises_runtime_erro
 
     with pytest.raises(RuntimeError, match="Failed to load Qwen3.5 tokenizer"):
         load_qwen35_tokenizer("nonexistent/invalid-model-name")
-

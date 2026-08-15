@@ -7,7 +7,9 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 
-def build_scheduler(optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5) -> LRScheduler:
+def build_scheduler(
+    optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5
+) -> LRScheduler:
     r"""Build a learning-rate scheduler with linear warmup.
 
     Currently supports ``"cosine"`` with linear warmup.
@@ -25,7 +27,9 @@ def build_scheduler(optimizer: Optimizer, name: str, warmup_steps: int = 2000, m
         KeyError: if ``name`` is not supported.
     """
     if name == "cosine":
-        base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100000, eta_min=min_lr)
+        base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=100000, eta_min=min_lr
+        )
         return LinearWarmupScheduler(optimizer, base_scheduler, warmup_steps, min_lr)
     raise KeyError(f"Unknown scheduler: {name}")
 
@@ -42,7 +46,14 @@ class LinearWarmupScheduler(LRScheduler):
         warmup_steps (int): number of warmup steps.
         min_lr (float): minimum learning rate floor.
     """
-    def __init__(self, optimizer: Optimizer, base_scheduler: LRScheduler, warmup_steps: int, min_lr: float) -> None:
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        base_scheduler: LRScheduler,
+        warmup_steps: int,
+        min_lr: float,
+    ) -> None:
         self.base_scheduler = base_scheduler
         self.warmup_steps = warmup_steps
         self.min_lr = min_lr
@@ -73,7 +84,9 @@ class LinearWarmupScheduler(LRScheduler):
         """
         return self.base_scheduler.state_dict()
 
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # pragma: no cover - placeholder
+    def load_state_dict(
+        self, state_dict: dict[str, Any]
+    ) -> None:  # pragma: no cover - placeholder
         r"""Load state into the base scheduler.
 
         Args:

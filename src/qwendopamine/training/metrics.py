@@ -7,6 +7,7 @@ class MetricTracker:
     Attributes:
         values (dict[str, float]): latest metric values.
     """
+
     def __init__(self) -> None:
         self.values: dict[str, float] = {}
 

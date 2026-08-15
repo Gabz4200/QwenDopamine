@@ -41,4 +41,3 @@ def test_when_default_backend_queried_then_returns_valid_string() -> None:
 
 def test_when_cleanup_distributed_called_then_executes_without_error() -> None:
     cleanup_distributed()
-

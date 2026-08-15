@@ -65,7 +65,9 @@ def test_when_gdn2_backward_then_gradients_flow_to_parameters() -> None:
             assert param.grad is not None, f"Parameter {name} has no gradient"
 
 
-def test_when_torch_recurrent_gdn2_executed_then_matches_expected_output_shape() -> None:
+def test_when_torch_recurrent_gdn2_executed_then_matches_expected_output_shape() -> (
+    None
+):
     b, t, h, d_k, d_v = 2, 8, 4, 16, 16
     q = torch.randn(b, t, h, d_k)
     k = torch.randn(b, t, h, d_k)
@@ -103,7 +105,9 @@ def test_when_torch_recurrent_gdn2_executed_then_matches_expected_output_shape()
 def test_when_gdn2_forward_with_dict_cache_then_updates_state() -> None:
     layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, layer_idx=0)
     x = torch.randn(1, 1, 64)
-    cache: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+    cache: dict[
+        str, torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ] = {}
 
     out, _, _ = layer(x, past_key_values=cache, use_cache=True)
     assert out.shape == (1, 1, 64)

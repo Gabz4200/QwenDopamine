@@ -35,8 +35,11 @@ def init_distributed() -> tuple[int, int, int]:
 
     if world_size > 1:
         import torch.distributed as dist
+
         if not dist.is_initialized():
-            dist.init_process_group(backend=_default_backend(), rank=rank, world_size=world_size)
+            dist.init_process_group(
+                backend=_default_backend(), rank=rank, world_size=world_size
+            )
 
     return rank, world_size, local_rank
 
@@ -44,5 +47,6 @@ def init_distributed() -> tuple[int, int, int]:
 def cleanup_distributed() -> None:
     r"""Destroy the distributed process group if initialized."""
     import torch.distributed as dist
+
     if dist.is_initialized():
         dist.destroy_process_group()

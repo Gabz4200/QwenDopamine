@@ -282,27 +282,19 @@ class GatedDeltaNet2(nn.Module):
             hidden_size_or_config, "n_embd"
         ):
             cfg = hidden_size_or_config
-            hidden_size = getattr(
-                cfg, "hidden_size", getattr(cfg, "n_embd", 2048)
-            )
-            num_heads = getattr(
-                cfg, "num_heads", getattr(cfg, "n_head", 16)
-            )
-            head_dim = getattr(
-                cfg, "head_dim", getattr(cfg, "head_size", 128)
-            )
+            hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", 2048))
+            num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", 16))
+            head_dim = getattr(cfg, "head_dim", getattr(cfg, "head_size", 128))
             num_v_heads = getattr(
-                cfg, "num_v_heads", getattr(cfg, "n_query_groups", num_v_heads or num_heads)
+                cfg,
+                "num_v_heads",
+                getattr(cfg, "n_query_groups", num_v_heads or num_heads),
             )
             conv_size = getattr(
                 cfg, "conv_size", getattr(cfg, "conv_kernel_size", conv_size)
             )
-            norm_eps = getattr(
-                cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps)
-            )
-            allow_neg_eigval = getattr(
-                cfg, "allow_neg_eigval", allow_neg_eigval
-            )
+            norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
+            allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
             expand_v = getattr(cfg, "expand_v", expand_v)
         elif hidden_size is None:
             hidden_size = int(hidden_size_or_config)
@@ -310,9 +302,7 @@ class GatedDeltaNet2(nn.Module):
         self.hidden_size = hidden_size
         self.num_heads = num_heads if num_heads is not None else 16
         self.head_dim = head_dim if head_dim is not None else 128
-        self.num_v_heads = (
-            num_v_heads if num_v_heads is not None else self.num_heads
-        )
+        self.num_v_heads = num_v_heads if num_v_heads is not None else self.num_heads
         self.layer_idx = layer_idx
         self.mode = mode
         self.use_short_conv = use_short_conv
@@ -356,11 +346,7 @@ class GatedDeltaNet2(nn.Module):
 
         # Decay-gate parameters
         self.A_log = nn.Parameter(
-            torch.log(
-                torch.empty(self.num_heads, dtype=torch.float32).uniform_(
-                    1, 16
-                )
-            )
+            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
         )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
@@ -386,7 +372,7 @@ class GatedDeltaNet2(nn.Module):
         if getattr(module, "_is_hf_initialized", False):
             return
         if isinstance(module, nn.Linear):
-            nn.init.xavier_uniform_(module.weight, gain=2 ** -2.5)
+            nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
         cast(Any, module)._is_hf_initialized = True
@@ -395,8 +381,7 @@ class GatedDeltaNet2(nn.Module):
         self, past_key_values: Cache | dict[str, Any] | None
     ) -> tuple[
         torch.Tensor | None,
-        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
-        | None,
+        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None,
     ]:
         if past_key_values is None:
             return None, None
@@ -473,11 +458,7 @@ class GatedDeltaNet2(nn.Module):
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None, Cache | dict[str, Any] | None]:
         _, q_len, _ = hidden_states.shape
-        mode = (
-            "fused_recurrent"
-            if (q_len <= 64 and not self.training)
-            else self.mode
-        )
+        mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
 
         recurrent_state, conv_states = self._get_cache(past_key_values)
         conv_state_q, conv_state_k, conv_state_v = (
@@ -531,15 +512,16 @@ class GatedDeltaNet2(nn.Module):
         if self.num_v_heads > self.num_heads:
             groups = self.num_v_heads // self.num_heads
             q, k, g, b = (
-                repeat(x, "... h d -> ... (h g) d", g=groups)
-                for x in (q, k, g, b)
+                repeat(x, "... h d -> ... (h g) d", g=groups) for x in (q, k, g, b)
             )
 
         if self.allow_neg_eigval:
             b = b * 2.0
 
         # Dispatch kernel: Triton on CUDA if available, pure PyTorch otherwise
-        use_cuda_triton = hidden_states.is_cuda and torch.cuda.is_available() and _HAS_TRITON_OPS
+        use_cuda_triton = (
+            hidden_states.is_cuda and torch.cuda.is_available() and _HAS_TRITON_OPS
+        )
         o: torch.Tensor | None = None
 
         if use_cuda_triton:

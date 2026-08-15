@@ -66,7 +66,9 @@ def test_when_text_model_forward_with_mask_then_returns_valid_hidden_states(
     assert not torch.isnan(output.last_hidden_state).any()
 
 
-def test_when_gated_deltanet_forward_then_preserves_shape(tiny_qwen35_config: Qwen3_5TextConfig) -> None:
+def test_when_gated_deltanet_forward_then_preserves_shape(
+    tiny_qwen35_config: Qwen3_5TextConfig,
+) -> None:
     layer = Qwen3_5GatedDeltaNet(tiny_qwen35_config, layer_idx=0)
     batch_size, seq_len = 2, 8
     hidden_states = torch.randn(batch_size, seq_len, tiny_qwen35_config.hidden_size)
@@ -76,7 +78,9 @@ def test_when_gated_deltanet_forward_then_preserves_shape(tiny_qwen35_config: Qw
     assert not torch.isnan(output).any()
 
 
-def test_when_decoder_layer_forward_then_preserves_shape(tiny_qwen35_config: Qwen3_5TextConfig) -> None:
+def test_when_decoder_layer_forward_then_preserves_shape(
+    tiny_qwen35_config: Qwen3_5TextConfig,
+) -> None:
     layer = Qwen3_5DecoderLayer(tiny_qwen35_config, layer_idx=0)
     batch_size, seq_len = 2, 8
     hidden_states = torch.randn(batch_size, seq_len, tiny_qwen35_config.hidden_size)
@@ -121,11 +125,15 @@ def test_when_gradients_computed_then_parameters_receive_grads(
     output = model(input_ids=input_ids, labels=labels)
     output.loss.backward()
 
-    trainable_params_with_grad = [p for p in model.parameters() if p.requires_grad and p.grad is not None]
+    trainable_params_with_grad = [
+        p for p in model.parameters() if p.requires_grad and p.grad is not None
+    ]
     assert len(trainable_params_with_grad) > 0
 
 
-def test_when_invalid_input_ids_type_then_raises_error(tiny_qwen35_config: Qwen3_5TextConfig) -> None:
+def test_when_invalid_input_ids_type_then_raises_error(
+    tiny_qwen35_config: Qwen3_5TextConfig,
+) -> None:
     model = Qwen3_5ForCausalLM(tiny_qwen35_config)
     invalid_inputs = torch.tensor([[1.5, 2.5], [3.5, 4.5]], dtype=torch.float32)
 

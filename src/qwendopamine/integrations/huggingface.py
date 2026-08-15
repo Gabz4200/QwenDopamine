@@ -22,6 +22,7 @@ else:
                 for k, v in kwargs.items():
                     setattr(self, k, v)
 
+
 try:
     from transformers import (
         AutoConfig,
@@ -325,8 +326,14 @@ class HFIntegration:
         if AutoConfig is not None and hasattr(AutoConfig, "register"):
             AutoConfig.register("gdn2", GDN2HFConfig, exist_ok=True)
             AutoConfig.register("qwen35_gdn2", Qwen35GDN2HFConfig, exist_ok=True)
-            AutoConfig.register("gated_surprise_net", GatedSurpriseNetHFConfig, exist_ok=True)
-            AutoConfig.register("qwen35_gated_surprise_net", Qwen35GatedSurpriseNetHFConfig, exist_ok=True)
+            AutoConfig.register(
+                "gated_surprise_net", GatedSurpriseNetHFConfig, exist_ok=True
+            )
+            AutoConfig.register(
+                "qwen35_gated_surprise_net",
+                Qwen35GatedSurpriseNetHFConfig,
+                exist_ok=True,
+            )
 
     @staticmethod
     def build_gdn2_hf_config(
@@ -360,29 +367,31 @@ class HFIntegration:
         if isinstance(config_or_dict, dict):
             data.update(config_or_dict)
         elif config_or_dict is not None:
-            data.update({
-                k: getattr(config_or_dict, k)
-                for k in [
-                    "hidden_size",
-                    "num_heads",
-                    "head_dim",
-                    "num_v_heads",
-                    "expand_v",
-                    "conv_size",
-                    "conv_bias",
-                    "allow_neg_eigval",
-                    "norm_eps",
-                    "local_adam_lr",
-                    "local_adam_beta1",
-                    "local_adam_beta2",
-                    "local_adam_eps",
-                    "nll_var_eps",
-                    "nll_full",
-                    "learnable_init_state",
-                    "train_chunk_size",
-                ]
-                if hasattr(config_or_dict, k)
-            })
+            data.update(
+                {
+                    k: getattr(config_or_dict, k)
+                    for k in [
+                        "hidden_size",
+                        "num_heads",
+                        "head_dim",
+                        "num_v_heads",
+                        "expand_v",
+                        "conv_size",
+                        "conv_bias",
+                        "allow_neg_eigval",
+                        "norm_eps",
+                        "local_adam_lr",
+                        "local_adam_beta1",
+                        "local_adam_beta2",
+                        "local_adam_eps",
+                        "nll_var_eps",
+                        "nll_full",
+                        "learnable_init_state",
+                        "train_chunk_size",
+                    ]
+                    if hasattr(config_or_dict, k)
+                }
+            )
         data.update(kwargs)
         return GatedSurpriseNetHFConfig(**data)
 

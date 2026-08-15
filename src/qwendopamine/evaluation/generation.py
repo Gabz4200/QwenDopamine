@@ -7,7 +7,13 @@ import torch
 from qwendopamine.utils import get_model_device as _get_model_device
 
 
-def generate_text(model: torch.nn.Module, tokenizer: Any, prompt: str, max_new_tokens: int = 256, **kwargs: Any) -> str:
+def generate_text(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    prompt: str,
+    max_new_tokens: int = 256,
+    **kwargs: Any,
+) -> str:
     r"""Generate text from a prompt using the model's ``generate`` method.
 
     Args:
@@ -27,6 +33,11 @@ def generate_text(model: torch.nn.Module, tokenizer: Any, prompt: str, max_new_t
     attention_mask = inputs.attention_mask.to(device)
 
     with torch.no_grad():
-        outputs = model.generate(input_ids=input_ids, attention_mask=attention_mask, max_new_tokens=max_new_tokens, **kwargs)  # type: ignore[arg-type]
+        outputs = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            **kwargs,
+        )  # type: ignore[arg-type]
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)

@@ -43,12 +43,17 @@ import importlib
 import torch
 
 _HAS_TRITON_FLA = False
-if importlib.util.find_spec("triton") is not None and importlib.util.find_spec("fla") is not None:
+if (
+    importlib.util.find_spec("triton") is not None
+    and importlib.util.find_spec("fla") is not None
+):
     try:
         triton = importlib.import_module("triton")
         tl = importlib.import_module("triton.language")
         exp = getattr(importlib.import_module("fla.ops.utils.op"), "exp", None)
-        softplus = getattr(importlib.import_module("fla.ops.utils.softplus"), "softplus", None)
+        softplus = getattr(
+            importlib.import_module("fla.ops.utils.softplus"), "softplus", None
+        )
         input_guard = getattr(importlib.import_module("fla.utils"), "input_guard", None)
         _HAS_TRITON_FLA = True
     except ImportError:
@@ -90,28 +95,9 @@ if not _HAS_TRITON_FLA:
             return (x + y - 1) // y
 
     triton = _DummyTriton()  # type: ignore[assignment]
-    tl = _DummyTriton()       # type: ignore[assignment]
+    tl = _DummyTriton()  # type: ignore[assignment]
 
 
-# =============================================================================
-# RECURRENT FORWARD KERNEL
-# -----------------------------------------------------------------------------
-# fused_recurrent_gdn2_fwd_kernel
-#
-# Each program owns one (sequence, value-head, K-block, V-block) tile and
-# walks the tokens of that sequence serially, carrying the state tile b_h in
-# registers. The per-token body is the four-line recurrence from the module
-# docstring: decay, gated read/write, rank-one update, output read.
-#
-# State layout is selectable via TRANSPOSE_STATE: the default is [K, V];
-# transposed is [V, K]. Both branches appear throughout because the serving
-# stack may request either layout.
-#
-# Continuous batching: when ssm_state_indices is given, the per-sequence state
-# is fetched from (and written back to) a paged pool indexed by those indices,
-# rather than a contiguous [N, HV, K, V] buffer. Speculative decoding uses
-# num_accepted_tokens to pick the correct rolled-back state slot.
-# =============================================================================
 @triton.heuristics(
     {
         "USE_INITIAL_STATE": lambda args: args["h0"] is not None,
@@ -129,8 +115,8 @@ def fused_recurrent_gdn2_fwd_kernel(
     k,
     v,
     g,
-    b,           
-    w,           
+    b,
+    w,
     A_log,
     dt_bias,
     o,
@@ -237,21 +223,29 @@ def fused_recurrent_gdn2_fwd_kernel(
         b_h += tl.load(p_h0, mask=mask_h, other=0).to(tl.float32)
 
     for i_t in tl.range(0, T, num_stages=num_stages):
-        b_q = tl.load(p_q, mask=mask_k, other=0, eviction_policy='evict_last').to(tl.float32)
-        b_k = tl.load(p_k, mask=mask_k, other=0, eviction_policy='evict_last').to(tl.float32)
-        b_v = tl.load(p_v, mask=mask_v, other=0, eviction_policy='evict_first').to(tl.float32)
+        b_q = tl.load(p_q, mask=mask_k, other=0, eviction_policy="evict_last").to(
+            tl.float32
+        )
+        b_k = tl.load(p_k, mask=mask_k, other=0, eviction_policy="evict_last").to(
+            tl.float32
+        )
+        b_v = tl.load(p_v, mask=mask_v, other=0, eviction_policy="evict_first").to(
+            tl.float32
+        )
 
         if USE_QK_L2NORM_IN_KERNEL:
             b_q = b_q / tl.sqrt(tl.sum(b_q * b_q) + 1e-6)
             b_k = b_k / tl.sqrt(tl.sum(b_k * b_k) + 1e-6)
         b_q = b_q * scale
-        b_g = tl.load(p_g, eviction_policy='evict_last').to(tl.float32)
+        b_g = tl.load(p_g, eviction_policy="evict_last").to(tl.float32)
 
         if USE_GATE_IN_KERNEL:
             b_A = tl.load(A_log + i_h).to(tl.float32)
 
             if HAS_DT_BIAS:
-                b_bias = tl.load(dt_bias + i_h * K + o_k, mask=mask_k, other=0).to(tl.float32)
+                b_bias = tl.load(dt_bias + i_h * K + o_k, mask=mask_k, other=0).to(
+                    tl.float32
+                )
                 b_g = b_g + b_bias
 
             if USE_LOWER_BOUND:
@@ -267,17 +261,21 @@ def fused_recurrent_gdn2_fwd_kernel(
         else:
             b_h *= exp(b_gk[:, None])
 
-        b_b_tile = tl.load(p_b, mask=mask_k, other=0, eviction_policy='evict_last').to(tl.float32)
+        b_b_tile = tl.load(p_b, mask=mask_k, other=0, eviction_policy="evict_last").to(
+            tl.float32
+        )
         b_bk = b_b_tile * b_k
 
         # b_v_new = (w ⊙ v) - (b ⊙ k)^T @ S
         # Project the state onto (b ⊙ k) to get the erase contribution [BV].
         if TRANSPOSE_STATE:
-            erase_d = tl.sum(b_h * b_bk[None, :], 1)   # [BV]
+            erase_d = tl.sum(b_h * b_bk[None, :], 1)  # [BV]
         else:
-            erase_d = tl.sum(b_h * b_bk[:, None], 0)   # [BV]
+            erase_d = tl.sum(b_h * b_bk[:, None], 0)  # [BV]
 
-        b_w_tile = tl.load(p_w, mask=mask_v, other=0, eviction_policy='evict_first').to(tl.float32)
+        b_w_tile = tl.load(p_w, mask=mask_v, other=0, eviction_policy="evict_first").to(
+            tl.float32
+        )
         b_v_new = b_w_tile * b_v - erase_d
 
         # State update: S += k ⊗ v_new
@@ -287,7 +285,12 @@ def fused_recurrent_gdn2_fwd_kernel(
         else:
             b_h += b_k[:, None] * b_v_new[None, :]
             b_o = tl.sum(b_h * b_q[:, None], 0)
-        tl.store(p_o, b_o.to(p_o.dtype.element_ty), mask=mask_v, eviction_policy='evict_first')
+        tl.store(
+            p_o,
+            b_o.to(p_o.dtype.element_ty),
+            mask=mask_v,
+            eviction_policy="evict_first",
+        )
 
         if IS_CONTINUOUS_BATCHING:
             if INPLACE_FINAL_STATE:
@@ -315,16 +318,13 @@ def fused_recurrent_gdn2_fwd_kernel(
         p_w += HV * V
 
     if not IS_CONTINUOUS_BATCHING and STORE_FINAL_STATE:
-            if TRANSPOSE_STATE:
-                p_ht = ht + (i_n * HV + i_hv) * K * V + o_v[:, None] * K + o_k[None, :]
-            else:
-                p_ht = ht + (i_n * HV + i_hv) * K * V + o_k[:, None] * V + o_v[None, :]
-            tl.store(p_ht, b_h.to(p_ht.dtype.element_ty), mask=mask_h)
+        if TRANSPOSE_STATE:
+            p_ht = ht + (i_n * HV + i_hv) * K * V + o_v[:, None] * K + o_k[None, :]
+        else:
+            p_ht = ht + (i_n * HV + i_hv) * K * V + o_k[:, None] * V + o_v[None, :]
+        tl.store(p_ht, b_h.to(p_ht.dtype.element_ty), mask=mask_h)
 
 
-# =============================================================================
-# ORCHESTRATION AND PUBLIC API
-# =============================================================================
 @torch.compiler.disable
 def fused_recurrent_gdn2_fwd(
     q: torch.Tensor,
@@ -389,7 +389,9 @@ def fused_recurrent_gdn2_fwd(
     else:
         final_state = None
 
-    stride_init_state_token = initial_state.stride(0) if initial_state is not None else 1
+    stride_init_state_token = (
+        initial_state.stride(0) if initial_state is not None else 1
+    )
     stride_final_state_token = final_state.stride(0) if final_state is not None else 1
 
     if ssm_state_indices is None:
@@ -399,7 +401,7 @@ def fused_recurrent_gdn2_fwd(
     else:
         stride_indices_seq, stride_indices_tok = ssm_state_indices.stride()
 
-    grid = (triton.cdiv(V, BV) * N * HV, )
+    grid = (triton.cdiv(V, BV) * N * HV,)
     fused_recurrent_gdn2_fwd_kernel[grid](
         q=q,
         k=k,

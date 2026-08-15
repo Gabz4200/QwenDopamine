@@ -37,22 +37,36 @@ class ResearchDecoder(nn.Module):
         )
 
         self.embed_tokens = TokenEmbeddings(self.vocab_size, self.hidden_size)
-        self.embed_positions = PositionEmbeddings(self.max_position_embeddings, self.hidden_size)
+        self.embed_positions = PositionEmbeddings(
+            self.max_position_embeddings, self.hidden_size
+        )
         self.embed_dropout = nn.Dropout(getattr(config, "hidden_dropout_prob", 0.0))
-        self.final_norm = RMSNorm(self.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6))
+        self.final_norm = RMSNorm(
+            self.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6)
+        )
 
-        self.layers = nn.ModuleList([
-            build_block(block_type, config, layer_idx)
-            for layer_idx, block_type in enumerate(self.block_types)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                build_block(block_type, config, layer_idx)
+                for layer_idx, block_type in enumerate(self.block_types)
+            ]
+        )
 
         self.lm_head = LMHead(self.hidden_size, self.vocab_size)
 
-    def forward(self, input_ids: torch.Tensor, position_ids: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, input_ids: torch.Tensor, position_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
         if position_ids is None:
-            position_ids = torch.arange(input_ids.shape[1], device=input_ids.device).unsqueeze(0).expand_as(input_ids)
+            position_ids = (
+                torch.arange(input_ids.shape[1], device=input_ids.device)
+                .unsqueeze(0)
+                .expand_as(input_ids)
+            )
 
-        hidden_states = self.embed_tokens(input_ids) + self.embed_positions(position_ids)
+        hidden_states = self.embed_tokens(input_ids) + self.embed_positions(
+            position_ids
+        )
         hidden_states = self.embed_dropout(hidden_states)
 
         for layer in self.layers:
@@ -75,9 +89,9 @@ def build_model(config: Any) -> nn.Module:
         nn.Module: assembled causal language model.
     """
     model_type = getattr(config, "model_type", None)
-    if (
-        isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config))
-        or model_type in ("qwen3_5_text", "qwen3_5")
+    if isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config)) or model_type in (
+        "qwen3_5_text",
+        "qwen3_5",
     ):
         return Qwen3_5ForCausalLM(config)
     return ResearchDecoder(config)
@@ -88,6 +102,7 @@ def build_reference_model(
 ) -> nn.Module:
     r"""Load a reference Hugging Face causal-LM model, optionally with quantization."""
     from qwendopamine.integrations.huggingface import HFIntegration
+
     return HFIntegration.load_model(
         model_name=getattr(config, "base_model", "Qwen/Qwen3.5-0.8B"),
         quantization_config=quantization_config,

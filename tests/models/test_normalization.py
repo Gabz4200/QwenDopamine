@@ -46,7 +46,9 @@ def test_when_apply_mask_to_padding_states_with_mask_then_zeros_padded_tokens() 
     # Mask where second sequence has 2 active tokens and 2 padded tokens
     attention_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 0.0, 0.0]])
 
-    masked_states = apply_mask_to_padding_states(hidden_states, attention_mask=attention_mask)
+    masked_states = apply_mask_to_padding_states(
+        hidden_states, attention_mask=attention_mask
+    )
 
     assert masked_states.shape == hidden_states.shape
     # Padded positions in second sequence should be zeroed
@@ -55,7 +57,9 @@ def test_when_apply_mask_to_padding_states_with_mask_then_zeros_padded_tokens() 
     assert torch.all(masked_states[1, :2] == 1.0)
 
 
-def test_when_apply_mask_to_padding_states_without_mask_then_returns_unchanged() -> None:
+def test_when_apply_mask_to_padding_states_without_mask_then_returns_unchanged() -> (
+    None
+):
     hidden_states = torch.randn(2, 4, 16)
     result = apply_mask_to_padding_states(hidden_states, attention_mask=None)
     assert torch.equal(result, hidden_states)

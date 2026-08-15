@@ -66,10 +66,16 @@ def test_when_build_scheduler_unknown_then_raises_key_error() -> None:
 def test_when_linear_warmup_scheduler_steps_then_scales_learning_rate() -> None:
     param = nn.Parameter(torch.randn(2, 2))
     initial_lr = 1e-3
-    optimizer = torch.optim.AdamW([{"params": [param], "initial_lr": initial_lr}], lr=initial_lr)
-    base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-5)
+    optimizer = torch.optim.AdamW(
+        [{"params": [param], "initial_lr": initial_lr}], lr=initial_lr
+    )
+    base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=100, eta_min=1e-5
+    )
     warmup_steps = 10
-    scheduler = LinearWarmupScheduler(optimizer, base_scheduler, warmup_steps=warmup_steps, min_lr=1e-5)
+    scheduler = LinearWarmupScheduler(
+        optimizer, base_scheduler, warmup_steps=warmup_steps, min_lr=1e-5
+    )
 
     for i in range(1, warmup_steps + 1):
         optimizer.step()
@@ -86,8 +92,12 @@ def test_when_linear_warmup_scheduler_steps_then_scales_learning_rate() -> None:
 def test_when_linear_warmup_scheduler_state_dict_then_serializes_and_restores() -> None:
     param = nn.Parameter(torch.randn(2, 2))
     optimizer = torch.optim.AdamW([{"params": [param], "initial_lr": 1e-3}], lr=1e-3)
-    base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-5)
-    scheduler = LinearWarmupScheduler(optimizer, base_scheduler, warmup_steps=10, min_lr=1e-5)
+    base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=100, eta_min=1e-5
+    )
+    scheduler = LinearWarmupScheduler(
+        optimizer, base_scheduler, warmup_steps=10, min_lr=1e-5
+    )
 
     state = scheduler.state_dict()
     assert isinstance(state, dict)
@@ -116,13 +126,12 @@ def test_when_training_loop_run_then_advances_global_steps_and_optimizes() -> No
         optimizer, base_sched, warmup_steps=2, min_lr=1e-5
     )
 
-    config = TrainConfig(max_steps=4, grad_accum_steps=2, max_grad_norm=1.0, mixed_precision="fp16")
+    config = TrainConfig(
+        max_steps=4, grad_accum_steps=2, max_grad_norm=1.0, mixed_precision="fp16"
+    )
     loop = TrainingLoop(model, optimizer, scheduler, config)
 
-    batches = [
-        {"x": torch.randn(2, 8), "labels": torch.randn(2, 8)}
-        for _ in range(10)
-    ]
+    batches = [{"x": torch.randn(2, 8), "labels": torch.randn(2, 8)} for _ in range(10)]
 
     loop.run(batches)
 

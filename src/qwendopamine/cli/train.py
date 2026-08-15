@@ -8,7 +8,11 @@ from omegaconf import DictConfig, OmegaConf
 from qwendopamine.integrations.huggingface import HFIntegration
 
 
-@hydra.main(version_base="1.3", config_path=str(Path(__file__).resolve().parent.parent.parent / "configs"), config_name="train/cpu")
+@hydra.main(
+    version_base="1.3",
+    config_path=str(Path(__file__).resolve().parent.parent.parent / "configs"),
+    config_name="train/cpu",
+)
 def main(config: DictConfig) -> None:
     r"""Training CLI entrypoint.
 
@@ -18,13 +22,17 @@ def main(config: DictConfig) -> None:
     print(OmegaConf.to_yaml(config))
     quantization_config = None
     if config.quantization.enabled:
-        quantization_config = HFIntegration.make_quantization_config(method=config.quantization.method)
+        quantization_config = HFIntegration.make_quantization_config(
+            method=config.quantization.method
+        )
     model = HFIntegration.load_model(
         config.model.base_model or "Qwen/Qwen3.5-4B",
         quantization_config=quantization_config,
         device_map=config.train.device or "cpu",
     )
-    print(f"Model {type(model).__name__} loaded with quantization={quantization_config is not None}")
+    print(
+        f"Model {type(model).__name__} loaded with quantization={quantization_config is not None}"
+    )
 
 
 if __name__ == "__main__":

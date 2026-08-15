@@ -121,7 +121,9 @@ def test_when_surprise_memory_adam_scans_then_serial_and_chunk_match() -> None:
     erase_b = torch.sigmoid(torch.randn(b, t, h, d_k))
     write_w = torch.sigmoid(torch.randn(b, t, h, d_v))
 
-    out_serial, state_serial, nll_serial = memory.serial_scan(q, k, v, g, erase_b, write_w)
+    out_serial, state_serial, nll_serial = memory.serial_scan(
+        q, k, v, g, erase_b, write_w
+    )
     out_chunk, state_chunk, nll_chunk = memory.chunk_parallel_training_scan(
         q, k, v, g, erase_b, write_w, chunk_size=8
     )

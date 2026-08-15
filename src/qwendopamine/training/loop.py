@@ -22,6 +22,7 @@ class TrainConfig:
         mixed_precision (str): mixed precision mode. Accepted values: ``"bf16"``
             or ``"fp16"``. Default: ``"bf16"``.
     """
+
     max_steps: int = 100000
     grad_accum_steps: int = 1
     max_grad_norm: float = 1.0
@@ -38,12 +39,20 @@ class TrainingLoop:
         config (TrainConfig): training configuration.
     """
 
-    def __init__(self, model: nn.Module, optimizer: torch.optim.Optimizer, scheduler: LRScheduler, config: TrainConfig) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        scheduler: LRScheduler,
+        config: TrainConfig,
+    ) -> None:
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.config = config
-        self.scaler = GradScaler(get_model_device(model).type, enabled=config.mixed_precision == "fp16")
+        self.scaler = GradScaler(
+            get_model_device(model).type, enabled=config.mixed_precision == "fp16"
+        )
         self.mixed_precision = config.mixed_precision
         self.global_step = 0
 
@@ -60,7 +69,9 @@ class TrainingLoop:
             autocast_device = get_model_device(self.model).type
             with torch.autocast(
                 device_type=autocast_device,
-                dtype=torch.bfloat16 if self.mixed_precision == "bf16" else torch.float16,
+                dtype=torch.bfloat16
+                if self.mixed_precision == "bf16"
+                else torch.float16,
                 enabled=self.mixed_precision in ("bf16", "fp16"),
             ):
                 outputs = self.model(**batch)
@@ -105,5 +116,8 @@ class TrainingLoop:
         if isinstance(batch, torch.Tensor):
             return batch.to(device)
         if isinstance(batch, dict):
-            return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            return {
+                k: v.to(device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
         return batch

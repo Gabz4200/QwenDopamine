@@ -152,18 +152,18 @@ SYNTH_STEPS = 200
 
 
 class TinySurpriseConfig:
-    hidden_size = HIDDEN_SIZE
-    vocab_size = VOCAB_SIZE
-    num_heads = NUM_HEADS
-    head_dim = HEAD_DIM
-    num_layers = 2
-    max_position_embeddings = SEQ_LEN
-    block_types = ["gated_surprise_net"] * 2
-    rms_norm_eps = 1e-5
-    use_short_conv = True
-    conv_size = 4
-    expand_v = 1.0
-    train_chunk_size = SEQ_LEN
+    hidden_size: int = HIDDEN_SIZE
+    vocab_size: int = VOCAB_SIZE
+    num_heads: int = NUM_HEADS
+    head_dim: int = HEAD_DIM
+    num_layers: int = 2
+    max_position_embeddings: int = 2048
+    block_types: list[str] = ["gated_surprise_net", "gated_surprise_net"]
+    rms_norm_eps: float = 1e-5
+    use_short_conv: bool = True
+    conv_size: int = 4
+    expand_v: float = 1.0
+    train_chunk_size: int = 128
 
 
 def build_tiny_model(cfg: TinySurpriseConfig) -> nn.Module:
@@ -172,7 +172,11 @@ def build_tiny_model(cfg: TinySurpriseConfig) -> nn.Module:
 
 def run_synthetic_overfit() -> tuple[float, float, bool]:
     torch.manual_seed(0)
-    model = build_tiny_model(TinySurpriseConfig()).to(device=device, dtype=dtype)
+    cfg = TinySurpriseConfig()
+    cfg.vocab_size = VOCAB_SIZE
+    cfg.max_position_embeddings = SEQ_LEN
+    cfg.train_chunk_size = SEQ_LEN
+    model = build_tiny_model(cfg).to(device=device, dtype=dtype)
 
     if WORLD_SIZE > 1:
         model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
@@ -254,7 +258,10 @@ def load_wikitext_tokenized(
 ) -> tuple[TensorDataset, TensorDataset]:
     if IS_MAIN:
         print(f"[data] Loading {cfg.dataset_name} ({cfg.dataset_config}) ...")
-    ds = load_dataset(cfg.dataset_name, cfg.dataset_config, trust_remote_code=True)
+    try:
+        ds = load_dataset(cfg.dataset_name, cfg.dataset_config)
+    except TypeError:
+        ds = load_dataset(cfg.dataset_name, cfg.dataset_config, trust_remote_code=True)
 
     def encode_split(split: str, max_examples: int | None) -> list[list[int]]:
         texts: list[str] = []
@@ -375,7 +382,7 @@ def train(
 
     try:
         scaler = torch.amp.GradScaler(
-            device_type=device.type,
+            device.type,
             enabled=(device.type == "cuda" and dtype == torch.float16 and cfg.use_amp),
         )
     except (AttributeError, TypeError):
@@ -590,6 +597,8 @@ def main() -> None:
     lm_cfg.head_dim = HEAD_DIM
     lm_cfg.num_layers = 2
     lm_cfg.block_types = ["gated_surprise_net"] * 2
+    lm_cfg.max_position_embeddings = max(wt_cfg.max_seq_len, 2048)
+    lm_cfg.train_chunk_size = train_cfg.chunk_size
 
     model = build_tiny_model(lm_cfg).to(device=device, dtype=dtype)
     if WORLD_SIZE > 1:

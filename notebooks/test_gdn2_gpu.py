@@ -28,7 +28,11 @@ Part 2 — FineWeb-Edu Micro LM training
 Designed for Kaggle with 2x T4 GPUs (16GB each). Uses ``torch.distributed`` DDP
 when multiple GPUs are detected; falls back to single-GPU/CPU otherwise.
 
-Run on Kaggle::
+Run on Kaggle (2x T4 GPUs via DDP)::
+
+    torchrun --nproc_per_node=2 notebooks/test_gdn2_gpu.py
+
+or single GPU / CPU::
 
     python notebooks/test_gdn2_gpu.py
 """
@@ -39,14 +43,24 @@ import os
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-import importlib.metadata
 import math
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+# Always prioritize local repository src/ directory over site-packages
+try:
+    _REPO_ROOT = Path(__file__).resolve().parent.parent
+except (NameError, TypeError):
+    _REPO_ROOT = Path.cwd()
+_SRC_DIR = _REPO_ROOT / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 import fcntl
 import matplotlib
@@ -62,14 +76,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 from transformers import AutoTokenizer
 
-REPO_URL = "https://github.com/Gabz4200/QwenDopamine.git"
-PIP_REPO_URL = "git+" + REPO_URL
-
 _LOCK_PATH = os.path.join(tempfile.gettempdir(), "qwendopamine_gdn2_setup.lock")
 
 
 def _ensure_dependencies() -> None:
-    def _check() -> tuple[bool, bool, bool]:
+    def _check() -> tuple[bool, bool]:
         need_mask = False
         try:
             import transformers.masking_utils
@@ -80,32 +91,26 @@ def _ensure_dependencies() -> None:
         except (ImportError, AttributeError):
             need_mask = True
 
-        try:
-            importlib.metadata.version("qwendopamine")
-            need_qwen = False
-        except importlib.metadata.PackageNotFoundError:
-            need_qwen = True
-
         need_bnb = False
         if torch.cuda.is_available():
             try:
-                import bitsandbytes
+                import bitsandbytes  # noqa: F401
 
                 need_bnb = False
             except ImportError:
                 need_bnb = True
 
-        return need_mask, need_qwen, need_bnb
+        return need_mask, need_bnb
 
-    need_mask, need_qwen, need_bnb = _check()
-    if not (need_mask or need_qwen or need_bnb):
+    need_mask, need_bnb = _check()
+    if not (need_mask or need_bnb):
         return
 
     with open(_LOCK_PATH, "w") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            need_mask, need_qwen, need_bnb = _check()
-            if not (need_mask or need_qwen or need_bnb):
+            need_mask, need_bnb = _check()
+            if not (need_mask or need_bnb):
                 return
 
             to_install: list[str] = []
@@ -113,25 +118,30 @@ def _ensure_dependencies() -> None:
                 to_install.append("transformers>=4.49.0")
             if need_bnb:
                 to_install.append("bitsandbytes>=0.41.0")
-            if need_qwen:
-                to_install.append(PIP_REPO_URL)
 
-            print(
-                "[setup] Installing/upgrading dependencies "
-                f"({', '.join(to_install)})..."
-            )
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--upgrade-strategy",
-                    "only-if-needed",
-                ]
-                + to_install,
-                check=True,
-            )
+            if to_install:
+                print(
+                    "[setup] Installing/upgrading dependencies "
+                    f"({', '.join(to_install)})..."
+                )
+                try:
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "--upgrade-strategy",
+                            "only-if-needed",
+                        ]
+                        + to_install,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError as e:
+                    print(
+                        f"[setup] Warning: dependency installation returned non-zero exit code ({e}). "
+                        "Continuing with existing packages."
+                    )
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
@@ -163,7 +173,10 @@ RANK = int(os.environ.get("RANK", "0"))
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", "1"))
 
 has_cuda = torch.cuda.is_available()
+num_gpus = torch.cuda.device_count() if has_cuda else 0
+
 if has_cuda:
+    torch.set_float32_matmul_precision("high")
     if WORLD_SIZE > 1 and not dist.is_initialized():
         dist.init_process_group(backend="nccl")
         torch.cuda.set_device(LOCAL_RANK)
@@ -180,7 +193,17 @@ print(
     f"device={device}  dtype={dtype}"
 )
 if has_cuda:
-    print(f"[env] GPU: {torch.cuda.get_device_name(LOCAL_RANK)}")
+    print(
+        f"[env] GPU: {torch.cuda.get_device_name(LOCAL_RANK)} (total GPUs visible: {num_gpus})"
+    )
+    if num_gpus > 1 and WORLD_SIZE == 1:
+        _script_name = (
+            sys.argv[0] if (sys.argv and sys.argv[0]) else "notebooks/test_gdn2_gpu.py"
+        )
+        print(
+            f"[env] Note: {num_gpus} GPUs detected. To run DDP across both GPUs, launch with:\n"
+            f"      torchrun --nproc_per_node={num_gpus} {_script_name}"
+        )
 
 IS_MAIN = RANK == 0
 
@@ -394,8 +417,8 @@ def load_fineweb_micro_tokenized(
 @dataclass
 class TrainConfig:
     num_steps: int = 1000
-    log_interval: int = 25
-    eval_interval: int = 100
+    log_interval: int = 1
+    eval_interval: int = 50
     lr: float = 3e-4
     min_lr: float = 3e-5
     weight_decay: float = 0.1
@@ -562,17 +585,19 @@ def train(
     step = 0
     epoch = 0
     accum_loss = 0.0
+    steps_since_log = 0
+    stop_training = False
 
     best_val_loss = float("inf")
     patience_counter = 0
 
-    while step < cfg.num_steps:
+    while step < cfg.num_steps and not stop_training:
         if isinstance(train_dl.sampler, DistributedSampler):
             train_dl.sampler.set_epoch(epoch)
         epoch += 1
 
         for xb, yb in train_dl:
-            if step >= cfg.num_steps:
+            if step >= cfg.num_steps or stop_training:
                 break
 
             xb = xb.to(device)
@@ -601,9 +626,21 @@ def train(
                 )
                 loss = loss / cfg.grad_accum_steps
 
-            scaler.scale(loss).backward()
+            is_accumulating = (
+                (step + 1) % cfg.grad_accum_steps != 0
+                and (step + 1) != cfg.num_steps
+            )
+            sync_ctx = (
+                model.no_sync()
+                if (WORLD_SIZE > 1 and is_accumulating and hasattr(model, "no_sync"))
+                else nullcontext()
+            )
+            with sync_ctx:
+                scaler.scale(loss).backward()
+
             accum_loss += float(loss.item()) * cfg.grad_accum_steps
             tokens_seen += yb.numel()
+            steps_since_log += 1
 
             if (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == cfg.num_steps:
                 if cfg.grad_clip > 0:
@@ -616,9 +653,7 @@ def train(
             step_time = time.perf_counter() - t0
 
             if step % cfg.log_interval == 0 and IS_MAIN:
-                avg_train_loss = accum_loss / max(
-                    1, (step % cfg.grad_accum_steps) + 1
-                )
+                avg_train_loss = accum_loss / max(1, steps_since_log)
                 history["train_loss"].append(avg_train_loss)
                 history["train_steps"].append(float(step))
                 history["tokens_seen"].append(float(tokens_seen))
@@ -629,6 +664,7 @@ def train(
                     f"lr={lr:.2e}  tok/s={tokens_seen / max(step_time, 1e-9):.0f}"
                 )
                 accum_loss = 0.0
+                steps_since_log = 0
 
             if step % cfg.eval_interval == 0 and step > 0:
                 metrics = evaluate(
@@ -659,12 +695,22 @@ def train(
                                 f"[early_stop] Validation loss plateaued for {patience_counter} "
                                 f"evaluations (best={best_val_loss:.4f}). Stopping early."
                             )
-                            break
+                            stop_training = True
+
+                if WORLD_SIZE > 1:
+                    stop_tensor = torch.tensor(
+                        [1 if stop_training else 0], device=device
+                    )
+                    dist.broadcast(stop_tensor, src=0)
+                    stop_training = bool(stop_tensor.item())
+
+                if stop_training:
+                    break
                 model.train()
 
             step += 1
 
-        if patience_counter >= cfg.early_stopping_patience:
+        if stop_training:
             break
 
     metrics = evaluate(model, val_dl, loss_fn, device, dtype)
@@ -826,6 +872,7 @@ def main() -> None:
         drop_last=True,
         num_workers=2,
         pin_memory=pin_memory,
+        persistent_workers=True,
     )
     val_dl = DataLoader(
         val_ds,
@@ -835,12 +882,13 @@ def main() -> None:
         drop_last=True,
         num_workers=2,
         pin_memory=pin_memory,
+        persistent_workers=True,
     )
 
     train_cfg = TrainConfig(
         num_steps=1000,
-        log_interval=25,
-        eval_interval=100,
+        log_interval=1,
+        eval_interval=50,
         lr=3e-4,
         min_lr=3e-5,
         weight_decay=0.1,
@@ -909,7 +957,7 @@ def main() -> None:
         print(f"  Val NLL:                 {final_nll:.2f}")
         print(f"  Val throughput:          {final_tps:.0f} tok/s")
         print(f"  Params:                  {total_params:,}")
-        print(f"  GPUs:                    {WORLD_SIZE}x T4")
+        print(f"  GPUs:                    {WORLD_SIZE}x GPU (DDP: {WORLD_SIZE > 1})")
         print("  Data:                    bhavnicksm/fineweb-edu-micro")
         print(
             f"  Architecture:            Multi-Head Pure Recurrent (1.3B, Layers: {lm_cfg.n_layer}, Heads: {lm_cfg.n_head}, Mixer: GatedDeltaNet2, 0 Self-Attention)"
@@ -921,5 +969,4 @@ def main() -> None:
         dist.destroy_process_group()
 
 
-if __name__ == "__main__":
-    main()
+main()

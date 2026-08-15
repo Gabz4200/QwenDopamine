@@ -1,7 +1,3 @@
-# %% [code]
-%pip install "git+https://github.com/Gabz4200/QwenDopamine.git"
-
-# %% [code] {"jupyter":{"outputs_hidden":false}}
 """Kaggle 2xT4 GPU smoke-test + WikiText-2 training for GatedSurpriseNetAdam.
 
 Part 1 — Sanity checks
@@ -127,15 +123,22 @@ LOCAL_RANK = int(os.environ.get("LOCAL_RANK", "0"))
 RANK = int(os.environ.get("RANK", "0"))
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", "1"))
 
-if WORLD_SIZE > 1 and not dist.is_initialized():
-    dist.init_process_group(backend="nccl")
-    torch.cuda.set_device(LOCAL_RANK)
-
-device = torch.device("cuda", LOCAL_RANK)
-dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+has_cuda = torch.cuda.is_available()
+if has_cuda:
+    if WORLD_SIZE > 1 and not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+        torch.cuda.set_device(LOCAL_RANK)
+    device = torch.device("cuda", LOCAL_RANK)
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+else:
+    if WORLD_SIZE > 1 and not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+    device = torch.device("cpu")
+    dtype = torch.float32
 
 print(f"[env] rank={RANK}/{WORLD_SIZE}  local_rank={LOCAL_RANK}  device={device}  dtype={dtype}")
-print(f"[env] GPU: {torch.cuda.get_device_name(LOCAL_RANK)}")
+if has_cuda:
+    print(f"[env] GPU: {torch.cuda.get_device_name(LOCAL_RANK)}")
 
 IS_MAIN = RANK == 0
 
@@ -560,6 +563,7 @@ def main() -> None:
     train_sampler = DistributedSampler(train_ds, shuffle=True) if WORLD_SIZE > 1 else None
     val_sampler = DistributedSampler(val_ds, shuffle=False) if WORLD_SIZE > 1 else None
 
+    pin_memory = (device.type == "cuda")
     train_dl = DataLoader(
         train_ds,
         batch_size=wt_cfg.batch_size,
@@ -567,7 +571,7 @@ def main() -> None:
         shuffle=(train_sampler is None),
         drop_last=True,
         num_workers=4,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
     val_dl = DataLoader(
         val_ds,
@@ -576,7 +580,7 @@ def main() -> None:
         shuffle=False,
         drop_last=True,
         num_workers=4,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
 
     lm_cfg = TinySurpriseConfig()
@@ -631,3 +635,8 @@ def main() -> None:
 
     if WORLD_SIZE > 1:
         dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()
+

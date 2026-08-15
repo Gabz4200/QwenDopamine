@@ -8,7 +8,7 @@ from qwendopamine.utils import get_model_device as _get_model_device
 
 
 def generate_text(
-    model: torch.nn.Module,
+    model: Any,
     tokenizer: Any,
     prompt: str,
     max_new_tokens: int = 256,
@@ -17,7 +17,7 @@ def generate_text(
     r"""Generate text from a prompt using the model's ``generate`` method.
 
     Args:
-        model (torch.nn.Module): causal language model with ``generate``.
+        model (Any): causal language model with ``generate``.
         tokenizer (Any): tokenizer with ``__call__`` and ``decode``.
         prompt (str): text prompt to continue.
         max_new_tokens (int): maximum number of tokens to generate. Default: ``256``.
@@ -38,6 +38,6 @@ def generate_text(
             attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
             **kwargs,
-        )  # type: ignore[arg-type]
+        )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)

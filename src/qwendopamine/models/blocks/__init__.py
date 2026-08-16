@@ -13,26 +13,24 @@ from qwendopamine.models.blocks.qwen_block import (
 )
 from qwendopamine.models.blocks.registry import BLOCKS, build_block
 from qwendopamine.models.blocks.reward import (
-    AdaLN,
-    FourierFeatures,
+    AsinhScaler,
     LearnableFourierFeatures,
-    PositionalEncoding,
     RewardEncoder,
+    TokenWiseFiLM,
 )
 
 __all__ = [
     "BLOCKS",
-    "AdaLN",
-    "FourierFeatures",
+    "AsinhScaler",
     "GatedDeltaNet2Block",
     "GatedDeltaNetBlock",
     "GatedSurpriseNetAdam",
     "GatedSurpriseNetBlock",
     "LearnableFourierFeatures",
-    "PositionalEncoding",
     "Qwen3_5DecoderLayer",
     "Qwen3_5GatedDeltaNet",
     "QwenDecoderLayer",
     "RewardEncoder",
+    "TokenWiseFiLM",
     "build_block",
 ]

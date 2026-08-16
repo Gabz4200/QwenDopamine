@@ -6,7 +6,7 @@ from typing import Any
 
 from torch import nn
 
-from qwendopamine.models.blocks.reward import AdaLN, RewardEncoder
+from qwendopamine.models.blocks.reward import RewardEncoder
 from qwendopamine.models.gated_surprise_net import GatedSurpriseNetAdam
 from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
 from qwendopamine.models.qwen35.modular_qwen3_5 import (
@@ -15,7 +15,6 @@ from qwendopamine.models.qwen35.modular_qwen3_5 import (
 )
 
 BLOCKS: dict[str, type] = {
-    "adaln": AdaLN,
     "gdn": Qwen3_5GatedDeltaNet,
     "gdn2": GatedDeltaNet2,
     "gated_surprise_net": GatedSurpriseNetAdam,

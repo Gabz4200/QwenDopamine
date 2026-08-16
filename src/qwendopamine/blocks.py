@@ -4,34 +4,32 @@ from __future__ import annotations
 
 from qwendopamine.models.blocks import (
     BLOCKS,
-    AdaLN,
-    FourierFeatures,
+    AsinhScaler,
     GatedDeltaNet2Block,
     GatedDeltaNetBlock,
     GatedSurpriseNetAdam,
     GatedSurpriseNetBlock,
     LearnableFourierFeatures,
-    PositionalEncoding,
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
     QwenDecoderLayer,
     RewardEncoder,
+    TokenWiseFiLM,
     build_block,
 )
 
 __all__ = [
     "BLOCKS",
-    "AdaLN",
-    "FourierFeatures",
+    "AsinhScaler",
     "GatedDeltaNet2Block",
     "GatedDeltaNetBlock",
     "GatedSurpriseNetAdam",
     "GatedSurpriseNetBlock",
     "LearnableFourierFeatures",
-    "PositionalEncoding",
     "Qwen3_5DecoderLayer",
     "Qwen3_5GatedDeltaNet",
     "QwenDecoderLayer",
     "RewardEncoder",
+    "TokenWiseFiLM",
     "build_block",
 ]

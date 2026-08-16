@@ -37,9 +37,18 @@ class SurpriseGPTConfig:
     mixer_type: str = "surprise"
     gradient_checkpointing: bool = False
 
+    # GDN-2 execution options (passed through to `GatedDeltaNet2`).
+    chunk_size: int | None = None
+    allow_neg_eigval: bool = False
+    backend: str = "auto"
+    fp32_decay: bool = False
+    compile_backend: bool = False
+
     def __post_init__(self) -> None:
         if self.padded_vocab_size is None:
             self.padded_vocab_size = self.vocab_size
+        if self.chunk_size is None:
+            self.chunk_size = self.train_chunk_size
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> SurpriseGPTConfig:

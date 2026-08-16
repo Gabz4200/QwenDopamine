@@ -2,23 +2,35 @@ import math
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
 
-class RMSNorm(nn.Module):
-    r"""Root Mean Square normalization.
+class AsinhScaler(nn.Module):
+    r"""Asinh scaling for unbounded, heavy-tailed features.
 
-    Applies RMS normalization over the last dimension:
+    Applies element-wise inverse hyperbolic sine scaling:
 
     .. math::
-        y = \frac{x}{\sqrt{\operatorname{mean}(x^2) + \epsilon}} \odot w
+        y = \operatorname{asinh}(\alpha \cdot x)
+
+    This is useful for unbounded reward signals because:
+
+    - It is approximately linear near zero.
+    - It preserves small reward magnitudes.
+    - It compresses very large rewards logarithmically.
+    - It avoids the "always map the current maximum to 1" behavior of
+      norm-based normalizers.
 
     Args:
-        dim (int): Size of the normalized last dimension.
-        eps (float, optional): Numerical stability epsilon. Default: ``1e-6``.
-        elementwise_affine (bool, optional): If ``True``, adds a learnable scale.
-            Default: ``True``.
+        dim (int): Expected size of the last dimension.
+        init_scale (float, optional): Initial positive scaling factor.
+            Default: ``0.1``.
+        shared_alpha (bool, optional): If ``True``, uses one shared scaling
+            factor for all features. This preserves proportional relationships
+            between features in the linear regime. If ``False``, learns a
+            separate scaling factor per feature. Default: ``True``.
 
     Shape:
         - Input: :math:`(*, \text{dim})`
@@ -26,34 +38,42 @@ class RMSNorm(nn.Module):
 
     Examples::
 
-        >>> norm = RMSNorm(dim=4)
-        >>> x = torch.randn(2, 5, 4)
-        >>> out = norm(x)
+        >>> scaler = AsinhScaler(dim=5)
+        >>> x = torch.randn(2, 5, 5)
+        >>> out = scaler(x)
         >>> out.shape
-        torch.Size([2, 5, 4])
+        torch.Size([2, 5, 5])
     """
 
     def __init__(
         self,
         dim: int,
-        eps: float = 1e-6,
-        elementwise_affine: bool = True,
+        init_scale: float = 0.1,
+        shared_alpha: bool = True,
     ) -> None:
         super().__init__()
 
         if dim <= 0:
-            raise ValueError("RMSNorm dim must be greater than 0.")
-        if eps <= 0:
-            raise ValueError("RMSNorm eps must be greater than 0.")
+            raise ValueError("AsinhScaler dim must be greater than 0.")
+        if init_scale <= 0:
+            raise ValueError("AsinhScaler init_scale must be greater than 0.")
 
         self.dim = dim
-        self.eps = eps
-        self.elementwise_affine = elementwise_affine
+        self.init_scale = init_scale
+        self.shared_alpha = shared_alpha
 
-        if elementwise_affine:
-            self.weight = nn.Parameter(torch.ones(dim))
-        else:
-            self.register_parameter("weight", None)
+        raw_shape = () if shared_alpha else (dim,)
+        raw_init = self._inverse_softplus(init_scale)
+
+        # alpha = softplus(raw_alpha) guarantees alpha > 0.
+        self.raw_alpha = nn.Parameter(torch.full(raw_shape, raw_init))
+
+    @staticmethod
+    def _inverse_softplus(x: float) -> float:
+        """Return y such that F.softplus(y) == x."""
+        if x > 20.0:
+            return x
+        return math.log(math.expm1(x))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -61,30 +81,27 @@ class RMSNorm(nn.Module):
             x (Tensor): Input tensor whose last dimension is ``self.dim``.
 
         Returns:
-            Tensor: Normalized tensor with the same shape as ``x``.
+            Tensor: Scaled tensor with the same shape and dtype as ``x``.
         """
         if x.size(-1) != self.dim:
             raise ValueError(
-                f"RMSNorm expected last dimension {self.dim}, got {x.size(-1)}."
+                f"AsinhScaler expected last dimension {self.dim}, got {x.size(-1)}."
             )
 
         input_dtype = x.dtype
 
         # Compute in float32 for numerical stability.
         x = x.float()
-        mean_square = torch.mean(x * x, dim=-1, keepdim=True)
-        x = x * torch.rsqrt(mean_square + self.eps)
+        alpha = F.softplus(self.raw_alpha).float()
 
-        if self.weight is not None:
-            x = x * self.weight
-
+        x = torch.asinh(alpha * x)
         return x.to(input_dtype)
 
     def extra_repr(self) -> str:
         return (
             f"dim={self.dim}, "
-            f"eps={self.eps}, "
-            f"elementwise_affine={self.elementwise_affine}"
+            f"init_scale={self.init_scale}, "
+            f"shared_alpha={self.shared_alpha}"
         )
 
 
@@ -120,8 +137,8 @@ class LearnableFourierFeatures(nn.Module):
 
     Examples::
 
-        >>> lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64)
-        >>> pos = torch.randn(2, 5, 1, 4)
+        >>> lff = LearnableFourierFeatures(pos_dim=5, f_dim=16, h_dim=32, d_dim=64)
+        >>> pos = torch.randn(2, 5, 1, 5)
         >>> out = lff(pos)
         >>> out.shape
         torch.Size([2, 5, 64])
@@ -364,9 +381,9 @@ class RewardEncoder(nn.Module):
     r"""Reward-conditioned sequence encoder using Fourier features and FiLM.
 
     The reward tensor is normalized to a layout broadcastable to ``(B, L, K)``,
-    summarized by median, mean, max, and min, optionally normalized with RMSNorm,
-    encoded with learnable Fourier features, and used to modulate projected input
-    features with token-wise FiLM.
+    summarized by median, mean, max, min, and standard deviation, optionally
+    scaled with :class:`AsinhScaler`, encoded with learnable Fourier features,
+    and used to modulate projected input features with token-wise FiLM.
 
     The dimension contract is:
 
@@ -379,13 +396,14 @@ class RewardEncoder(nn.Module):
     Args:
         dim (int): Input feature dimension.
         hidden_dim (int): Hidden feature dimension after projection and conditioning.
-        eps (float, optional): Epsilon used by RMSNorm. Default: ``1e-6``.
         f_dim (int, optional): Number of Fourier feature channels. Default: ``32``.
         h_dim (int, optional): Hidden dimension of the Fourier MLP. Default: ``64``.
         gamma (float, optional): Standard deviation for Fourier projection init.
             Default: ``1.0``.
-        normalize_reward_stats (bool, optional): If ``True``, applies RMSNorm to the
-            reward statistics before Fourier encoding. Default: ``True``.
+        normalize_reward_stats (bool, optional): If ``True``, applies AsinhScaler
+            to the reward statistics before Fourier encoding. Default: ``True``.
+        reward_init_scale (float, optional): Initial positive scaling factor used
+            by :class:`AsinhScaler`. Default: ``0.1``.
 
     Shape:
         - x: :math:`(D)`, :math:`(B, D)`, or :math:`(B, L, D)`
@@ -413,11 +431,11 @@ class RewardEncoder(nn.Module):
         self,
         dim: int,
         hidden_dim: int,
-        eps: float = 1e-6,
         f_dim: int = 32,
         h_dim: int = 64,
         gamma: float = 1.0,
         normalize_reward_stats: bool = True,
+        reward_init_scale: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -425,27 +443,33 @@ class RewardEncoder(nn.Module):
             raise ValueError("dim must be greater than 0.")
         if hidden_dim <= 0:
             raise ValueError("hidden_dim must be greater than 0.")
-        if eps <= 0:
-            raise ValueError("eps must be greater than 0.")
+        if reward_init_scale <= 0:
+            raise ValueError("reward_init_scale must be greater than 0.")
 
         self.dim = dim
         self.hidden_dim = hidden_dim
         self.normalize_reward_stats = normalize_reward_stats
+        self.reward_init_scale = reward_init_scale
 
         self.x_proj: nn.Module = (
             nn.Linear(dim, hidden_dim) if dim != hidden_dim else nn.Identity()
         )
 
-        # Normalize the four reward statistics: median, mean, max, min.
-        self.reward_norm: nn.Module = (
-            RMSNorm(dim=4, eps=eps, elementwise_affine=True)
+        # Scale the five reward statistics:
+        # median, mean, max, min, std.
+        self.reward_scaler: nn.Module = (
+            AsinhScaler(
+                dim=5,
+                init_scale=reward_init_scale,
+                shared_alpha=True,
+            )
             if normalize_reward_stats
             else nn.Identity()
         )
 
         # Conditioning output dimension matches projected x dimension.
         self.reward_fourier = LearnableFourierFeatures(
-            pos_dim=4,
+            pos_dim=5,
             f_dim=f_dim,
             h_dim=h_dim,
             d_dim=hidden_dim,
@@ -581,17 +605,24 @@ class RewardEncoder(nn.Module):
         if reward_values.size(-1) == 0:
             raise ValueError("reward_values must contain at least one reward channel.")
 
+        # Compute statistics in float32 for numerical stability.
+        reward_values = reward_values.float()
+
         reward_median = reward_values.median(dim=-1, keepdim=True)[0]
         reward_mean = reward_values.mean(dim=-1, keepdim=True)
         reward_max = reward_values.max(dim=-1, keepdim=True)[0]
         reward_min = reward_values.min(dim=-1, keepdim=True)[0]
 
+        # Population standard deviation avoids NaN when K == 1.
+        reward_std = reward_values.std(dim=-1, keepdim=True, correction=0)
+
         reward_stats = torch.cat(
-            [reward_median, reward_mean, reward_max, reward_min],
+            [reward_median, reward_mean, reward_max, reward_min, reward_std],
             dim=-1,
         )
 
-        reward_stats = self.reward_norm(reward_stats)
+        reward_stats = self.reward_scaler(reward_stats)
+        reward_stats = reward_stats.to(dtype=x.dtype)
 
         # LearnableFourierFeatures expects (B, L, G, pos_dim), with G == g_dim == 1.
         cond = self.reward_fourier(reward_stats.unsqueeze(2))
@@ -618,5 +649,6 @@ class RewardEncoder(nn.Module):
         return (
             f"dim={self.dim}, "
             f"hidden_dim={self.hidden_dim}, "
-            f"normalize_reward_stats={self.normalize_reward_stats}"
+            f"normalize_reward_stats={self.normalize_reward_stats}, "
+            f"reward_init_scale={self.reward_init_scale}"
         )

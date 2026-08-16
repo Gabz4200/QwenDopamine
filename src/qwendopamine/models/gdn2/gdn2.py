@@ -608,7 +608,7 @@ class GatedDeltaNet2(nn.Module):
                 self._compiled_chunk = torch.compile(
                     torch_chunk_gdn2, dynamic=True
                 )
-            except Exception as e:  # noqa: BLE001 - compile is purely optional
+            except (RuntimeError, ValueError, TypeError, AttributeError) as e:  # compile is purely optional
                 _warn_fallback_once(f"torch.compile unavailable ({e})")
                 self._compiled_chunk = None
 

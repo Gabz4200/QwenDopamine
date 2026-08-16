@@ -228,7 +228,7 @@ def load_qwen35_from_gguf(
 
             gguf_path = hf_hub_download(model_name, filename=gguf_file)
             load_gguf_weights(model, gguf_path)
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError, AttributeError) as exc:
             raise RuntimeError(
                 f"Cannot load '{model_name}' as a regular HF model and failed to load as GGUF repo: {exc}"
             ) from exc

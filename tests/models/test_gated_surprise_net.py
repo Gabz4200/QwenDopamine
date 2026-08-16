@@ -390,3 +390,34 @@ def test_when_hybrid_gpt_forward_backward_then_loss_and_gradients_compute() -> N
             assert not torch.isnan(
                 param.grad
             ).any(), f"Parameter {name} has NaN gradient"
+
+
+def test_when_chunk_gated_surprise_net_op_called_then_matches_reference() -> None:
+    from qwendopamine.models.gated_surprise_net_ops import chunk_gated_surprise_net
+
+    bs, ts, num_heads, head_k_dim, head_v_dim = 2, 16, 2, 16, 16
+    q = torch.randn(bs, ts, num_heads, head_k_dim)
+    k = torch.randn(bs, ts, num_heads, head_k_dim)
+    v = torch.randn(bs, ts, num_heads, head_v_dim)
+    g = -torch.rand(bs, ts, num_heads, head_k_dim)
+    b = torch.sigmoid(torch.randn(bs, ts, num_heads, head_k_dim))
+    w = torch.sigmoid(torch.randn(bs, ts, num_heads, head_v_dim))
+    pi = 2.0 * torch.sigmoid(torch.randn(bs, ts, num_heads, head_v_dim))
+
+    out, final_state = chunk_gated_surprise_net(
+        q=q, k=k, v=v, g=g, b=b, w=w, pi=pi, chunk_size=8
+    )
+
+    mem = SurpriseMemory(hidden_size=num_heads * head_k_dim, num_heads=num_heads, head_k_dim=head_k_dim, head_v_dim=head_v_dim)
+    sigma_sq = 1.0 / pi.clamp_min(1e-6)
+    out_ref, final_state_ref, _ = mem.chunk_parallel_training_scan(
+        q=q, k=k, v=v, g=g, b=b, w=w, sigma_sq=sigma_sq, chunk_size=8
+    )
+
+    assert out.shape == (bs, ts, num_heads, head_v_dim)
+    assert final_state.shape == (bs, num_heads, head_k_dim, head_v_dim)
+    assert not torch.isnan(out).any()
+    assert not torch.isnan(final_state).any()
+
+    assert torch.allclose(out, out_ref, atol=1e-5)
+    assert torch.allclose(final_state, final_state_ref.memory, atol=1e-5)

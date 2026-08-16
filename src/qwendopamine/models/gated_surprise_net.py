@@ -930,10 +930,31 @@ class GatedSurpriseNet(nn.Module):
         final_recurrent_state: SurpriseRecurrenceState | None = None
 
         if mode in ("triton", "fla"):
-            _warn_fallback_once(
-                "Triton/FLA custom kernel for GatedSurpriseNet precision-weighted residual scan is not implemented; falling back to PyTorch chunk scan"
-            )
-            mode = "torch-chunk" if self.training else "torch-recurrent"
+            try:
+                from qwendopamine.models.gated_surprise_net_ops import (
+                    chunk_gated_surprise_net as _chunk_gated_surprise_net_op,
+                )
+
+                pi_tensor = 1.0 / (sigma_sq.float().clamp_min(1e-6))
+                init_mem = recurrent_state.memory if recurrent_state is not None else None
+                out_op, final_mem = _chunk_gated_surprise_net_op(
+                    q=q,
+                    k=k,
+                    v=v,
+                    g=g,
+                    b=b_gate,
+                    w=w_gate,
+                    pi=pi_tensor,
+                    chunk_size=self.train_chunk_size,
+                    initial_state=init_mem,
+                )
+                out = out_op
+                final_recurrent_state = SurpriseRecurrenceState(memory=final_mem)
+            except (RuntimeError, TypeError, ValueError, ImportError) as exc:
+                _warn_fallback_once(
+                    f"GatedSurpriseNet custom ops execution warning ({exc}); falling back to PyTorch chunk scan"
+                )
+                mode = "torch-chunk" if self.training else "torch-recurrent"
 
         if mode not in ("triton", "fla"):
             if mode in ("torch-chunk", "compiled", "auto"):

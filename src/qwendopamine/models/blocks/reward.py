@@ -1,32 +1,122 @@
-r"""Reward conditioning encoder and spatial positional encoding blocks."""
-
 import math
-from typing import cast
+from typing import Optional
 
 import torch
 from einops import rearrange
 from torch import nn
 
 
-class LearnableFourierFeatures(nn.Module):
-    r"""LearnableFourierFeatures(pos_dim, f_dim, h_dim, d_dim, g_dim=1, gamma=1.0, include_input=True)
+class RMSNorm(nn.Module):
+    r"""Root Mean Square normalization.
 
-    Applies learnable Fourier feature mapping and MLP projection for multi-dimensional spatial
-    positional encodings.
+    Applies RMS normalization over the last dimension:
+
+    .. math::
+        y = \frac{x}{\sqrt{\operatorname{mean}(x^2) + \epsilon}} \odot w
+
+    Args:
+        dim (int): Size of the normalized last dimension.
+        eps (float, optional): Numerical stability epsilon. Default: ``1e-6``.
+        elementwise_affine (bool, optional): If ``True``, adds a learnable scale.
+            Default: ``True``.
+
+    Shape:
+        - Input: :math:`(*, \text{dim})`
+        - Output: :math:`(*, \text{dim})`
+
+    Examples::
+
+        >>> norm = RMSNorm(dim=4)
+        >>> x = torch.randn(2, 5, 4)
+        >>> out = norm(x)
+        >>> out.shape
+        torch.Size([2, 5, 4])
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        eps: float = 1e-6,
+        elementwise_affine: bool = True,
+    ) -> None:
+        super().__init__()
+
+        if dim <= 0:
+            raise ValueError("RMSNorm dim must be greater than 0.")
+        if eps <= 0:
+            raise ValueError("RMSNorm eps must be greater than 0.")
+
+        self.dim = dim
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+
+        if elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(dim))
+        else:
+            self.register_parameter("weight", None)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (Tensor): Input tensor whose last dimension is ``self.dim``.
+
+        Returns:
+            Tensor: Normalized tensor with the same shape as ``x``.
+        """
+        if x.size(-1) != self.dim:
+            raise ValueError(
+                f"RMSNorm expected last dimension {self.dim}, got {x.size(-1)}."
+            )
+
+        input_dtype = x.dtype
+
+        # Compute in float32 for numerical stability.
+        x = x.float()
+        mean_square = torch.mean(x * x, dim=-1, keepdim=True)
+        x = x * torch.rsqrt(mean_square + self.eps)
+
+        if self.weight is not None:
+            x = x * self.weight
+
+        return x.to(input_dtype)
+
+    def extra_repr(self) -> str:
+        return (
+            f"dim={self.dim}, "
+            f"eps={self.eps}, "
+            f"elementwise_affine={self.elementwise_affine}"
+        )
+
+
+class LearnableFourierFeatures(nn.Module):
+    r"""Learnable Fourier feature mapping followed by an MLP projection.
+
+    The Fourier features are computed as:
 
     .. math::
         F = \frac{[\cos(x W_r^T), \sin(x W_r^T)]}{\sqrt{f\_dim}}
 
+    If ``include_input=True``, the raw input is concatenated to ``F`` before
+    the MLP projection. The MLP input dimension is therefore:
+
+    - ``f_dim + pos_dim`` if ``include_input=True``
+    - ``f_dim`` if ``include_input=False``
+
     Args:
-        pos_dim (int): Dimension of input position coordinate vector.
-        f_dim (int): Number of Fourier feature channels (must be divisible by 2).
-        h_dim (int): Hidden dimension of the internal MLP projection network.
-        d_dim (int): Final output feature dimension (must be divisible by ``g_dim``).
-        g_dim (int, optional): Group dimension factor for output feature reshaping. Default: ``1``.
-        gamma (float, optional): Scaling hyperparameter for initial random projection matrix weights.
-            Default: ``1.0``.
-        include_input (bool, optional): If ``True``, concatenates raw position vector to Fourier features
-            before MLP projection. Default: ``True``.
+        pos_dim (int): Dimension of the input coordinate vector.
+        f_dim (int): Number of Fourier feature channels. Must be divisible by 2.
+        h_dim (int): Hidden dimension of the MLP.
+        d_dim (int): Output feature dimension. Must be divisible by ``g_dim``.
+        g_dim (int, optional): Group dimension used in the output rearrangement.
+            Default: ``1``.
+        gamma (float, optional): Standard deviation used to initialize the random
+            projection matrix. Default: ``1.0``.
+        include_input (bool, optional): If ``True``, concatenates the raw input
+            to the Fourier features. Default: ``True``.
+
+    Shape:
+        - Input: :math:`(B, L, G, \text{pos\_dim})`, where ``G == g_dim``.
+        - Output: :math:`(B, L, \text{d\_dim})`.
 
     Examples::
 
@@ -48,246 +138,272 @@ class LearnableFourierFeatures(nn.Module):
         include_input: bool = True,
     ) -> None:
         super().__init__()
-        assert f_dim % 2 == 0, (
-            "number of fourier feature dimensions must be divisible by 2."
-        )
-        assert d_dim % g_dim == 0, (
-            "number of D dimension must be divisible by the number of G dimension."
-        )
+
+        if pos_dim <= 0:
+            raise ValueError("pos_dim must be greater than 0.")
+        if f_dim <= 0 or f_dim % 2 != 0:
+            raise ValueError("f_dim must be greater than 0 and divisible by 2.")
+        if h_dim <= 0:
+            raise ValueError("h_dim must be greater than 0.")
+        if g_dim <= 0:
+            raise ValueError("g_dim must be greater than 0.")
+        if d_dim <= 0 or d_dim % g_dim != 0:
+            raise ValueError("d_dim must be greater than 0 and divisible by g_dim.")
+        if gamma <= 0:
+            raise ValueError("gamma must be greater than 0.")
+
+        self.pos_dim = pos_dim
+        self.f_dim = f_dim
+        self.h_dim = h_dim
+        self.d_dim = d_dim
+        self.g_dim = g_dim
         self.include_input = include_input
+
+        self.enc_f_dim = int(f_dim // 2)
+        self.dg_dim = int(d_dim // g_dim)
         self.div_term = math.sqrt(f_dim)
-        enc_f_dim = int(f_dim / 2)
-        dg_dim = int(d_dim / g_dim)
 
-        self.Wr = nn.Parameter(torch.randn([enc_f_dim, pos_dim]) * (gamma**2))
+        # MLP input dimension depends on whether the raw input is included.
+        self.mlp_in_dim = f_dim + pos_dim if include_input else f_dim
+        self.out_dim = d_dim
 
-        mlp_in_dim = f_dim + pos_dim if include_input else f_dim
+        self.Wr = nn.Parameter(torch.empty(self.enc_f_dim, pos_dim))
+        nn.init.normal_(self.Wr, mean=0.0, std=gamma)
+
         self.mlp = nn.Sequential(
-            nn.Linear(mlp_in_dim, h_dim),
+            nn.Linear(self.mlp_in_dim, h_dim),
             nn.GELU(approximate="tanh"),
-            nn.Linear(h_dim, dg_dim),
+            nn.Linear(h_dim, self.dg_dim),
         )
 
     def forward(self, pos: torch.Tensor) -> torch.Tensor:
-        r"""forward(pos) -> Tensor
-
+        """
         Args:
-            pos (Tensor): Input position coordinates of shape :math:`(B, L, G, \text{pos\_dim})`.
+            pos (Tensor): Input coordinates of shape ``(B, L, G, pos_dim)``.
 
         Returns:
-            Tensor: Encoded spatial positional features of shape :math:`(B, L, \text{d\_dim})`.
+            Tensor: Encoded features of shape ``(B, L, d_dim)``.
         """
+        if pos.dim() != 4:
+            raise ValueError(
+                f"Expected pos shape (B, L, G, pos_dim), got {tuple(pos.shape)}."
+            )
+
+        if pos.size(-1) != self.pos_dim:
+            raise ValueError(
+                f"Expected pos.size(-1) == {self.pos_dim}, got {pos.size(-1)}."
+            )
+
+        if pos.size(2) != self.g_dim:
+            raise ValueError(
+                f"Expected input group dimension G == g_dim={self.g_dim}, "
+                f"got G={pos.size(2)}."
+            )
+
         XWr = torch.matmul(pos, self.Wr.T)
         F = torch.cat([torch.cos(XWr), torch.sin(XWr)], dim=-1) / self.div_term
 
         if self.include_input:
             F = torch.cat([pos, F], dim=-1)
 
+        if F.size(-1) != self.mlp_in_dim:
+            raise RuntimeError(
+                "Internal LearnableFourierFeatures dimension mismatch. "
+                f"Expected MLP input dimension {self.mlp_in_dim}, got {F.size(-1)}."
+            )
+
         Y = self.mlp(F)
-        pos_enc = rearrange(Y, "b l g d -> b l (g d)")
-        return pos_enc
+        return rearrange(Y, "b l g d -> b l (g d)")
 
-
-class FourierFeatures(nn.Module):
-    r"""FourierFeatures(pos_dim, f_dim, sigma=10.0, train=False, include_input=True)
-
-    Applies random Fourier feature encoding to map low-dimensional positions to high-frequency
-    representations.
-
-    .. math::
-        F = [\sin(x B), \cos(x B)]
-
-    Args:
-        pos_dim (int): Dimension of input position coordinate vector.
-        f_dim (int): Number of Fourier feature channels (must be divisible by 2).
-        sigma (float, optional): Standard deviation scale for initial Gaussian projection matrix.
-            Default: ``10.0``.
-        train (bool, optional): If ``True``, registers projection matrix as a trainable parameter.
-            Default: ``False``.
-        include_input (bool, optional): If ``True``, concatenates raw position vector to Fourier features.
-            Default: ``True``.
-
-    Examples::
-
-        >>> ff = FourierFeatures(pos_dim=2, f_dim=16)
-        >>> pos = torch.randn(2, 10, 2)
-        >>> enc = ff(pos)
-        >>> enc.shape
-        torch.Size([2, 10, 18])
-    """
-
-    def __init__(
-        self,
-        pos_dim: int,
-        f_dim: int,
-        sigma: float = 10.0,
-        train: bool = False,
-        include_input: bool = True,
-    ) -> None:
-        super().__init__()
-        assert f_dim % 2 == 0, "number of channels must be divisible by 2."
-        self.include_input = include_input
-        enc_dim = int(f_dim / 2)
-
-        B = torch.randn([pos_dim, enc_dim]) * sigma
-        if train:
-            self.B = nn.Parameter(B)
-        else:
-            self.register_buffer("B", B)
-
-    def forward(self, pos: torch.Tensor) -> torch.Tensor:
-        r"""forward(pos) -> Tensor
-
-        Args:
-            pos (Tensor): Input position tensor of shape :math:`(..., \text{pos\_dim})`.
-
-        Returns:
-            Tensor: Encoded position features of shape :math:`(..., \text{f\_dim} + \text{pos\_dim})`
-                if ``include_input=True``, else :math:`(..., \text{f\_dim})`.
-        """
-        proj = torch.matmul(pos, self.B)
-        pos_enc = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
-
-        if self.include_input:
-            pos_enc = torch.cat([pos, pos_enc], dim=-1)
-
-        return pos_enc
-
-
-class PositionalEncoding(nn.Module):
-    r"""PositionalEncoding(pos_dim, enc_dim, include_input=True)
-
-    Computes fixed sinusoidal positional encodings using geometric frequency scaling.
-
-    .. math::
-        \text{PE}_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d}}\right), \quad
-        \text{PE}_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i/d}}\right)
-
-    Args:
-        pos_dim (int): Spatial or coordinate dimension of input position.
-        enc_dim (int): Encoding dimension (must be even).
-        include_input (bool, optional): If ``True``, concatenates raw position input to encodings.
-            Default: ``True``.
-
-    Examples::
-
-        >>> pe = PositionalEncoding(pos_dim=1, enc_dim=16)
-        >>> pos = torch.randn(2, 8, 1)
-        >>> out = pe(pos)
-        >>> out.shape
-        torch.Size([2, 8, 17])
-    """
-
-    def __init__(
-        self,
-        pos_dim: int,
-        enc_dim: int,
-        include_input: bool = True,
-    ) -> None:
-        super().__init__()
-        assert enc_dim % 2 == 0, "dimension of positional encoding must be even."
-        self.include_input = include_input
-        half_enc_dim = int(enc_dim / 2)
-        div_term = torch.exp(
-            torch.arange(0, half_enc_dim) * -(math.log(10000.0) / half_enc_dim)
+    def extra_repr(self) -> str:
+        return (
+            f"pos_dim={self.pos_dim}, "
+            f"f_dim={self.f_dim}, "
+            f"h_dim={self.h_dim}, "
+            f"d_dim={self.d_dim}, "
+            f"g_dim={self.g_dim}, "
+            f"include_input={self.include_input}, "
+            f"mlp_in_dim={self.mlp_in_dim}, "
+            f"out_dim={self.out_dim}"
         )
-        freqs = div_term.unsqueeze(0).expand(pos_dim, -1)
-
-        self.register_buffer("freqs", freqs)
-
-    def forward(self, pos: torch.Tensor) -> torch.Tensor:
-        r"""forward(pos) -> Tensor
-
-        Args:
-            pos (Tensor): Input position tensor of shape :math:`(..., \text{pos\_dim})`.
-
-        Returns:
-            Tensor: Positional encoding tensor of shape :math:`(..., \text{enc\_dim} + \text{pos\_dim})`
-                if ``include_input=True``, else :math:`(..., \text{enc\_dim})`.
-        """
-        freqs = cast(torch.Tensor, self.freqs)
-        proj = torch.matmul(pos, freqs)
-        pos_enc = torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
-
-        if self.include_input:
-            pos_enc = torch.cat([pos, pos_enc], dim=-1)
-
-        return pos_enc
 
 
-class AdaLN(nn.Module):
-    r"""AdaLN(dim, eps=1e-6)
+class TokenWiseFiLM(nn.Module):
+    r"""Token-wise Feature-wise Linear Modulation.
 
-    Adaptive Layer Normalization modulating normalized features using externally supplied scale (:math:`\gamma`)
-    and shift (:math:`\beta`) conditioning parameters.
+    Applies FiLM modulation:
 
     .. math::
-        \text{AdaLN}(x, [\gamma, \beta]) = \text{RMSNorm}(x) \odot \gamma + \beta
+        y = x \odot \gamma + \beta
+
+    where ``gamma`` and ``beta`` are learned from a conditioning tensor.
+
+    By default, the conditioning tensor has the same feature dimension as ``x``:
+
+    - ``x.shape[-1] == dim``
+    - ``cond.shape[-1] == dim``
+
+    For backward compatibility, if ``cond.shape[-1] == 2 * dim`` and ``cond_dim``
+    is left as ``dim``, the conditioning tensor is split into two ``dim``-sized
+    tensors before projection.
 
     Args:
-        dim (int): Feature dimension of normalized input tensor.
-        eps (float, optional): Small epsilon constant for RMSNorm stability. Default: ``1e-6``.
+        dim (int): Feature dimension of ``x``.
+        cond_dim (int, optional): Feature dimension of ``cond``. Defaults to ``dim``.
+        identity_init (bool, optional): If ``True``, initializes FiLM as approximately
+            identity: ``gamma = 1``, ``beta = 0``. Default: ``True``.
+
+    Shape:
+        - x: :math:`(B, D)` or :math:`(B, L, D)`
+        - cond: :math:`(D)`, :math:`(B, D)`, :math:`(B, L, D)`, or backward-compatible
+          :math:`(B, L, 2D)`
+        - Output: Same shape as ``x``.
 
     Examples::
 
-        >>> adaln = AdaLN(dim=32)
+        >>> film = TokenWiseFiLM(dim=32)
         >>> x = torch.randn(2, 5, 32)
-        >>> cond = torch.randn(2, 5, 64)
-        >>> out = adaln(x, cond)
+        >>> cond = torch.randn(2, 5, 32)
+        >>> out = film(x, cond)
         >>> out.shape
         torch.Size([2, 5, 32])
     """
 
-    def __init__(self, dim: int, eps: float = 1e-6) -> None:
+    def __init__(
+        self,
+        dim: int,
+        cond_dim: Optional[int] = None,
+        identity_init: bool = True,
+    ) -> None:
         super().__init__()
+
+        if dim <= 0:
+            raise ValueError("TokenWiseFiLM dim must be greater than 0.")
+
         self.dim = dim
-        self.norm = nn.RMSNorm(dim, eps=eps, elementwise_affine=False)
+        self.cond_dim = dim if cond_dim is None else cond_dim
+
+        if self.cond_dim <= 0:
+            raise ValueError("TokenWiseFiLM cond_dim must be greater than 0.")
+
+        self.gamma_proj = nn.Linear(self.cond_dim, dim)
+        self.beta_proj = nn.Linear(self.cond_dim, dim)
+
+        if identity_init:
+            # Initial behavior: y = x * 1 + 0.
+            nn.init.zeros_(self.gamma_proj.weight)
+            nn.init.ones_(self.gamma_proj.bias)
+
+            nn.init.zeros_(self.beta_proj.weight)
+            nn.init.zeros_(self.beta_proj.bias)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        r"""forward(x, cond) -> Tensor
-
+        """
         Args:
-            x (Tensor): Input tensor of shape :math:`(B, L, D)` or :math:`(B, D)`.
-            cond (Tensor): Conditioning tensor containing concatenated scale and shift parameters of
-                shape :math:`(B, 2D)` or :math:`(B, L, 2D)`.
+            x (Tensor): Input tensor of shape ``(B, D)`` or ``(B, L, D)``.
+            cond (Tensor): Conditioning tensor.
 
         Returns:
-            Tensor: Adaptively normalized and modulated feature tensor of same shape as ``x``.
+            Tensor: Modulated tensor with the same shape as ``x``.
         """
-        if cond.dim() == 2 and x.dim() == 3:
-            cond = cond.unsqueeze(1)
+        if x.dim() not in (2, 3):
+            raise ValueError(
+                f"TokenWiseFiLM expects x with shape (B, D) or (B, L, D), "
+                f"got {tuple(x.shape)}."
+            )
 
-        gamma, beta = cond.chunk(2, dim=-1)
-        x_norm = self.norm(x)
-        return x_norm * gamma + beta
+        if cond.dim() == 0:
+            cond = cond.unsqueeze(0)
+
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(0)
+
+        # Align conditioning rank with input rank for broadcasting.
+        if x.dim() == 3 and cond.dim() == 2:
+            cond = cond.unsqueeze(1)
+        elif x.dim() == 2 and cond.dim() == 3:
+            if cond.size(1) != 1:
+                raise ValueError(
+                    "When x has shape (B, D), cond with shape (B, L, C) is only "
+                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
+                )
+            cond = cond.squeeze(1)
+        elif x.dim() == cond.dim():
+            pass
+        else:
+            raise ValueError(
+                "Unsupported combination of x and cond shapes: "
+                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
+            )
+
+        # Primary contract: conditioning has the expected feature dimension.
+        if cond.size(-1) == self.cond_dim:
+            gamma = self.gamma_proj(cond)
+            beta = self.beta_proj(cond)
+
+        # Backward-compatible contract: concatenated [gamma, beta] conditioning.
+        elif self.cond_dim == self.dim and cond.size(-1) == 2 * self.dim:
+            gamma_in, beta_in = torch.chunk(cond, chunks=2, dim=-1)
+            gamma = self.gamma_proj(gamma_in)
+            beta = self.beta_proj(beta_in)
+
+        else:
+            raise ValueError(
+                "TokenWiseFiLM conditioning dimension mismatch. "
+                f"Expected cond.shape[-1] == {self.cond_dim} "
+                f"or backward-compatible {2 * self.dim}, got {cond.size(-1)}."
+            )
+
+        return x * gamma + beta
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, cond_dim={self.cond_dim}"
 
 
 class RewardEncoder(nn.Module):
-    r"""RewardEncoder(dim, hidden_dim, eps=1e-6, f_dim=32, h_dim=64, gamma=1.0)
+    r"""Reward-conditioned sequence encoder using Fourier features and FiLM.
 
-    Encodes sequences of unbounded reward signals into statistical summary vectors (mean, median, max, min),
-    projects them via learnable Fourier features, and adaptively modulates input embedding sequences using :class:`AdaLN`.
+    The reward tensor is normalized to a layout broadcastable to ``(B, L, K)``,
+    summarized by median, mean, max, and min, optionally normalized with RMSNorm,
+    encoded with learnable Fourier features, and used to modulate projected input
+    features with token-wise FiLM.
 
-    .. math::
-        s = [\text{median}(R), \text{mean}(R), \text{max}(R), \text{min}(R)] \in \mathbb{R}^{B \times L \times 4}
+    The dimension contract is:
 
-    .. math::
-        [\gamma, \beta] = \text{LearnableFourierFeatures}(s), \quad
-        y = \text{AdaLN}(W_{\text{proj}} x, [\gamma, \beta])
+    - ``x`` is projected to ``hidden_dim``.
+    - Reward conditioning is also encoded to ``hidden_dim``.
+    - Therefore, before FiLM:
+
+      ``x_hidden.shape[-1] == cond.shape[-1] == hidden_dim``
 
     Args:
-        dim (int): Input sequence feature dimension.
-        hidden_dim (int): Target hidden feature dimension.
-        eps (float, optional): RMSNorm stability epsilon for internal :class:`AdaLN`. Default: ``1e-6``.
-        f_dim (int, optional): Number of Fourier channels for reward statistical encoding. Default: ``32``.
-        h_dim (int, optional): Hidden dimension of Fourier MLP projection network. Default: ``64``.
-        gamma (float, optional): Scaling hyperparameter for initial Fourier projection weights. Default: ``1.0``.
+        dim (int): Input feature dimension.
+        hidden_dim (int): Hidden feature dimension after projection and conditioning.
+        eps (float, optional): Epsilon used by RMSNorm. Default: ``1e-6``.
+        f_dim (int, optional): Number of Fourier feature channels. Default: ``32``.
+        h_dim (int, optional): Hidden dimension of the Fourier MLP. Default: ``64``.
+        gamma (float, optional): Standard deviation for Fourier projection init.
+            Default: ``1.0``.
+        normalize_reward_stats (bool, optional): If ``True``, applies RMSNorm to the
+            reward statistics before Fourier encoding. Default: ``True``.
+
+    Shape:
+        - x: :math:`(D)`, :math:`(B, D)`, or :math:`(B, L, D)`
+        - reward_values: Common shapes include:
+          :math:`(B, L, K)`,
+          :math:`(B, L)`,
+          :math:`(B, K)`,
+          :math:`(L, K)`,
+          :math:`(K,)`,
+          :math:`(L,)`,
+          or scalar.
+        - Output: Same leading shape as ``x`` with feature dimension ``hidden_dim``.
 
     Examples::
 
         >>> encoder = RewardEncoder(dim=32, hidden_dim=64)
         >>> x = torch.randn(2, 5, 32)
-        >>> reward_values = torch.randn(2, 5, 10)  # 10 different reward loss functions
+        >>> reward_values = torch.randn(2, 5, 10)
         >>> output = encoder(x, reward_values)
         >>> output.shape
         torch.Size([2, 5, 64])
@@ -301,67 +417,169 @@ class RewardEncoder(nn.Module):
         f_dim: int = 32,
         h_dim: int = 64,
         gamma: float = 1.0,
+        normalize_reward_stats: bool = True,
     ) -> None:
         super().__init__()
+
+        if dim <= 0:
+            raise ValueError("dim must be greater than 0.")
+        if hidden_dim <= 0:
+            raise ValueError("hidden_dim must be greater than 0.")
+        if eps <= 0:
+            raise ValueError("eps must be greater than 0.")
+
         self.dim = dim
         self.hidden_dim = hidden_dim
+        self.normalize_reward_stats = normalize_reward_stats
 
-        if dim != hidden_dim:
-            self.x_proj: nn.Module = nn.Linear(dim, hidden_dim)
-        else:
-            self.x_proj = nn.Identity()
+        self.x_proj: nn.Module = (
+            nn.Linear(dim, hidden_dim) if dim != hidden_dim else nn.Identity()
+        )
 
+        # Normalize the four reward statistics: median, mean, max, min.
+        self.reward_norm: nn.Module = (
+            RMSNorm(dim=4, eps=eps, elementwise_affine=True)
+            if normalize_reward_stats
+            else nn.Identity()
+        )
+
+        # Conditioning output dimension matches projected x dimension.
         self.reward_fourier = LearnableFourierFeatures(
             pos_dim=4,
             f_dim=f_dim,
             h_dim=h_dim,
-            d_dim=2 * hidden_dim,
+            d_dim=hidden_dim,
             g_dim=1,
             gamma=gamma,
             include_input=True,
         )
 
-        self.adaln = AdaLN(dim=hidden_dim, eps=eps)
+        self.film = TokenWiseFiLM(
+            dim=hidden_dim,
+            cond_dim=hidden_dim,
+            identity_init=True,
+        )
+
+    @staticmethod
+    def _normalize_reward_values(
+        reward_values: torch.Tensor,
+        batch_size: int,
+        seq_len: int,
+    ) -> torch.Tensor:
+        """Normalize reward_values to a tensor broadcastable to (B, L, K)."""
+
+        # Scalar -> (1, 1, 1)
+        if reward_values.dim() == 0:
+            return reward_values.view(1, 1, 1)
+
+        # 1D:
+        #   (L,) -> (1, L, 1)
+        #   (B,) -> (B, 1, 1), when L == 1
+        #   (K,) -> (1, 1, K)
+        if reward_values.dim() == 1:
+            length = reward_values.size(0)
+
+            if length == seq_len:
+                return reward_values.view(1, seq_len, 1)
+
+            if seq_len == 1 and length == batch_size:
+                return reward_values.view(batch_size, 1, 1)
+
+            return reward_values.view(1, 1, -1)
+
+        # 2D:
+        #   (B, L) -> (B, L, 1)
+        #   (B, K) -> (B, 1, K)
+        #   (L, K) -> (1, L, K)
+        #   (1, L) -> (1, L, 1)
+        #   (1, K) -> (1, 1, K)
+        if reward_values.dim() == 2:
+            first, second = reward_values.shape
+
+            if (first, second) == (batch_size, seq_len):
+                return reward_values.unsqueeze(-1)
+
+            if first == batch_size:
+                return reward_values.unsqueeze(1)
+
+            if first == seq_len:
+                return reward_values.unsqueeze(0)
+
+            if first == 1:
+                if second == seq_len:
+                    return reward_values.unsqueeze(-1)
+                return reward_values.unsqueeze(1)
+
+            raise ValueError(
+                "Could not normalize 2D reward_values. "
+                f"Got reward_values.shape={tuple(reward_values.shape)}, "
+                f"batch_size={batch_size}, seq_len={seq_len}. "
+                "Expected one of: (B, L), (B, K), (L, K), (1, L), or (1, K)."
+            )
+
+        # Already 3D. Allow broadcastable batch and sequence dimensions.
+        if reward_values.dim() == 3:
+            if reward_values.size(0) not in (1, batch_size):
+                raise ValueError(
+                    "3D reward_values batch dimension must be either 1 or batch_size. "
+                    f"Got reward_values.shape={tuple(reward_values.shape)}, "
+                    f"batch_size={batch_size}."
+                )
+
+            if reward_values.size(1) not in (1, seq_len):
+                raise ValueError(
+                    "3D reward_values sequence dimension must be either 1 or seq_len. "
+                    f"Got reward_values.shape={tuple(reward_values.shape)}, "
+                    f"seq_len={seq_len}."
+                )
+
+            return reward_values
+
+        raise ValueError(
+            "reward_values must be a scalar, 1D, 2D, or 3D tensor. "
+            f"Got shape {tuple(reward_values.shape)}."
+        )
 
     def forward(self, x: torch.Tensor, reward_values: torch.Tensor) -> torch.Tensor:
-        r"""forward(x, reward_values) -> Tensor
-
+        """
         Args:
-            x (Tensor): Input sequence feature tensor of shape :math:`(B, L, \text{dim})`, :math:`(B, \text{dim})`,
-                or :math:`(\text{dim},)`.
-            reward_values (Tensor): Reward tensor of shape :math:`(B, L, K)` for :math:`K` unbounded reward
-                signals, :math:`(B, L)` for a single reward signal, :math:`(B, K)` for single-step rewards,
-                or :math:`(K,)` / :math:`(L,)` / :math:`(L, K)` for unbatched signals.
+            x (Tensor): Input feature tensor.
+            reward_values (Tensor): Reward tensor.
 
         Returns:
-            Tensor: Modulated sequence feature tensor matching the input shape structure of ``x`` with feature
-                dimension :math:`\text{hidden\_dim}`.
+            Tensor: Reward-modulated feature tensor.
         """
-        if reward_values.device != x.device or reward_values.dtype != x.dtype:
-            reward_values = reward_values.to(device=x.device, dtype=x.dtype)
+        # Move inputs to module device/dtype when possible.
+        param = next(self.parameters(), None)
+        if param is not None:
+            x = x.to(device=param.device, dtype=param.dtype)
+            reward_values = reward_values.to(device=param.device, dtype=param.dtype)
+        else:
+            if reward_values.device != x.device or reward_values.dtype != x.dtype:
+                reward_values = reward_values.to(device=x.device, dtype=x.dtype)
 
         orig_x_dim = x.dim()
+
         if orig_x_dim == 1:
             x = x.unsqueeze(0).unsqueeze(0)
         elif orig_x_dim == 2:
             x = x.unsqueeze(1)
+        elif orig_x_dim != 3:
+            raise ValueError(
+                f"Expected x with shape (D,), (B, D), or (B, L, D), "
+                f"got {tuple(x.shape)}."
+            )
 
         batch_size, seq_len, _ = x.shape
 
-        if reward_values.dim() == 1:
-            if reward_values.shape[0] == seq_len:
-                reward_values = reward_values.view(1, seq_len, 1)
-            else:
-                reward_values = reward_values.view(batch_size, seq_len, -1)
-        elif reward_values.dim() == 2:
-            if reward_values.shape == (batch_size, seq_len):
-                reward_values = reward_values.unsqueeze(-1)
-            elif seq_len == 1 and reward_values.shape[0] == batch_size:
-                reward_values = reward_values.unsqueeze(1)
-            elif batch_size == 1 and reward_values.shape[0] == seq_len:
-                reward_values = reward_values.unsqueeze(0)
-            else:
-                reward_values = reward_values.unsqueeze(-1)
+        reward_values = self._normalize_reward_values(
+            reward_values,
+            batch_size=batch_size,
+            seq_len=seq_len,
+        )
+
+        if reward_values.size(-1) == 0:
+            raise ValueError("reward_values must contain at least one reward channel.")
 
         reward_median = reward_values.median(dim=-1, keepdim=True)[0]
         reward_mean = reward_values.mean(dim=-1, keepdim=True)
@@ -369,13 +587,25 @@ class RewardEncoder(nn.Module):
         reward_min = reward_values.min(dim=-1, keepdim=True)[0]
 
         reward_stats = torch.cat(
-            [reward_median, reward_mean, reward_max, reward_min], dim=-1
+            [reward_median, reward_mean, reward_max, reward_min],
+            dim=-1,
         )
 
-        reward_stats_reshaped = reward_stats.unsqueeze(2)
-        cond = self.reward_fourier(reward_stats_reshaped)
+        reward_stats = self.reward_norm(reward_stats)
+
+        # LearnableFourierFeatures expects (B, L, G, pos_dim), with G == g_dim == 1.
+        cond = self.reward_fourier(reward_stats.unsqueeze(2))
+
         x_hidden = self.x_proj(x)
-        output = self.adaln(x_hidden, cond)
+
+        if cond.shape[-1] != x_hidden.shape[-1]:
+            raise RuntimeError(
+                "Conditioning and input feature dimensions must match before TokenWiseFiLM. "
+                f"Got cond.shape[-1]={cond.shape[-1]}, "
+                f"x_hidden.shape[-1]={x_hidden.shape[-1]}."
+            )
+
+        output = self.film(x_hidden, cond)
 
         if orig_x_dim == 1:
             output = output.squeeze(0).squeeze(0)
@@ -383,3 +613,10 @@ class RewardEncoder(nn.Module):
             output = output.squeeze(1)
 
         return output
+
+    def extra_repr(self) -> str:
+        return (
+            f"dim={self.dim}, "
+            f"hidden_dim={self.hidden_dim}, "
+            f"normalize_reward_stats={self.normalize_reward_stats}"
+        )

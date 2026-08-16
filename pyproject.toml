@@ -1,7 +1,7 @@
 [project]
 name = "qwendopamine"
-version = "0.1.0"
-description = "Research scaffold for Qwen-style architectures with custom blocks, HF integration, and pure PyTorch training."
+version = "0.2.0"
+description = "Research framework for Qwen-style LLM architectures with novel PyTorch recurrent blocks, HF/GGUF interoperability, and pure PyTorch training."
 readme = "README.md"
 authors = [
     { name = "Joao Gabriel Souza Amaral", email = "jgsa75005@gmail.com" }

@@ -13,7 +13,15 @@ from qwendopamine.blocks import (
     Qwen3_5GatedDeltaNet,
     QwenDecoderLayer,
 )
-from qwendopamine.models.blocks import BLOCKS, build_block
+from qwendopamine.models.blocks import (
+    BLOCKS,
+    AdaLN,
+    FourierFeatures,
+    LearnableFourierFeatures,
+    PositionalEncoding,
+    RewardEncoder,
+    build_block,
+)
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
     build_model,
@@ -118,3 +126,74 @@ def test_when_research_decoder_forward_with_gdn2_block_then_executes_successfull
     logits = model(input_ids)
     assert logits.shape == (2, 3, mock_config.vocab_size)
     assert not torch.isnan(logits).any()
+
+
+def test_when_adaln_forward_called_then_modulates_features_correctly() -> None:
+    adaln = AdaLN(dim=32)
+    x = torch.randn(2, 4, 32)
+    cond = torch.randn(2, 64)
+    out = adaln(x, cond)
+    assert out.shape == (2, 4, 32)
+    assert not torch.isnan(out).any()
+
+    cond_3d = torch.randn(2, 4, 64)
+    out_3d = adaln(x, cond_3d)
+    assert out_3d.shape == (2, 4, 32)
+
+
+def test_when_learnable_fourier_features_forward_then_encodes_position() -> None:
+    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1)
+    pos = torch.randn(2, 5, 1, 4)
+    enc = lff(pos)
+    assert enc.shape == (2, 5, 64)
+    assert not torch.isnan(enc).any()
+
+
+def test_when_fourier_features_forward_then_encodes_spatial_dim() -> None:
+    ff = FourierFeatures(pos_dim=2, f_dim=16, include_input=True)
+    pos = torch.randn(2, 10, 2)
+    enc = ff(pos)
+    assert enc.shape == (2, 10, 18)
+    assert not torch.isnan(enc).any()
+
+
+def test_when_positional_encoding_forward_then_handles_even_enc_dim() -> None:
+    pe = PositionalEncoding(pos_dim=1, enc_dim=10, include_input=True)
+    pos = torch.randn(2, 8, 1)
+    enc = pe(pos)
+    assert enc.shape == (2, 8, 11)
+    assert not torch.isnan(enc).any()
+
+
+def test_when_reward_encoder_forward_called_then_returns_conditioned_features() -> None:
+    encoder = RewardEncoder(dim=32, hidden_dim=64)
+    x = torch.randn(2, 5, 32)
+    reward_2d = torch.randn(2, 5)
+
+    out = encoder(x, reward_2d)
+    assert out.shape == (2, 5, 64)
+    assert not torch.isnan(out).any()
+
+    reward_3d = torch.randn(2, 5, 3)
+    out_3d = encoder(x, reward_3d)
+    assert out_3d.shape == (2, 5, 64)
+    assert not torch.isnan(out_3d).any()
+
+
+def test_when_reward_encoder_dtype_differs_then_aligns_and_executes() -> None:
+    encoder = RewardEncoder(dim=32, hidden_dim=32)
+    x = torch.randn(2, 4, 32, dtype=torch.bfloat16)
+    reward_values = torch.randn(2, 4, 2, dtype=torch.float32)
+
+    encoder.to(dtype=torch.bfloat16)
+    out = encoder(x, reward_values)
+    assert out.shape == (2, 4, 32)
+    assert out.dtype == torch.bfloat16
+    assert not torch.isnan(out).any()
+
+
+def test_when_blocks_registry_contains_reward_blocks() -> None:
+    assert "reward_encoder" in BLOCKS
+    assert "adaln" in BLOCKS
+    assert BLOCKS["reward_encoder"] is RewardEncoder
+    assert BLOCKS["adaln"] is AdaLN

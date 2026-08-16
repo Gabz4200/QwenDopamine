@@ -333,11 +333,14 @@ class SurpriseMemory(nn.Module):
         w_f = w.float()
 
         if sigma_sq is not None:
-            pi_f = 1.0 / (sigma_sq.float().clamp_min(1e-6))
+            sigma_sq_f = sigma_sq.float()
+            pi_f = 1.0 / (sigma_sq_f.clamp_min(1e-6))
         elif u is not None:
             pi_f = u.float()
+            sigma_sq_f = None
         else:
             pi_f = torch.ones_like(w_f)
+            sigma_sq_f = None
 
         state = (
             self.initial_state(bs, device=k.device, dtype=torch.float32)
@@ -348,6 +351,9 @@ class SurpriseMemory(nn.Module):
 
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
+
+        if not hasattr(self, "_eye_cache") or not isinstance(self._eye_cache, dict):
+            self._eye_cache: dict[tuple[int, torch.device], torch.Tensor] = {}
 
         for start in range(0, ts, chunk_size):
             end = min(start + chunk_size, ts)
@@ -360,7 +366,7 @@ class SurpriseMemory(nn.Module):
             bc = b_f[:, start:end]
             wc = w_f[:, start:end]
             pic = pi_f[:, start:end]
-            sigc = sigma_sq[:, start:end] if sigma_sq is not None else None
+            sigc = sigma_sq_f[:, start:end] if sigma_sq_f is not None else None
 
             S_0 = S_chunk
 
@@ -389,14 +395,24 @@ class SurpriseMemory(nn.Module):
             RHS = (Pi_mat * R_raw).unsqueeze(-1)
 
             T_scaled = Pi_mat.unsqueeze(-1) * T_mat.unsqueeze(2)
-            eye = torch.eye(c_len, device=q.device, dtype=torch.float32).view(
-                1, 1, 1, c_len, c_len
-            )
+
+            cache_key = (c_len, q.device)
+            if cache_key not in self._eye_cache:
+                self._eye_cache[cache_key] = torch.eye(
+                    c_len, device=q.device, dtype=torch.float32
+                )
+            eye = self._eye_cache[cache_key].view(1, 1, 1, c_len, c_len)
             L = eye + T_scaled
 
-            R_vec = torch.linalg.solve_triangular(
-                L, RHS, upper=False
-            ).squeeze(-1)
+            # Flatten 5D (B, H, d_v, C, C) -> 3D (B*H*d_v, C, C) for cuBLAS 3D batched solve
+            num_systems = bs * self.num_heads * self.head_v_dim
+            L_3d = L.reshape(num_systems, c_len, c_len)
+            RHS_3d = RHS.reshape(num_systems, c_len, 1)
+
+            R_vec_3d = torch.linalg.solve_triangular(
+                L_3d, RHS_3d, upper=False
+            )
+            R_vec = R_vec_3d.view(bs, self.num_heads, self.head_v_dim, c_len)
             R = R_vec.permute(0, 1, 3, 2)
 
             gamma_last_exp = gamma_last.unsqueeze(1)
@@ -914,40 +930,10 @@ class GatedSurpriseNet(nn.Module):
         final_recurrent_state: SurpriseRecurrenceState | None = None
 
         if mode in ("triton", "fla"):
-            try:
-                from qwendopamine.models.gdn2.gdn2_ops.chunk_gdn2 import (
-                    chunk_gdn2 as _triton_chunk_gdn2,
-                )
-
-                # Precision-weighted write gate w_eff = (1 / sigma_sq) * w
-                pi = 1.0 / sigma_sq.float().clamp_min(1e-6)
-                w_eff = (pi * w_gate).to(v.dtype)
-                init_mem = (
-                    recurrent_state.memory if recurrent_state is not None else None
-                )
-                out, final_mem = _triton_chunk_gdn2(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b_gate,
-                    w=w_eff,
-                    A_log=self.A_log,
-                    dt_bias=self.dt_bias,
-                    initial_state=init_mem,
-                    output_final_state=should_use_cache,
-                    use_qk_l2norm_in_kernel=True,
-                    use_gate_in_kernel=False,
-                    cu_seqlens=cu_seqlens,
-                )
-                final_recurrent_state = (
-                    SurpriseRecurrenceState(memory=final_mem)
-                    if final_mem is not None
-                    else None
-                )
-            except Exception as e:  # noqa: BLE001
-                _warn_fallback_once(f"Triton kernel failed ({e}); falling back to pure PyTorch")
-                mode = "torch-chunk" if self.training else "torch-recurrent"
+            _warn_fallback_once(
+                "Triton/FLA custom kernel for GatedSurpriseNet precision-weighted residual scan is not implemented; falling back to PyTorch chunk scan"
+            )
+            mode = "torch-chunk" if self.training else "torch-recurrent"
 
         if mode not in ("triton", "fla"):
             if mode in ("torch-chunk", "compiled", "auto"):

@@ -384,6 +384,12 @@ class GatedDeltaNet2(nn.Module):
             nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Conv1d):
+            nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5))
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, RMSNormGated):
+            nn.init.ones_(module.weight)
         cast(Any, module)._is_hf_initialized = True
 
     def _get_cache(
@@ -399,20 +405,40 @@ class GatedDeltaNet2(nn.Module):
             layers = getattr(past_key_values, "layers", [])
             if self.layer_idx is not None and self.layer_idx < len(layers):
                 layer_cache = layers[self.layer_idx]
+
                 rec_states = getattr(layer_cache, "recurrent_states", None)
-                rec_state = (
-                    rec_states[0]
-                    if rec_states is not None and len(rec_states) > 0
-                    else None
-                )
-                conv_state = getattr(layer_cache, "conv_states", None)
+                if rec_states is None:
+                    rec_state = getattr(layer_cache, "recurrent_state", None)
+                elif isinstance(rec_states, torch.Tensor):
+                    rec_state = rec_states
+                elif isinstance(rec_states, dict):
+                    rec_state = rec_states.get(0)
+                elif isinstance(rec_states, (list, tuple)) and len(rec_states) > 0:
+                    rec_state = rec_states[0]
+                else:
+                    rec_state = None
+
+                conv_states = getattr(layer_cache, "conv_states", None)
+                if conv_states is None:
+                    conv_state = getattr(layer_cache, "conv_state", None)
+                elif isinstance(conv_states, dict):
+                    conv_state = (
+                        conv_states.get(0),
+                        conv_states.get(1),
+                        conv_states.get(2),
+                    )
+                elif isinstance(conv_states, (list, tuple)) and len(conv_states) == 3:
+                    conv_state = (conv_states[0], conv_states[1], conv_states[2])
+                else:
+                    conv_state = None
+
                 return rec_state, conv_state
             return None, None
 
         if isinstance(past_key_values, dict):
-            return past_key_values.get("recurrent_state"), past_key_values.get(
-                "conv_state"
-            )
+            rec = past_key_values.get("recurrent_state")
+            conv = past_key_values.get("conv_state")
+            return rec, conv
 
         return None, None
 
@@ -440,17 +466,39 @@ class GatedDeltaNet2(nn.Module):
                     and hasattr(past_key_values, "update_recurrent_state")
                     and recurrent_state is not None
                 ):
-                    past_key_values.update_recurrent_state(
-                        recurrent_state, self.layer_idx
-                    )
+                    try:
+                        past_key_values.update_recurrent_state(
+                            recurrent_state, self.layer_idx
+                        )
+                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                        _warn_fallback_once(f"update_recurrent_state failed: {e}")
+                elif recurrent_state is not None:
+                    rec_dict = getattr(layer_cache, "recurrent_states", None)
+                    if isinstance(rec_dict, dict):
+                        rec_dict[0] = recurrent_state
+                    elif hasattr(layer_cache, "recurrent_state"):
+                        layer_cache.recurrent_state = recurrent_state
+
                 if (
                     is_recurrent_layer
                     and hasattr(past_key_values, "update_conv_state")
                     and conv_state is not None
                 ):
-                    past_key_values.update_conv_state(
-                        cast(Any, conv_state), self.layer_idx
-                    )
+                    try:
+                        past_key_values.update_conv_state(
+                            cast(Any, conv_state), self.layer_idx
+                        )
+                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                        _warn_fallback_once(f"update_conv_state failed: {e}")
+                elif conv_state is not None:
+                    conv_dict = getattr(layer_cache, "conv_states", None)
+                    if isinstance(conv_dict, dict):
+                        conv_dict[0] = conv_state[0]
+                        conv_dict[1] = conv_state[1]
+                        conv_dict[2] = conv_state[2]
+                    elif hasattr(layer_cache, "conv_state"):
+                        layer_cache.conv_state = conv_state
+
         elif isinstance(past_key_values, dict):
             if recurrent_state is not None:
                 past_key_values["recurrent_state"] = recurrent_state

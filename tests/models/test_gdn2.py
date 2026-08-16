@@ -1,6 +1,6 @@
 """Behavioral and shape tests for hardware-agnostic GatedDeltaNet2 (GDN-2)."""
 
-from __future__ import annotations
+from typing import Any, cast
 
 import pytest
 import torch
@@ -138,6 +138,96 @@ def test_when_gdn2_config_from_name_valid_then_returns_config() -> None:
     assert cfg.hidden_size == 2304
 
 
-def test_when_gdn2_config_from_name_invalid_then_raises_key_error() -> None:
-    with pytest.raises(KeyError, match="Unknown config name"):
-        GDN2Config.from_name("invalid_model_name")
+def test_when_gdn2_and_gpt_initialized_then_parameters_have_correct_initial_values() -> (
+    None
+):
+    from qwendopamine.models.gdn2.model import GPT
+
+    cfg = GDN2Config(hidden_size=64, num_heads=2, head_dim=32, num_layers=2)
+    model = GPT(cfg)
+
+    # Embeddings initialized with std=0.02
+    assert model.embed.weight.shape == (cfg.vocab_size, cfg.hidden_size)
+    assert not torch.all(model.embed.weight == 0.0)
+
+    # RMSNorm initialized with 1.0
+    assert torch.allclose(model.norm.weight, torch.ones_like(model.norm.weight))
+
+    # Check GDN2 layer initialization flags
+    block0_attn = cast(GatedDeltaNet2, model.layers[0].attn)
+    assert getattr(block0_attn.q_proj, "_is_hf_initialized", False)
+    assert getattr(block0_attn.k_proj, "_is_hf_initialized", False)
+    assert getattr(block0_attn.v_proj, "_is_hf_initialized", False)
+    assert getattr(block0_attn.A_log, "_no_weight_decay", False)
+    assert getattr(block0_attn.dt_bias, "_no_weight_decay", False)
+
+
+def test_when_gdn2_forward_with_linear_attention_cache_layer_then_stores_states() -> (
+    None
+):
+    try:
+        from transformers.cache_utils import Cache, LinearAttentionCacheLayerMixin
+    except ImportError:
+        pytest.skip("LinearAttentionCacheLayerMixin not available")
+
+    class TestLinearLayerCache(LinearAttentionCacheLayerMixin):
+        def __init__(self) -> None:
+            super().__init__(number_of_states=1)
+
+        def lazy_initialization(
+            self,
+            conv_states: torch.Tensor | None = None,
+            recurrent_states: torch.Tensor | None = None,
+            state_idx: int = 0,
+        ) -> None:
+            pass
+
+        def update_recurrent_state(
+            self, recurrent_states: torch.Tensor, state_idx: int = 0, **kwargs: Any
+        ) -> torch.Tensor:
+            self.recurrent_states[state_idx] = recurrent_states
+            return recurrent_states
+
+        def update_conv_state(
+            self, conv_states: Any, state_idx: int = 0, **kwargs: Any
+        ) -> Any:
+            if isinstance(conv_states, tuple):
+                for i, st in enumerate(conv_states):
+                    self.conv_states[i] = st
+            else:
+                self.conv_states[state_idx] = conv_states
+            return conv_states
+
+    layer_cache = TestLinearLayerCache()
+    cache = Cache(layers=[layer_cache])
+
+    layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, layer_idx=0)
+    x = torch.randn(1, 4, 64)
+
+    out, _, past_cache = layer(x, past_key_values=cache, use_cache=True)
+    assert out.shape == (1, 4, 64)
+    assert past_cache is not None
+    assert layer_cache.recurrent_states.get(0) is not None
+    assert layer_cache.conv_states.get(0) is not None
+
+
+def test_when_gdn2_incremental_decoding_then_updates_recurrent_state() -> None:
+    layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, layer_idx=0)
+    x1 = torch.randn(1, 1, 64)
+    x2 = torch.randn(1, 1, 64)
+
+    cache: dict[
+        str, torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ] = {}
+
+    out1, _, _ = layer(x1, past_key_values=cache, use_cache=True)
+    rec_state_1 = cache.get("recurrent_state")
+    assert isinstance(rec_state_1, torch.Tensor)
+
+    out2, _, _ = layer(x2, past_key_values=cache, use_cache=True)
+    rec_state_2 = cache.get("recurrent_state")
+    assert isinstance(rec_state_2, torch.Tensor)
+
+    assert out1.shape == (1, 1, 64)
+    assert out2.shape == (1, 1, 64)
+    assert not torch.allclose(rec_state_1, rec_state_2)

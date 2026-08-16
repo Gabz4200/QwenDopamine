@@ -272,7 +272,12 @@ def run_synthetic_overfit() -> tuple[float, float, bool]:
     model = GPT(cfg).to(device=device, dtype=dtype)
 
     if WORLD_SIZE > 1:
-        model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
+        ddp_kwargs = (
+            {"device_ids": [LOCAL_RANK], "output_device": LOCAL_RANK}
+            if has_cuda
+            else {}
+        )
+        model = DDP(model, **ddp_kwargs)
 
     model.train()
 
@@ -916,7 +921,12 @@ def main() -> None:
         torch.cuda.empty_cache()
 
     if WORLD_SIZE > 1:
-        model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
+        ddp_kwargs = (
+            {"device_ids": [LOCAL_RANK], "output_device": LOCAL_RANK}
+            if has_cuda
+            else {}
+        )
+        model = DDP(model, **ddp_kwargs)
 
     total_params = sum(p.numel() for p in model.parameters())
     if IS_MAIN:

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import nn
@@ -49,6 +49,21 @@ class GPT(nn.Module):
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if getattr(module, "_is_hf_initialized", False):
+            return
+        if isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, RMSNorm):
+            module.reset_parameters()
+        cast(Any, module)._is_hf_initialized = True
 
     def forward(
         self, input_ids: torch.Tensor, past_key_values: Any | None = None

@@ -223,6 +223,11 @@ class Block(nn.Module):
                     conv_size=config.conv_size,
                     expand_v=config.expand_v,
                     use_short_conv=config.use_short_conv,
+                    chunk_size=config.chunk_size or config.train_chunk_size,
+                    allow_neg_eigval=config.allow_neg_eigval,
+                    backend=config.backend,
+                    fp32_decay=config.fp32_decay,
+                    compile_backend=config.compile_backend,
                 )
             else:
                 self.attn = GatedSurpriseNetAdam(
@@ -236,6 +241,11 @@ class Block(nn.Module):
                     expand_v=config.expand_v,
                     use_short_conv=config.use_short_conv,
                     train_chunk_size=config.train_chunk_size,
+                    backend=config.backend,
+                    compile_backend=config.compile_backend,
+                    max_write_bound=config.max_write_bound,
+                    max_erase_bound=config.max_erase_bound,
+                    max_precision_bound=config.max_precision_bound,
                 )
         else:
             self.attn = CausalSelfAttention(
@@ -487,19 +497,25 @@ def compute_model_params(cfg: SurpriseGPTConfig) -> dict[str, int]:
     attn_params_per_layer = (cfg.n_embd * qkv_dim) + (cfg.n_embd * cfg.n_embd)
 
     k_dim = cfg.n_head * cfg.head_size
-    v_dim = int(cfg.n_head * cfg.head_size * cfg.expand_v)
+    # Value-side flat dimension and per-head value dimension. The GDN-2
+    # projection stack uses the per-head value dim (head_v_dim) on the first
+    # layer of f_proj/g_proj and the flat value dim on o_proj / b/w/g tails.
+    hv = int(cfg.head_size * cfg.expand_v)
+    v_dim = int(cfg.n_head * hv)
     surprise_projs = (cfg.n_embd * k_dim * 2) + (cfg.n_embd * v_dim)
     conv_params = (
         (k_dim * cfg.conv_size * 2) + (v_dim * cfg.conv_size)
         if cfg.use_short_conv
         else 0
     )
-    f_proj = (cfg.n_embd * v_dim) + (v_dim * k_dim)
+    # f_proj: Linear(hidden -> head_v_dim) then Linear(head_v_dim -> key_dim).
+    f_proj = (cfg.n_embd * hv) + (hv * k_dim)
     b_proj = cfg.n_embd * k_dim
     w_proj = cfg.n_embd * v_dim
-    g_proj = (cfg.n_embd * v_dim) + (v_dim * v_dim) + v_dim
+    # g_proj: Linear(hidden -> head_v_dim) then Linear(head_v_dim -> value_dim, bias).
+    g_proj = (cfg.n_embd * hv) + (hv * v_dim) + v_dim
     o_proj = v_dim * cfg.n_embd
-    o_norm = v_dim
+    o_norm = hv  # RMSNormGated weight is per value head
     dt_and_a = cfg.n_head + k_dim
     surprise_attn_params = (
         surprise_projs

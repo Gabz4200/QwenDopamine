@@ -1,5 +1,4 @@
 import math
-from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -289,7 +288,7 @@ class TokenWiseFiLM(nn.Module):
     def __init__(
         self,
         dim: int,
-        cond_dim: Optional[int] = None,
+        cond_dim: int | None = None,
         identity_init: bool = True,
     ) -> None:
         super().__init__()

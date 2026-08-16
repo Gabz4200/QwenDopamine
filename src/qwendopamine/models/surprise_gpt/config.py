@@ -37,7 +37,10 @@ class SurpriseGPTConfig:
     mixer_type: str = "surprise"
     gradient_checkpointing: bool = False
 
-    # GDN-2 execution options (passed through to `GatedDeltaNet2`).
+    # GatedSurpriseNet gate bound options (Option A defaults).
+    max_write_bound: float = 1.50
+    max_erase_bound: float = 3.00
+    max_precision_bound: float = 2.00
     chunk_size: int | None = None
     allow_neg_eigval: bool = False
     backend: str = "auto"

@@ -62,6 +62,58 @@ except (ImportError, AttributeError) as e:
     _warn_fallback_once(f"Triton ops failed to load: {e}")
 
 
+# ---------------------------------------------------------------------------
+# Backend selection.
+#
+# The GDN-2 maths never knows how it is accelerated. The ``backend`` string on
+# ``GatedDeltaNet2`` is the only place device/training/sequence-length decisions
+# live; ``resolve_gdn2_backend`` maps a requested name to the concrete path used
+# by ``forward``. ``torch*`` backends run on any device; ``triton``/``fla`` are
+# optional, lazily-imported CUDA accelerators of the same maths.
+# ---------------------------------------------------------------------------
+
+GDN2_BACKENDS = (
+    "auto",
+    "torch",
+    "torch-chunk",
+    "torch-recurrent",
+    "compiled",
+    "triton",
+    "fla",
+)
+
+
+def resolve_gdn2_backend(
+    requested: str,
+    *,
+    training: bool,
+    seq_len: int,
+) -> str:
+    r"""Resolve the concrete GDN-2 execution backend for a forward call.
+
+    "auto" picks a sensible default: Triton/FLA on CUDA (and the fused recurrent
+    path for short inference), pure torch elsewhere (chunk for training/long
+    sequences, recurrent for single-token/short inference decode). Forcing any
+    other value disables automatic selection entirely.
+    """
+    if requested not in GDN2_BACKENDS:
+        raise ValueError(
+            f"Invalid GDN-2 backend '{requested}'. Valid backends: {list(GDN2_BACKENDS)}"
+        )
+    if requested != "auto":
+        return requested
+
+    if torch.cuda.is_available() and _HAS_TRITON_OPS:
+        return "triton"
+    if not training and seq_len <= 1:
+        return "torch-recurrent"
+    if training:
+        return "torch-chunk"
+    if seq_len <= 64:
+        return "torch-recurrent"
+    return "torch-chunk"
+
+
 # Pure PyTorch reference functions for GDN-2 recurrence
 
 
@@ -152,6 +204,62 @@ def torch_recurrent_gdn2(
     return out, final_state
 
 
+def compute_gdn2_wy_coefficients(
+    kbar: torch.Tensor,
+    ebar: torch.Tensor,
+    z: torch.Tensor,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Solve the WY triangular system for one chunk (paper Appendix A).
+
+    Given the decay-normalized key ``kbar = gamma^{-1} * k`` and the
+    decay-normalized erase vector ``ebar = gamma * (b * k)`` of one chunk
+    (shape ``[B, H, C, K]``) plus the write vector ``z = w * v`` (shape
+    ``[B, H, C, V]``), return the WY auxiliary factors
+
+        Y = (I + T)^{-1} ebar      (shape ``[B, H, C, K]``)
+        U = (I + T)^{-1} z         (shape ``[B, H, C, V]``)
+
+    where ``T = tril(ebar @ kbar^T, -1)`` is the strictly lower-triangular
+    intra-chunk interaction matrix. ``I + T`` is unit lower triangular, so the
+    solves are exact, stable, and hardware agnostic.
+    """
+    c = kbar.shape[-2]
+    t_mat = torch.tril(torch.matmul(ebar, kbar.transpose(-1, -2)), diagonal=-1)
+    eye = torch.eye(c, device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    a_mat = eye + t_mat  # [B, H, C, C] unit lower triangular
+    y = torch.linalg.solve_triangular(a_mat, ebar, upper=False, unitriangular=True)
+    u = torch.linalg.solve_triangular(a_mat, z, upper=False, unitriangular=True)
+    return y, u
+
+
+def compute_gdn2_intra_chunk_scores(
+    q: torch.Tensor,
+    gamma: torch.Tensor,
+    kbar: torch.Tensor,
+) -> torch.Tensor:
+    r"""Build the causal intra-chunk output score matrix.
+
+    Args:
+        q: Scaled query of shape ``[B, H, C, K]``.
+        gamma: Absolute cumulative decay of shape ``[B, H, C, K]``.
+        kbar: Decay-normalized key ``gamma^{-1} * k``, shape ``[B, H, C, K]``.
+
+    Returns:
+        The causal score matrix ``Aqk`` of shape ``[B, H, C, C]``:
+
+            (Aqk)_{r,i} = 1_{i<=r} (gamma_r * q_r)^T (gamma_i^{-1} * k_i)
+                        = 1_{i<=r} q_r^T Diag(gamma_r / gamma_i) k_i
+
+    Entries above the diagonal are zeroed (row ``r`` attends only to ``i <= r``).
+    """
+    q_gamma = gamma * q  # [B, H, C, K] = Diag(gamma_r) q_r
+    scores = torch.matmul(q_gamma, kbar.transpose(-1, -2))  # [B, H, C, C]
+    c = scores.shape[-1]
+    causal = torch.tril(torch.ones(c, c, device=scores.device, dtype=torch.bool))
+    return scores.masked_fill(~causal, 0.0)
+
+
 def torch_chunk_gdn2(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -162,24 +270,121 @@ def torch_chunk_gdn2(
     initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
     use_qk_l2norm_in_kernel: bool = True,
+    chunk_size: int = 64,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    r"""Pure PyTorch chunkwise GDN-2 recurrence.
+    r"""Pure PyTorch chunkwise GDN-2 recurrence (paper Appendix A).
 
-    Delegates to `torch_recurrent_gdn2` for device-agnostic execution on CPU/non-Triton.
+    Decay-normalized chunkwise/WY formulation, built only on generic torch ops
+    (`matmul`, `solve_triangular`) so it is equivalent to
+    `torch_recurrent_gdn2` but parallel across tokens inside each chunk. It is
+    the pure-PyTorch correctness reference for the accelerated backends and the
+    memory-efficient training path.
+
+    With the absolute cumulative decay ``gamma_r = exp(cumsum(log-decay)_{1..r})``:
+
+        kbar_r = gamma_r^{-1} * k_r        ebar_r = gamma_r * (b_r * k_r)
+        z_r = w_r * v_r                    T = tril(ebar @ kbar^T, -1)
+        Y = (I+T)^{-1} ebar                U = (I+T)^{-1} z
+        delta = U - Y @ S_start            S_next = S_start + kbar^T @ delta
+        Aqk = causal_tril(gamma*q @ kbar^T)
+        output = gamma*q @ S_start + Aqk @ delta
+
+    Args:
+        q: Query tensor ``[B, T, H, d_k]``.
+        k: Key tensor ``[B, T, H, d_k]``.
+        v: Value tensor ``[B, T, H, d_v]``.
+        g: Log-decay tensor ``[B, T, H, d_k]``.
+        b: Erase gate tensor ``[B, T, H, d_k]``.
+        w: Write gate tensor ``[B, T, H, d_v]``.
+        initial_state: Optional recurrent state ``[B, H, d_k, d_v]`` (real-space).
+        output_final_state: Whether to return the final state.
+        use_qk_l2norm_in_kernel: Whether to L2-normalize q and k.
+        chunk_size: Number of tokens processed per chunk.
+
+    Returns:
+        ``(out, final_state)`` where ``out`` has shape ``[B, T, H, d_v]``.
     """
-    return torch_recurrent_gdn2(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        b=b,
-        w=w,
-        initial_state=initial_state,
-        output_final_state=output_final_state,
-        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-        **kwargs,
-    )
+    batch_size, seq_len, num_heads, d_k = q.shape
+    d_v = v.shape[-1]
+    out_dtype = q.dtype
+
+    q = q.float()
+    k = k.float()
+    v = v.float()
+    g = g.float()
+    b_f = b.float()
+    w_f = w.float()
+
+    if use_qk_l2norm_in_kernel:
+        q = F.normalize(q, p=2, dim=-1, eps=1e-6)
+        k = F.normalize(k, p=2, dim=-1, eps=1e-6)
+
+    scale = d_k**-0.5
+    q = q * scale
+
+    # Absolute cumulative decay gamma over the whole sequence: [B, T, H, K].
+    gamma = torch.exp(torch.cumsum(g, dim=1))
+
+    # Move to chunk-friendly layout [B, H, T, D].
+    q = rearrange(q, "b t h d -> b h t d")
+    k = rearrange(k, "b t h d -> b h t d")
+    v = rearrange(v, "b t h d -> b h t d")
+    gamma = rearrange(gamma, "b t h d -> b h t d")
+    b_f = rearrange(b_f, "b t h d -> b h t d")
+    w_f = rearrange(w_f, "b t h d -> b h t d")
+
+    if initial_state is None:
+        state = torch.zeros(
+            batch_size, num_heads, d_k, d_v, dtype=torch.float32, device=q.device
+        )
+    else:
+        # At position 0 the cumulative decay reaches 1, so the normalized state
+        # equals the real-space state (matches the reference oracle).
+        state = initial_state.float()
+
+    outputs: list[torch.Tensor] = []
+    for start in range(0, seq_len, chunk_size):
+        end = min(start + chunk_size, seq_len)
+
+        q_c = q[:, :, start:end]
+        k_c = k[:, :, start:end]
+        v_c = v[:, :, start:end]
+        gam_c = gamma[:, :, start:end]
+        b_c = b_f[:, :, start:end]
+        w_c = w_f[:, :, start:end]
+
+        # Decay-normalized factors (paper Eq. 33).
+        kbar = k_c / gam_c                  # [B, H, C, K]
+        ebar = gam_c * (b_c * k_c)          # [B, H, C, K]
+        z = w_c * v_c                       # [B, H, C, V]
+
+        # WY triangular solve.
+        y, u = compute_gdn2_wy_coefficients(kbar, ebar, z, device=q.device)
+
+        # Normalized state correction: delta = U - Y @ S_start.
+        delta = u - torch.matmul(y, state)  # [B, H, C, V]
+
+        # Output read: out = gamma*q @ S_start + Aqk @ delta.
+        q_gamma = gam_c * q_c               # [B, H, C, K]
+        out_inter = torch.matmul(q_gamma, state)  # [B, H, C, V]
+        aqk = compute_gdn2_intra_chunk_scores(q_c, gam_c, kbar)  # [B, H, C, C]
+        out_c = out_inter + torch.matmul(aqk, delta)
+        outputs.append(out_c)
+
+        # Carry the normalized state: S <- S + kbar^T * delta.
+        state = state + torch.matmul(kbar.transpose(-1, -2), delta)
+
+    out = torch.cat(outputs, dim=2)         # [B, H, T, V]
+    out = rearrange(out, "b h t d -> b t h d").to(out_dtype)
+
+    final_state: torch.Tensor | None = None
+    if output_final_state:
+        # Real-space final state: apply the absolute decay at the last position.
+        gamma_last = gamma[:, :, -1, :].unsqueeze(-1)  # [B, H, K, 1]
+        final_state = (state * gamma_last).to(out_dtype)
+
+    return out, final_state
 
 
 # Pure PyTorch modules for short convolution and gated RMSNorm
@@ -282,6 +487,10 @@ class GatedDeltaNet2(nn.Module):
         conv_size: int = 4,
         conv_bias: bool = False,
         norm_eps: float = 1e-5,
+        chunk_size: int = 64,
+        backend: str = "auto",
+        compile_backend: bool = False,
+        fp32_decay: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -305,8 +514,17 @@ class GatedDeltaNet2(nn.Module):
             norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
             allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
             expand_v = getattr(cfg, "expand_v", expand_v)
+            chunk_size = getattr(cfg, "chunk_size", getattr(cfg, "train_chunk_size", chunk_size))
+            backend = getattr(cfg, "backend", backend)
+            compile_backend = getattr(cfg, "compile_backend", compile_backend)
+            fp32_decay = getattr(cfg, "fp32_decay", fp32_decay)
         elif hidden_size is None:
             hidden_size = int(hidden_size_or_config)
+
+        if backend not in GDN2_BACKENDS:
+            raise ValueError(
+                f"Invalid GDN-2 backend '{backend}'. Valid backends: {list(GDN2_BACKENDS)}"
+            )
 
         self.hidden_size = hidden_size
         self.num_heads = num_heads if num_heads is not None else 16
@@ -320,6 +538,10 @@ class GatedDeltaNet2(nn.Module):
         self.conv_bias = conv_bias
         self.norm_eps = norm_eps
         self.expand_v = expand_v
+        self.chunk_size = chunk_size
+        self.backend = backend
+        self.compile_backend = compile_backend
+        self.fp32_decay = fp32_decay
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * self.expand_v)
@@ -355,7 +577,7 @@ class GatedDeltaNet2(nn.Module):
 
         # Decay-gate parameters
         self.A_log = nn.Parameter(
-            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
+            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0))
         )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
@@ -376,6 +598,19 @@ class GatedDeltaNet2(nn.Module):
         self.o_proj = nn.Linear(self.value_dim, self.hidden_size, bias=False)
 
         self.apply(self._initialize_weights)
+
+        # Optional torch.compile backend. Best-effort: if induction fails (e.g.
+        # generic non-CPU/cuda devices), we transparently fall back to the plain
+        # chunk kernel so the signature stays identical.
+        self._compiled_chunk: Any = None
+        if self.compile_backend:
+            try:
+                self._compiled_chunk = torch.compile(
+                    torch_chunk_gdn2, dynamic=True
+                )
+            except Exception as e:  # noqa: BLE001 - compile is purely optional
+                _warn_fallback_once(f"torch.compile unavailable ({e})")
+                self._compiled_chunk = None
 
     def _initialize_weights(self, module: nn.Module) -> None:
         if getattr(module, "_is_hf_initialized", False):
@@ -552,7 +787,10 @@ class GatedDeltaNet2(nn.Module):
         g = (
             -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
             * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
-        ).to(hidden_states.dtype)
+        )
+        # The decay activation is always computed in fp32 (paper Sec. D.1); toggle
+        # whether it stays fp32 end-to-end or is cast to the model dtype.
+        g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
 
         # Gates
         b = self.b_proj(hidden_states).sigmoid()
@@ -575,13 +813,20 @@ class GatedDeltaNet2(nn.Module):
         if self.allow_neg_eigval:
             b = b * 2.0
 
-        # Dispatch kernel: Triton on CUDA if available, pure PyTorch otherwise
-        use_cuda_triton = (
-            hidden_states.is_cuda and torch.cuda.is_available() and _HAS_TRITON_OPS
+        # Resolve and dispatch the concrete backend. The GDN-2 maths below never
+        # branches on device; only this block performs the (auto) selection.
+        backend = resolve_gdn2_backend(
+            self.backend, training=self.training, seq_len=q_len
         )
         o: torch.Tensor | None = None
 
-        if use_cuda_triton:
+        if backend in ("triton", "fla"):
+            if not _HAS_TRITON_OPS:
+                raise RuntimeError(
+                    f"GDN-2 backend '{backend}' was requested but Triton/FLA is not installed. "
+                    "Install the optional CUDA dependencies (pip install 'qwendopamine[gpu]') "
+                    "or use backend='auto'/'torch'."
+                )
             try:
                 if mode == "chunk" and _triton_chunk_gdn2 is not None:
                     o, recurrent_state = _triton_chunk_gdn2(
@@ -616,16 +861,21 @@ class GatedDeltaNet2(nn.Module):
                         cu_seqlens=cu_seqlens,
                     )
                 else:
-                    use_cuda_triton = False
+                    raise RuntimeError("Triton ops present but no kernel is callable")
             except (RuntimeError, TypeError, ValueError, AttributeError, ImportError) as e:
-                _warn_fallback_once(f"Triton kernel failed ({e}), falling back to pure PyTorch")
-                use_cuda_triton = False
-                o = None
+                _warn_fallback_once(f"Triton kernel failed ({e}); falling back to pure PyTorch")
+                backend = "torch-chunk" if mode == "chunk" else "torch-recurrent"
 
-        if not use_cuda_triton:
-            _warn_fallback_once("Triton/CUDA unavailable or CPU tensor")
-            if mode == "chunk":
-                o, recurrent_state = torch_chunk_gdn2(
+        if o is None:
+            # Pure PyTorch / compiled path. `torch` follows the selected mode;
+            # `torch-chunk` and `compiled` always chunk; `torch-recurrent` always
+            # runs the token loop.
+            chunk_fn = torch_chunk_gdn2
+            if backend == "compiled" and self._compiled_chunk is not None:
+                chunk_fn = self._compiled_chunk
+
+            def _chunk_call() -> tuple[torch.Tensor, torch.Tensor | None]:
+                return chunk_fn(
                     q=q,
                     k=k,
                     v=v,
@@ -635,8 +885,12 @@ class GatedDeltaNet2(nn.Module):
                     initial_state=recurrent_state,
                     output_final_state=use_cache or False,
                     use_qk_l2norm_in_kernel=True,
+                    chunk_size=self.chunk_size,
                 )
-            else:
+
+            if backend in ("torch-chunk", "compiled"):
+                o, recurrent_state = _chunk_call()
+            elif backend == "torch-recurrent":
                 o, recurrent_state = torch_recurrent_gdn2(
                     q=q,
                     k=k,
@@ -648,6 +902,21 @@ class GatedDeltaNet2(nn.Module):
                     output_final_state=use_cache or False,
                     use_qk_l2norm_in_kernel=True,
                 )
+            else:  # backend == "torch": respect the selected mode
+                if mode == "fused_recurrent":
+                    o, recurrent_state = torch_recurrent_gdn2(
+                        q=q,
+                        k=k,
+                        v=v,
+                        g=g,
+                        b=b,
+                        w=w,
+                        initial_state=recurrent_state,
+                        output_final_state=use_cache or False,
+                        use_qk_l2norm_in_kernel=True,
+                    )
+                else:
+                    o, recurrent_state = _chunk_call()
 
         # Update cache
         if use_cache or past_key_values is not None:

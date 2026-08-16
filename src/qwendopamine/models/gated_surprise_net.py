@@ -1,38 +1,41 @@
-"""GatedSurpriseNet: Closed-Form Algebraic Fast-Weight Recurrence on Surprise Optimization.
+# Copyright (c) 2026, NVIDIA CORPORATION & QwenDopamine Authors.
+# Licensed under the Apache License 2.0 or MIT license.
+
+r"""GatedSurpriseNet: Precision-Weighted Surprise Fast-Weight Recurrence & Parallel Scan.
 
 Mathematical Formulation:
 --------------------------
-1. Fast-Weight Update View:
+1. Precision-Weighted Surprise Fast-Weight Update View:
    At each token step t, the memory S_t in R^{d_k x d_v} optimizes the local Surprise objective:
-       L_t(S) = 0.5 * ||S - S_bar_t||_F^2 - <S k_t, s_t>
+       L_t(S) = 0.5 * ||S - S_bar_t||_F^2 + 0.5 * < z_t - S^T (b_t * k_t), Pi_t (z_t - S^T (b_t * k_t)) >
    where:
        S_bar_t = Diag(alpha_t) S_{t-1}   (channel-wise decayed memory, alpha_t = exp(g_t))
        e_t = b_t * k_t                   (erase key with channel-wise erase gate b_t in [0, 1]^{d_k})
        z_t = w_t * v_t                   (write target with channel-wise write gate w_t in [0, 1]^{d_v})
        r_t = S_bar_t^T e_t               (memory read / predictive expectation)
-       u_t = sigma(W_u x_t)              (data-dependent surprise / precision gate in [0, 1]^{d_v})
-       s_t = u_t * (z_t - r_t)           (Surprise vector / precision-weighted prediction residual)
+       sigma_t^2 = softplus(W_sigma x_t) + eps  (token-level predicted variance/uncertainty metric)
+       Pi_t = Diag(pi_t) = Diag(1 / sigma_t^2)  (Surprise Precision Metric)
+       s_t = pi_t * (z_t - r_t)          (Surprise residual vector)
 
-   Setting the matrix gradient nabla_S L_t(S) = 0 yields the exact closed-form algebraic update:
-       S_t = S_bar_t + k_t s_t^T = S_bar_t + k_t (u_t * (z_t - S_bar_t^T e_t))^T
-   which in operator form on each value channel j in {1, ..., d_v} is:
-       S_{t, :, j} = (I - u_{t, j} k_t e_t^T) S_bar_{t, :, j} + k_t (u_{t, j} z_{t, j})
+   Setting the matrix gradient nabla_S L_t(S) = 0 yields the exact closed-form update:
+       S_t = S_bar_t + (b_t * k_t) s_t^T = S_bar_t + (b_t * k_t) (pi_t * (z_t - S_bar_t^T (b_t * k_t)))^T
+   which in operator form on the memory matrix is:
+       S_t = (I - (b_t * k_t) (pi_t * b_t * k_t)^T) S_bar_t + (b_t * k_t) (pi_t * w_t * v_t)^T
    and readout:
        o_t = S_t^T q_t.
 
-2. Chunkwise WY Algorithm with Channel-wise Decay & Surprise Inverse:
+2. Chunkwise Parallel WY Algorithm:
    Inside each chunk of length C:
        - Cumulative decay: G_r = sum_{i<=r} g_i, gamma_r = exp(G_r), gamma_C = exp(G_C)
-       - Normalized keys: k_bar_r = gamma_r^{-1} * k_r, e_bar_r = gamma_r * (b_r * k_r)
-       - Target matrix: Z = W * V
+       - Normalized keys: k_bar_r = gamma_r^{-1} * (b_r * k_r)
+       - Normalized erase keys: e_bar_r = gamma_r * (pi_r * b_r * k_r)
+       - Precision-scaled write target matrix: Z = pi * (w * v)
        - Strictly lower triangular matrix: T = tril(E_bar K_bar^T, -1) in R^{C x C}
-       - Channel-wise Surprise WY inverse system:
-         For each value channel j:
-             L^{(j)} = I_C + Diag(u_{:, j}) T   (unit lower triangular)
-             RHS_{:, j} = Diag(u_{:, j}) (Z_{:, j} - E_bar S_{0, :, j})
-             R_{:, j} = (L^{(j)})^{-1} RHS_{:, j}
+       - Single C x C unit lower triangular WY solve per head:
+             A = (I + T)^{-1} in R^{C x C}
+             R = A (Z - E_bar S_0)
        - End-of-chunk state:
-             S_C = Diag(gamma_C) S_0 + K_tail^T R, where (K_tail)_{r, :} = (gamma_C / gamma_r) * k_r
+             S_C = Diag(gamma_C) S_0 + K_bar^T R
        - Chunk output:
              O = Q_gamma S_0 + A_qk R, where Q_gamma = gamma * Q, A_qk = tril(Q_gamma K_bar^T, 0).
 """
@@ -40,6 +43,7 @@ Mathematical Formulation:
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -63,6 +67,51 @@ try:
 except ImportError:
     LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
 
+# Module-level single-warning guard for CPU fallback
+_WARNED_FALLBACKS: set[str] = set()
+
+
+def _warn_fallback_once(reason: str) -> None:
+    if reason not in _WARNED_FALLBACKS:
+        _WARNED_FALLBACKS.add(reason)
+        warnings.warn(
+            f"[surprise_net] Using pure PyTorch fallback: {reason}", stacklevel=2
+        )
+
+
+SURPRISE_NET_BACKENDS = (
+    "auto",
+    "torch",
+    "torch-chunk",
+    "torch-recurrent",
+    "compiled",
+    "triton",
+    "fla",
+)
+
+
+def resolve_surprise_net_backend(
+    requested: str,
+    *,
+    training: bool,
+    seq_len: int,
+) -> str:
+    r"""Resolve the concrete execution backend for a GatedSurpriseNet forward call."""
+    if requested not in SURPRISE_NET_BACKENDS:
+        raise ValueError(
+            f"Invalid GatedSurpriseNet backend '{requested}'. Valid backends: {list(SURPRISE_NET_BACKENDS)}"
+        )
+    if requested != "auto":
+        return requested
+
+    if not training and seq_len <= 1:
+        return "torch-recurrent"
+    if training:
+        return "torch-chunk"
+    if seq_len <= 64:
+        return "torch-recurrent"
+    return "torch-chunk"
+
 
 @dataclass
 class SurpriseRecurrenceState:
@@ -75,17 +124,7 @@ class SurpriseRecurrenceState:
 
 
 def l2_normalize_last(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    r"""l2_normalize_last(x, eps=1e-6) -> Tensor
-
-    Normalizes a tensor along its final dimension using L2 norm vector scaling.
-
-    Args:
-        x (Tensor): Input tensor of arbitrary shape :math:`(..., D)`.
-        eps (float, optional): Epsilon value to clamp minimum norm for numerical stability. Default: ``1e-6``.
-
-    Returns:
-        Tensor: L2-normalized tensor of same shape as ``x``.
-    """
+    r"""Normalizes a tensor along its final dimension using L2 norm vector scaling."""
     return x / x.norm(dim=-1, keepdim=True).clamp_min(eps)
 
 
@@ -96,24 +135,7 @@ def gaussian_nll_diag(
     eps: float = 1e-6,
     full: bool = False,
 ) -> torch.Tensor:
-    r"""gaussian_nll_diag(target, mean, var, eps=1e-6, full=False) -> Tensor
-
-    Computes the diagonal Gaussian Negative Log-Likelihood diagnostic loss.
-
-    .. math::
-        \mathcal{L} = \frac{1}{2} \sum_{i} \left( \log(\sigma_i^2) + \frac{(y_i - \mu_i)^2}{\sigma_i^2} \right)
-
-    Args:
-        target (Tensor): Ground truth target tensor.
-        mean (Tensor): Predicted mean vector tensor.
-        var (Tensor): Predicted variance vector tensor.
-        eps (float, optional): Epsilon threshold for variance clamping. Default: ``1e-6``.
-        full (bool, optional): If ``True``, includes the constant factor :math:`\frac{1}{2}\log(2\pi)`.
-            Default: ``False``.
-
-    Returns:
-        Tensor: Summed negative log-likelihood loss along the feature dimension.
-    """
+    r"""Computes the diagonal Gaussian Negative Log-Likelihood diagnostic loss."""
     var = var.clamp_min(eps)
     loss = 0.5 * (torch.log(var) + (target - mean).square() / var)
     if full:
@@ -124,17 +146,7 @@ def gaussian_nll_diag(
 def torch_get_unpad_data(
     attention_mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, int]:
-    r"""torch_get_unpad_data(attention_mask) -> (Tensor, Tensor, int)
-
-    Computes non-zero token indexing arrays and cumulative sequence lengths for unpadding 2D sequence masks.
-
-    Args:
-        attention_mask (Tensor): Binary mask tensor of shape :math:`(B, L)`.
-
-    Returns:
-        tuple[Tensor, Tensor, int]: Tuple containing non-zero indices, cumulative sequence length tensor,
-            and maximum sequence length integer in batch.
-    """
+    r"""Computes non-zero token indexing arrays and cumulative sequence lengths for unpadding."""
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = (
@@ -145,36 +157,14 @@ def torch_get_unpad_data(
 
 
 def torch_index_first_axis(x: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
-    r"""torch_index_first_axis(x, indices) -> Tensor
-
-    Indexes the outer axis of a multi-dimensional tensor using flat 1D indices.
-
-    Args:
-        x (Tensor): Input tensor.
-        indices (Tensor): Flat index tensor.
-
-    Returns:
-        Tensor: Gathered tensor sliced along axis 0.
-    """
+    r"""Indexes the outer axis of a multi-dimensional tensor using flat 1D indices."""
     return x[indices]
 
 
 def torch_pad_input(
     hidden_states: torch.Tensor, indices: torch.Tensor, batch_size: int, seq_len: int
 ) -> torch.Tensor:
-    r"""torch_pad_input(hidden_states, indices, batch_size, seq_len) -> Tensor
-
-    Pads a 1D unpadded sequence tensor back to 3D batch shape :math:`(B, L, D)`.
-
-    Args:
-        hidden_states (Tensor): Flattened non-padded sequence tensor.
-        indices (Tensor): Original token index tensor.
-        batch_size (int): Target batch size :math:`B`.
-        seq_len (int): Target sequence length :math:`L`.
-
-    Returns:
-        Tensor: Padded 3D sequence tensor.
-    """
+    r"""Pads a 1D unpadded sequence tensor back to 3D batch shape :math:`(B, L, D)`."""
     output_shape = (batch_size * seq_len,) + hidden_states.shape[1:]
     padded = torch.zeros(
         output_shape, dtype=hidden_states.dtype, device=hidden_states.device
@@ -235,8 +225,9 @@ class SurpriseMemory(nn.Module):
         b_t: torch.Tensor,
         w_t: torch.Tensor,
         u_t: torch.Tensor | None = None,
+        sigma_sq_t: torch.Tensor | None = None,
     ) -> tuple[SurpriseRecurrenceState, torch.Tensor, torch.Tensor]:
-        r"""Compute one step of closed-form algebraic surprise fast-weight recurrence."""
+        r"""Compute one step of precision-weighted surprise fast-weight recurrence."""
         out_dtype = q_t.dtype
         q_f = q_t.float()
         k_f = k_t.float()
@@ -244,7 +235,13 @@ class SurpriseMemory(nn.Module):
         g_f = g_t.float()
         b_f = b_t.float()
         w_f = w_t.float()
-        u_f = u_t.float() if u_t is not None else torch.ones_like(w_f)
+
+        if sigma_sq_t is not None:
+            pi_t = 1.0 / (sigma_sq_t.float().clamp_min(1e-6))
+        elif u_t is not None:
+            pi_t = u_t.float()
+        else:
+            pi_t = torch.ones_like(w_f)
 
         alpha_t = torch.exp(g_f)
         S_bar = alpha_t.unsqueeze(-1) * state.memory.float()
@@ -253,12 +250,16 @@ class SurpriseMemory(nn.Module):
         target_mu = w_f * v_f
 
         pred_mu = torch.einsum("bhkv,bhk->bhv", S_bar, erase_key)
-        surprise_residual = u_f * (target_mu - pred_mu)
+        surprise_residual = pi_t * (target_mu - pred_mu)
 
-        memory_new = S_bar + torch.einsum("bhk,bhv->bhkv", k_f, surprise_residual)
+        memory_new = S_bar + torch.einsum("bhk,bhv->bhkv", erase_key, surprise_residual)
         out_t = torch.einsum("bhkv,bhk->bhv", memory_new, q_f).to(out_dtype)
 
-        pred_var = F.softplus(torch.log1p(pred_mu.square())) + self.nll_var_eps
+        pred_var = (
+            sigma_sq_t.float()
+            if sigma_sq_t is not None
+            else (F.softplus(torch.log1p(pred_mu.square())) + self.nll_var_eps)
+        )
         nll_t = gaussian_nll_diag(
             target=target_mu,
             mean=pred_mu,
@@ -279,6 +280,7 @@ class SurpriseMemory(nn.Module):
         b: torch.Tensor,
         w: torch.Tensor,
         u: torch.Tensor | None = None,
+        sigma_sq: torch.Tensor | None = None,
         initial_state: SurpriseRecurrenceState | None = None,
         detach_state_every_step: bool = False,
     ) -> tuple[torch.Tensor, SurpriseRecurrenceState, torch.Tensor]:
@@ -295,8 +297,9 @@ class SurpriseMemory(nn.Module):
 
         for i in range(seq_len):
             u_i = u[:, i] if u is not None else None
+            sig_i = sigma_sq[:, i] if sigma_sq is not None else None
             state, out_i, nll_i = self.one_step(
-                state, q[:, i], k[:, i], v[:, i], g[:, i], b[:, i], w[:, i], u_i
+                state, q[:, i], k[:, i], v[:, i], g[:, i], b[:, i], w[:, i], u_i, sig_i
             )
             outputs.append(out_i)
             losses.append(nll_i)
@@ -314,10 +317,11 @@ class SurpriseMemory(nn.Module):
         b: torch.Tensor,
         w: torch.Tensor,
         u: torch.Tensor | None = None,
+        sigma_sq: torch.Tensor | None = None,
         chunk_size: int = 128,
         initial_state: SurpriseRecurrenceState | None = None,
     ) -> tuple[torch.Tensor, SurpriseRecurrenceState, torch.Tensor]:
-        r"""Chunkwise WY algorithm for Surprise recurrence with channel-wise decay and WY inverse."""
+        r"""Chunkwise WY algorithm for Precision-Weighted Surprise recurrence."""
         bs, ts = k.shape[:2]
         out_dtype = q.dtype
 
@@ -327,7 +331,13 @@ class SurpriseMemory(nn.Module):
         g_f = g.float()
         b_f = b.float()
         w_f = w.float()
-        u_f = u.float() if u is not None else torch.ones_like(w_f)
+
+        if sigma_sq is not None:
+            pi_f = 1.0 / (sigma_sq.float().clamp_min(1e-6))
+        elif u is not None:
+            pi_f = u.float()
+        else:
+            pi_f = torch.ones_like(w_f)
 
         state = (
             self.initial_state(bs, device=k.device, dtype=torch.float32)
@@ -349,7 +359,8 @@ class SurpriseMemory(nn.Module):
             gc = g_f[:, start:end]
             bc = b_f[:, start:end]
             wc = w_f[:, start:end]
-            uc = u_f[:, start:end]
+            pic = pi_f[:, start:end]
+            sigc = sigma_sq[:, start:end] if sigma_sq is not None else None
 
             S_0 = S_chunk
 
@@ -357,36 +368,39 @@ class SurpriseMemory(nn.Module):
             gamma = torch.exp(G)
             gamma_last = gamma[:, -1]
 
-            k_bar = kc / gamma.clamp_min(1e-12)
-            e_bar = gamma * (bc * kc)
+            ekc = bc * kc
+            kbar = ekc / gamma.clamp_min(1e-12)
+            ebar = gamma * ekc
             Zc = wc * vc
 
-            E_mat = e_bar.permute(0, 2, 1, 3)
-            K_mat = k_bar.permute(0, 2, 1, 3)
+            E_mat = ebar.permute(0, 2, 1, 3)
+            K_mat = kbar.permute(0, 2, 1, 3)
 
             T_mat = torch.tril(
                 torch.matmul(E_mat, K_mat.transpose(-1, -2)), diagonal=-1
             )
 
-            u_mat = uc.permute(0, 2, 3, 1)
-            u_T = u_mat.unsqueeze(-1) * T_mat.unsqueeze(2)
-            eye = torch.eye(c_len, device=q.device, dtype=torch.float32).view(
-                1, 1, 1, c_len, c_len
-            )
-            L = eye + u_T
-
             S_0_v = S_0.permute(0, 1, 3, 2)
             ES0 = torch.matmul(S_0_v, E_mat.transpose(-1, -2))
             Z_mat = Zc.permute(0, 2, 3, 1)
 
-            RHS = u_mat * (Z_mat - ES0)
+            R_raw = Z_mat - ES0
+            Pi_mat = pic.permute(0, 2, 3, 1)
+            RHS = (Pi_mat * R_raw).unsqueeze(-1)
+
+            T_scaled = Pi_mat.unsqueeze(-1) * T_mat.unsqueeze(2)
+            eye = torch.eye(c_len, device=q.device, dtype=torch.float32).view(
+                1, 1, 1, c_len, c_len
+            )
+            L = eye + T_scaled
+
             R_vec = torch.linalg.solve_triangular(
-                L, RHS.unsqueeze(-1), upper=False
+                L, RHS, upper=False
             ).squeeze(-1)
             R = R_vec.permute(0, 1, 3, 2)
 
             gamma_last_exp = gamma_last.unsqueeze(1)
-            K_tail = ((gamma_last_exp / gamma.clamp_min(1e-12)) * kc).permute(
+            K_tail = ((gamma_last_exp / gamma.clamp_min(1e-12)) * ekc).permute(
                 0, 2, 1, 3
             )
             S_chunk = gamma_last.unsqueeze(-1) * S_0 + torch.matmul(
@@ -403,11 +417,16 @@ class SurpriseMemory(nn.Module):
             O_chunk = (out_intra_prev + out_intra_new).permute(0, 2, 1, 3)
             outputs.append(O_chunk.to(out_dtype))
 
-            TR = torch.matmul(T_mat, R)
-            pred_mu_c = (ES0.permute(0, 1, 3, 2) + TR).permute(0, 2, 1, 3)
-            pred_var_c = F.softplus(torch.log1p(pred_mu_c.square())) + self.nll_var_eps
+            TR_vec = torch.matmul(R.permute(0, 1, 3, 2), T_mat.transpose(-1, -2))
+            pred_mu_c = (ES0 + TR_vec).permute(0, 3, 1, 2)
+            target_mu_c = wc * vc
+            pred_var_c = (
+                sigc
+                if sigc is not None
+                else (F.softplus(torch.log1p(pred_mu_c.square())) + self.nll_var_eps)
+            )
             nll_c = gaussian_nll_diag(
-                target=Zc,
+                target=target_mu_c,
                 mean=pred_mu_c,
                 var=pred_var_c,
                 eps=self.nll_var_eps,
@@ -424,10 +443,10 @@ SurpriseMemoryAdam = SurpriseMemory
 
 
 class GatedSurpriseNet(nn.Module):
-    r"""GatedSurpriseNet token mixer using closed-form algebraic surprise fast-weight recurrence.
+    r"""GatedSurpriseNet token mixer using precision-weighted surprise fast-weight recurrence.
 
     This module provides a drop-in token mixer matching QwenDopamine transformer blocks
-    while implementing the algebraic closed-form Surprise gradient descent and chunkwise WY algorithm.
+    implementing local Surprise optimization and precision-weighted fast-weight memory updates.
     """
 
     def __init__(
@@ -449,6 +468,11 @@ class GatedSurpriseNet(nn.Module):
         nll_full: bool = False,
         learnable_init_state: bool = False,
         train_chunk_size: int = 128,
+        backend: str = "auto",
+        compile_backend: bool = False,
+        max_write_bound: float = 1.50,
+        max_erase_bound: float = 3.00,
+        max_precision_bound: float = 2.00,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -476,7 +500,14 @@ class GatedSurpriseNet(nn.Module):
             learnable_init_state = getattr(
                 cfg, "learnable_init_state", learnable_init_state
             )
-            train_chunk_size = getattr(cfg, "train_chunk_size", train_chunk_size)
+            train_chunk_size = getattr(
+                cfg, "train_chunk_size", getattr(cfg, "chunk_size", train_chunk_size)
+            )
+            backend = getattr(cfg, "backend", backend)
+            compile_backend = getattr(cfg, "compile_backend", compile_backend)
+            max_write_bound = getattr(cfg, "max_write_bound", max_write_bound)
+            max_erase_bound = getattr(cfg, "max_erase_bound", max_erase_bound)
+            max_precision_bound = getattr(cfg, "max_precision_bound", max_precision_bound)
         elif isinstance(hidden_size_or_config, dict):
             cfg_dict = hidden_size_or_config
             hidden_size = cfg_dict.get("hidden_size", 2048)
@@ -493,6 +524,11 @@ class GatedSurpriseNet(nn.Module):
                 "learnable_init_state", learnable_init_state
             )
             train_chunk_size = cfg_dict.get("train_chunk_size", train_chunk_size)
+            backend = cfg_dict.get("backend", backend)
+            compile_backend = cfg_dict.get("compile_backend", compile_backend)
+            max_write_bound = cfg_dict.get("max_write_bound", max_write_bound)
+            max_erase_bound = cfg_dict.get("max_erase_bound", max_erase_bound)
+            max_precision_bound = cfg_dict.get("max_precision_bound", max_precision_bound)
         elif hidden_size is None:
             hidden_size = int(hidden_size_or_config)
 
@@ -512,6 +548,11 @@ class GatedSurpriseNet(nn.Module):
         self.nll_full = nll_full
         self.learnable_init_state = learnable_init_state
         self.train_chunk_size = train_chunk_size
+        self.backend = backend
+        self.compile_backend = compile_backend
+        self.max_write_bound = float(max_write_bound)
+        self.max_erase_bound = float(max_erase_bound)
+        self.max_precision_bound = float(max_precision_bound)
 
         self.mode = mode
         assert mode in ["chunk", "fused_recurrent"], f"Not supported mode `{mode}`."
@@ -566,7 +607,12 @@ class GatedSurpriseNet(nn.Module):
         )
         self.b_proj = nn.Linear(self.hidden_size, self.key_dim, bias=False)
         self.w_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
-        self.u_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
+
+        # Variance / Uncertainty projection for precision weighting
+        self.var_proj = nn.Sequential(
+            nn.Linear(self.hidden_size, self.head_v_dim, bias=False),
+            nn.Linear(self.head_v_dim, self.value_dim, bias=True),
+        )
 
         self.A_log = nn.Parameter(
             torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
@@ -606,12 +652,23 @@ class GatedSurpriseNet(nn.Module):
             nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
+        elif isinstance(module, RMSNormGated):
+            nn.init.ones_(module.weight)
         cast(Any, module)._is_hf_initialized = True
+
+        # Initialize var_proj final linear bias to 0.0 so initial precision pi ~ 1.0
+        # (since max_precision_bound * sigmoid(0) = 2.0 * 0.5 = 1.0)
+        if (
+            hasattr(self, "var_proj")
+            and isinstance(self.var_proj[-1], nn.Linear)
+            and self.var_proj[-1].bias is not None
+        ):
+            nn.init.zeros_(self.var_proj[-1].bias)
 
     def _get_cache(
         self, past_key_values: Cache | dict[str, Any] | None
     ) -> tuple[
-        SurpriseRecurrenceState | None,
+        SurpriseRecurrenceState | torch.Tensor | None,
         tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None,
     ]:
         if past_key_values is None:
@@ -622,12 +679,31 @@ class GatedSurpriseNet(nn.Module):
             if self.layer_idx is not None and self.layer_idx < len(layers):
                 layer_cache = layers[self.layer_idx]
                 rec_states = getattr(layer_cache, "recurrent_states", None)
-                rec_state = (
-                    rec_states[0]
-                    if rec_states is not None and len(rec_states) > 0
-                    else None
-                )
-                conv_state = getattr(layer_cache, "conv_states", None)
+                if rec_states is None:
+                    rec_state = getattr(layer_cache, "recurrent_state", None)
+                elif isinstance(rec_states, torch.Tensor):
+                    rec_state = rec_states
+                elif isinstance(rec_states, dict):
+                    rec_state = rec_states.get(0)
+                elif isinstance(rec_states, (list, tuple)) and len(rec_states) > 0:
+                    rec_state = rec_states[0]
+                else:
+                    rec_state = None
+
+                conv_states = getattr(layer_cache, "conv_states", None)
+                if conv_states is None:
+                    conv_state = getattr(layer_cache, "conv_state", None)
+                elif isinstance(conv_states, dict):
+                    conv_state = (
+                        conv_states.get(0),
+                        conv_states.get(1),
+                        conv_states.get(2),
+                    )
+                elif isinstance(conv_states, (list, tuple)) and len(conv_states) == 3:
+                    conv_state = (conv_states[0], conv_states[1], conv_states[2])
+                else:
+                    conv_state = None
+
                 return rec_state, conv_state
             return None, None
 
@@ -641,12 +717,18 @@ class GatedSurpriseNet(nn.Module):
     def _update_cache(
         self,
         past_key_values: Cache | dict[str, Any] | None,
-        recurrent_state: SurpriseRecurrenceState | None,
+        recurrent_state: SurpriseRecurrenceState | torch.Tensor | None,
         conv_state: tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
         | None,
     ) -> None:
         if past_key_values is None:
             return
+
+        state_tensor = (
+            recurrent_state.memory
+            if isinstance(recurrent_state, SurpriseRecurrenceState)
+            else recurrent_state
+        )
 
         if self.layer_idx is not None and isinstance(past_key_values, Cache):
             layers = getattr(past_key_values, "layers", [])
@@ -660,19 +742,41 @@ class GatedSurpriseNet(nn.Module):
                 if (
                     is_recurrent_layer
                     and hasattr(past_key_values, "update_recurrent_state")
-                    and recurrent_state is not None
+                    and state_tensor is not None
                 ):
-                    past_key_values.update_recurrent_state(
-                        cast(Any, recurrent_state), self.layer_idx
-                    )
+                    try:
+                        past_key_values.update_recurrent_state(
+                            state_tensor, self.layer_idx
+                        )
+                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                        _warn_fallback_once(f"update_recurrent_state failed: {e}")
+                elif state_tensor is not None:
+                    rec_dict = getattr(layer_cache, "recurrent_states", None)
+                    if isinstance(rec_dict, dict):
+                        rec_dict[0] = state_tensor
+                    elif hasattr(layer_cache, "recurrent_state"):
+                        layer_cache.recurrent_state = state_tensor
+
                 if (
                     is_recurrent_layer
                     and hasattr(past_key_values, "update_conv_state")
                     and conv_state is not None
                 ):
-                    past_key_values.update_conv_state(
-                        cast(Any, conv_state), self.layer_idx
-                    )
+                    try:
+                        past_key_values.update_conv_state(
+                            cast(Any, conv_state), self.layer_idx
+                        )
+                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                        _warn_fallback_once(f"update_conv_state failed: {e}")
+                elif conv_state is not None:
+                    conv_dict = getattr(layer_cache, "conv_states", None)
+                    if isinstance(conv_dict, dict):
+                        conv_dict[0] = conv_state[0]
+                        conv_dict[1] = conv_state[1]
+                        conv_dict[2] = conv_state[2]
+                    elif hasattr(layer_cache, "conv_state"):
+                        layer_cache.conv_state = conv_state
+
         elif isinstance(past_key_values, dict):
             if recurrent_state is not None:
                 past_key_values["recurrent_state"] = recurrent_state
@@ -730,9 +834,10 @@ class GatedSurpriseNet(nn.Module):
             -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
             * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
         ).to(hidden_states.dtype)
-        b = self.b_proj(hidden_states).sigmoid()
-        w = self.w_proj(hidden_states).sigmoid()
-        u = self.u_proj(hidden_states).sigmoid()
+        b = self.max_erase_bound * self.b_proj(hidden_states).sigmoid()
+        w = self.max_write_bound * self.w_proj(hidden_states).sigmoid()
+        pi = self.max_precision_bound * self.var_proj(hidden_states).sigmoid()
+        sigma_sq = 1.0 / pi.clamp_min(1e-6)
 
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
         k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
@@ -740,7 +845,7 @@ class GatedSurpriseNet(nn.Module):
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
         b_gate = rearrange(b, "... (h d) -> ... h d", d=self.head_k_dim)
         w_gate = rearrange(w, "... (h d) -> ... h d", d=self.head_v_dim)
-        u_gate = rearrange(u, "... (h d) -> ... h d", d=self.head_v_dim)
+        sigma_sq = rearrange(sigma_sq, "... (h d) -> ... h d", d=self.head_v_dim)
 
         q = l2_normalize_last(q)
         k = l2_normalize_last(k)
@@ -753,12 +858,11 @@ class GatedSurpriseNet(nn.Module):
 
         if self.allow_neg_eigval:
             b_gate = b_gate * 2.0
-            u_gate = u_gate * 2.0
 
         new_conv_states = (
             (new_conv_q, new_conv_k, new_conv_v) if self.use_short_conv else None
         )
-        return q, k, v, g, b_gate, w_gate, u_gate, new_conv_states
+        return q, k, v, g, b_gate, w_gate, sigma_sq, new_conv_states
 
     def forward(
         self,
@@ -772,8 +876,7 @@ class GatedSurpriseNet(nn.Module):
         if attention_mask is not None:
             assert len(attention_mask.shape) == 2, (
                 "Expected attention_mask as a 0-1 matrix with shape [batch_size, seq_len] "
-                "for padding purposes (0 indicating padding). "
-                "Arbitrary attention masks of shape [batch_size, seq_len, seq_len] are not allowed."
+                "for padding purposes (0 indicating padding)."
             )
 
         batch_size, q_len, _ = hidden_states.shape
@@ -786,49 +889,93 @@ class GatedSurpriseNet(nn.Module):
                 rearrange(hidden_states, "b s ... -> (b s) ..."), indices
             ).unsqueeze(0)
 
-        recurrent_state, conv_states = self._get_cache(past_key_values)
+        raw_rec_state, conv_states = self._get_cache(past_key_values)
+        if isinstance(raw_rec_state, SurpriseRecurrenceState):
+            recurrent_state = raw_rec_state
+        elif isinstance(raw_rec_state, torch.Tensor):
+            recurrent_state = SurpriseRecurrenceState(memory=raw_rec_state)
+        else:
+            recurrent_state = None
+
         should_use_cache = bool(use_cache or past_key_values is not None)
 
-        q, k, v, g, b_gate, w_gate, u_gate, new_conv_states = self._project_inputs(
+        q, k, v, g, b_gate, w_gate, sigma_sq, new_conv_states = self._project_inputs(
             hidden_states,
             cu_seqlens=cu_seqlens,
             use_cache=should_use_cache,
             conv_states=conv_states,
         )
 
-        if self.training:
-            mode = "chunk"
-        else:
-            mode = (
-                "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
-            )
+        mode = resolve_surprise_net_backend(
+            self.backend, training=self.training, seq_len=q_len
+        )
 
-        if mode == "chunk":
-            out, final_recurrent_state, _ = self.memory.chunk_parallel_training_scan(
-                q=q,
-                k=k,
-                v=v,
-                g=g,
-                b=b_gate,
-                w=w_gate,
-                u=u_gate,
-                chunk_size=self.train_chunk_size,
-                initial_state=recurrent_state,
-            )
-        elif mode == "fused_recurrent":
-            out, final_recurrent_state, _ = self.memory.serial_scan(
-                q=q,
-                k=k,
-                v=v,
-                g=g,
-                b=b_gate,
-                w=w_gate,
-                u=u_gate,
-                initial_state=recurrent_state,
-                detach_state_every_step=False,
-            )
-        else:
-            raise NotImplementedError(f"Not supported mode `{mode}`.")
+        out: torch.Tensor | None = None
+        final_recurrent_state: SurpriseRecurrenceState | None = None
+
+        if mode in ("triton", "fla"):
+            try:
+                from qwendopamine.models.gdn2.gdn2_ops.chunk_gdn2 import (
+                    chunk_gdn2 as _triton_chunk_gdn2,
+                )
+
+                # Precision-weighted write gate w_eff = (1 / sigma_sq) * w
+                pi = 1.0 / sigma_sq.float().clamp_min(1e-6)
+                w_eff = (pi * w_gate).to(v.dtype)
+                init_mem = (
+                    recurrent_state.memory if recurrent_state is not None else None
+                )
+                out, final_mem = _triton_chunk_gdn2(
+                    q=q,
+                    k=k,
+                    v=v,
+                    g=g,
+                    b=b_gate,
+                    w=w_eff,
+                    A_log=self.A_log,
+                    dt_bias=self.dt_bias,
+                    initial_state=init_mem,
+                    output_final_state=should_use_cache,
+                    use_qk_l2norm_in_kernel=True,
+                    use_gate_in_kernel=False,
+                    cu_seqlens=cu_seqlens,
+                )
+                final_recurrent_state = (
+                    SurpriseRecurrenceState(memory=final_mem)
+                    if final_mem is not None
+                    else None
+                )
+            except Exception as e:  # noqa: BLE001
+                _warn_fallback_once(f"Triton kernel failed ({e}); falling back to pure PyTorch")
+                mode = "torch-chunk" if self.training else "torch-recurrent"
+
+        if mode not in ("triton", "fla"):
+            if mode in ("torch-chunk", "compiled", "auto"):
+                out, final_recurrent_state, _ = (
+                    self.memory.chunk_parallel_training_scan(
+                        q=q,
+                        k=k,
+                        v=v,
+                        g=g,
+                        b=b_gate,
+                        w=w_gate,
+                        sigma_sq=sigma_sq,
+                        chunk_size=self.train_chunk_size,
+                        initial_state=recurrent_state,
+                    )
+                )
+            else:
+                out, final_recurrent_state, _ = self.memory.serial_scan(
+                    q=q,
+                    k=k,
+                    v=v,
+                    g=g,
+                    b=b_gate,
+                    w=w_gate,
+                    sigma_sq=sigma_sq,
+                    initial_state=recurrent_state,
+                    detach_state_every_step=False,
+                )
 
         if should_use_cache:
             self._update_cache(
@@ -840,8 +987,9 @@ class GatedSurpriseNet(nn.Module):
         gate = rearrange(
             self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
         )
+        assert out is not None
         out = self.o_norm(out, gate)
-        out = rearrange(out, "b t h d -> b t (h d)")
+        out = rearrange(out, "... h d -> ... (h d)")
         out = self.o_proj(out)
 
         if attention_mask is not None and indices is not None:

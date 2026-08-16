@@ -7,73 +7,50 @@ import torch
 from torch import nn
 
 from qwendopamine.models.blocks.reward import (
-    AdaLN,
-    FourierFeatures,
+    AsinhScaler,
     LearnableFourierFeatures,
-    PositionalEncoding,
     RewardEncoder,
+    TokenWiseFiLM,
 )
 
-# --- AdaLN Tests ---
+# --- TokenWiseFiLM Tests ---
 
 
-def test_when_adaln_initialized_then_has_correct_norm_dimension() -> None:
-    adaln = AdaLN(dim=64, eps=1e-5)
-    assert adaln.dim == 64
-    assert isinstance(adaln.norm, nn.RMSNorm)
-    assert adaln.norm.eps == 1e-5
+def test_when_token_wise_film_initialized_then_has_correct_dimension() -> None:
+    film = TokenWiseFiLM(dim=64)
+    assert film.dim == 64
+    assert film.cond_dim == 64
 
 
-def test_when_adaln_forward_with_unit_scale_and_zero_shift_then_matches_rmsnorm() -> None:
+def test_when_token_wise_film_forward_with_unit_scale_and_zero_shift_then_matches_modulation() -> None:
     dim = 16
-    adaln = AdaLN(dim=dim)
+    film = TokenWiseFiLM(dim=dim)
     x = torch.randn(2, 4, dim)
+    cond = torch.randn(2, 4, dim)
 
-    # cond contains [gamma, beta] concatenated along dim=-1
-    # gamma = 1.0, beta = 0.0
-    gamma = torch.ones(2, 4, dim)
-    beta = torch.zeros(2, 4, dim)
-    cond = torch.cat([gamma, beta], dim=-1)
-
-    output = adaln(x, cond)
-    expected = adaln.norm(x)
-
-    torch.testing.assert_close(output, expected)
+    output = film(x, cond)
+    assert output.shape == (2, 4, dim)
+    assert not torch.isnan(output).any()
 
 
-def test_when_adaln_forward_with_scale_and_shift_then_applies_linear_modulation() -> None:
-    dim = 8
-    adaln = AdaLN(dim=dim)
-    x = torch.randn(2, 3, dim)
-
-    scale = torch.full((2, 3, dim), 2.0)
-    shift = torch.full((2, 3, dim), 3.0)
-    cond = torch.cat([scale, shift], dim=-1)
-
-    output = adaln(x, cond)
-    expected = adaln.norm(x) * 2.0 + 3.0
-
-    torch.testing.assert_close(output, expected)
-
-
-def test_when_adaln_receives_2d_cond_then_broadcasts_over_sequence_dimension() -> None:
+def test_when_token_wise_film_receives_2d_cond_then_broadcasts_over_sequence_dimension() -> None:
     dim = 16
-    adaln = AdaLN(dim=dim)
+    film = TokenWiseFiLM(dim=dim)
     x = torch.randn(3, 5, dim)
-    cond_2d = torch.randn(3, 2 * dim)
+    cond_2d = torch.randn(3, dim)
 
-    output = adaln(x, cond_2d)
+    output = film(x, cond_2d)
     assert output.shape == (3, 5, dim)
     assert not torch.isnan(output).any()
 
 
-def test_when_adaln_forward_backward_then_computes_gradients_for_x_and_cond() -> None:
+def test_when_token_wise_film_forward_backward_then_computes_gradients_for_x_and_cond() -> None:
     dim = 16
-    adaln = AdaLN(dim=dim)
+    film = TokenWiseFiLM(dim=dim)
     x = torch.randn(2, 4, dim, requires_grad=True)
-    cond = torch.randn(2, 4, 2 * dim, requires_grad=True)
+    cond = torch.randn(2, 4, dim, requires_grad=True)
 
-    out = adaln(x, cond)
+    out = film(x, cond)
     loss = out.sum()
     loss.backward()
 
@@ -86,13 +63,13 @@ def test_when_adaln_forward_backward_then_computes_gradients_for_x_and_cond() ->
 # --- LearnableFourierFeatures Tests ---
 
 
-def test_when_learnable_fourier_features_initialized_with_odd_f_dim_then_raises_assertion() -> None:
-    with pytest.raises(AssertionError, match="must be divisible by 2"):
+def test_when_learnable_fourier_features_initialized_with_odd_f_dim_then_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="divisible by 2"):
         LearnableFourierFeatures(pos_dim=4, f_dim=15, h_dim=32, d_dim=64)
 
 
-def test_when_learnable_fourier_features_initialized_with_incompatible_g_dim_then_raises_assertion() -> None:
-    with pytest.raises(AssertionError, match="must be divisible by the number of G dimension"):
+def test_when_learnable_fourier_features_initialized_with_incompatible_g_dim_then_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="divisible by g_dim"):
         LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=5)
 
 
@@ -129,59 +106,19 @@ def test_when_learnable_fourier_features_backward_then_updates_parameters() -> N
         assert param.grad is not None
 
 
-# --- FourierFeatures Tests ---
+# --- AsinhScaler Tests ---
 
 
-def test_when_fourier_features_initialized_with_odd_f_dim_then_raises_assertion() -> None:
-    with pytest.raises(AssertionError, match="must be divisible by 2"):
-        FourierFeatures(pos_dim=2, f_dim=7)
+def test_when_asinh_scaler_forward_called_then_scales_heavy_tailed_features() -> None:
+    scaler = AsinhScaler(dim=16)
+    x = torch.randn(2, 5, 16) * 100.0
+    out = scaler(x)
+    assert out.shape == (2, 5, 16)
+    assert not torch.isnan(out).any()
+    assert (out.abs() < x.abs()).all()
 
 
-def test_when_fourier_features_train_false_then_registers_non_trainable_buffer() -> None:
-    ff = FourierFeatures(pos_dim=2, f_dim=16, train=False)
-    assert hasattr(ff, "B")
-    assert not isinstance(ff.B, nn.Parameter)
-    assert "B" in dict(ff.named_buffers())
-
-
-def test_when_fourier_features_train_true_then_registers_trainable_parameter() -> None:
-    ff = FourierFeatures(pos_dim=2, f_dim=16, train=True)
-    assert isinstance(ff.B, nn.Parameter)
-    assert ff.B.requires_grad
-
-
-def test_when_fourier_features_forward_with_higher_dim_input_then_encodes_correctly() -> None:
-    ff = FourierFeatures(pos_dim=3, f_dim=16, include_input=True)
-    pos_4d = torch.randn(2, 4, 4, 3)  # (B, H, W, pos_dim)
-    enc = ff(pos_4d)
-    assert enc.shape == (2, 4, 4, 16 + 3)
-    assert not torch.isnan(enc).any()
-
-
-# --- PositionalEncoding Tests ---
-
-
-def test_when_positional_encoding_initialized_with_odd_enc_dim_then_raises_assertion() -> None:
-    with pytest.raises(AssertionError, match="must be even"):
-        PositionalEncoding(pos_dim=1, enc_dim=7)
-
-
-def test_when_positional_encoding_forward_without_include_input_then_matches_enc_dim() -> None:
-    pe = PositionalEncoding(pos_dim=2, enc_dim=16, include_input=False)
-    pos = torch.randn(2, 6, 2)
-    enc = pe(pos)
-    assert enc.shape == (2, 6, 16)
-    assert not torch.isnan(enc).any()
-
-
-def test_when_positional_encoding_forward_with_include_input_then_concatenates_pos() -> None:
-    pe = PositionalEncoding(pos_dim=2, enc_dim=16, include_input=True)
-    pos = torch.randn(2, 6, 2)
-    enc = pe(pos)
-    assert enc.shape == (2, 6, 16 + 2)
-
-
-# --- RewardEncoder Tests ---
+# --- LearnableFourierFeatures Tests ---
 
 
 def test_when_reward_encoder_same_dim_then_uses_identity_projection() -> None:

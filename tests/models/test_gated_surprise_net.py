@@ -112,6 +112,15 @@ def test_when_gated_surprise_net_backward_then_gradients_flow() -> None:
             assert param.grad is not None, f"Parameter {name} has no gradient"
 
 
+def test_when_gated_surprise_net_initialized_then_has_var_proj_with_zero_bias_for_unit_precision() -> None:
+    layer = GatedSurpriseNetAdam(hidden_size=64, num_heads=2, head_dim=32)
+    assert hasattr(layer, "var_proj")
+    final_linear = layer.var_proj[-1]
+    assert isinstance(final_linear, torch.nn.Linear)
+    assert final_linear.bias is not None
+    assert torch.allclose(final_linear.bias, torch.zeros_like(final_linear.bias))
+
+
 def test_when_surprise_memory_adam_scans_then_serial_and_chunk_match() -> None:
     memory = SurpriseMemoryAdam(num_heads=2, head_k_dim=16, head_v_dim=16)
     b, t, h, d_k, d_v = 2, 16, 2, 16, 16

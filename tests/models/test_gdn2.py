@@ -65,41 +65,141 @@ def test_when_gdn2_backward_then_gradients_flow_to_parameters() -> None:
             assert param.grad is not None, f"Parameter {name} has no gradient"
 
 
-def test_when_torch_recurrent_gdn2_executed_then_matches_expected_output_shape() -> (
-    None
-):
-    b, t, h, d_k, d_v = 2, 8, 4, 16, 16
+def test_when_torch_backends_then_outputs_are_equivalent() -> None:
+    """All pure-torch / compiled GDN-2 backends must agree numerically."""
+    torch.manual_seed(0)
+    made: dict[str, GatedDeltaNet2] = {}
+    for be in ("torch", "torch-chunk", "torch-recurrent"):
+        made[be] = GatedDeltaNet2(
+            hidden_size=64,
+            num_heads=2,
+            head_dim=32,
+            backend=be,
+            chunk_size=8,
+            use_short_conv=False,
+        )
+        made[be].eval()
+    # Copy weights from a reference so the only difference is the backend.
+    ref = made["torch"]
+    for be, layer in made.items():
+        if be != "torch":
+            layer.load_state_dict(ref.state_dict())
+
+    x = torch.randn(1, 16, 64)
+    with torch.no_grad():
+        out_torch = made["torch"](x)[0]
+        for be in ("torch-chunk", "torch-recurrent"):
+            out_be = made[be](x)[0]
+            assert torch.allclose(out_torch, out_be, atol=1e-5), be
+
+
+def test_when_invalid_backend_then_raises() -> None:
+    with pytest.raises(ValueError):
+        GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, backend="nope")
+
+
+def test_when_fp32_decay_then_forward_is_finite_and_shape_preserved() -> None:
+    layer = GatedDeltaNet2(
+        hidden_size=64, num_heads=2, head_dim=32, fp32_decay=True, chunk_size=8
+    )
+    x = torch.randn(2, 11, 64)
+    out, _, _ = layer(x)
+    assert out.shape == (2, 11, 64)
+    assert torch.isfinite(out).all()
+
+
+@pytest.mark.parametrize("chunk_size", [1, 8, 33])
+@pytest.mark.parametrize("seq_len", [8, 41])
+def test_when_chunk_and_recurrent_then_match_across_chunk_sizes(
+    chunk_size: int, seq_len: int
+) -> None:
+    """The chunkwise (WY) implementation must match the sequential oracle."""
+    b, t, h, d_k, d_v = 2, seq_len, 4, 16, 16
+    torch.manual_seed(42)
     q = torch.randn(b, t, h, d_k)
     k = torch.randn(b, t, h, d_k)
     v = torch.randn(b, t, h, d_v)
-    g = -torch.rand(b, t, h, d_k)
+    g = -torch.rand(b, t, h, d_k).abs()
     erase_b = torch.sigmoid(torch.randn(b, t, h, d_k))
     write_w = torch.sigmoid(torch.randn(b, t, h, d_v))
+    init = torch.randn(b, h, d_k, d_v) * 0.1
 
     out_rec, state_rec = torch_recurrent_gdn2(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        b=erase_b,
-        w=write_w,
-        output_final_state=True,
+        q=q, k=k, v=v, g=g, b=erase_b, w=write_w,
+        initial_state=init, output_final_state=True,
     )
     out_chk, state_chk = torch_chunk_gdn2(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        b=erase_b,
-        w=write_w,
-        output_final_state=True,
+        q=q, k=k, v=v, g=g, b=erase_b, w=write_w,
+        initial_state=init, output_final_state=True, chunk_size=chunk_size,
     )
 
-    assert out_rec.shape == (b, t, h, d_v)
+    assert out_chk.shape == (b, t, h, d_v)
     assert state_rec is not None and state_chk is not None
-    assert state_rec.shape == (b, h, d_k, d_v)
     assert torch.allclose(out_rec, out_chk, atol=1e-5)
     assert torch.allclose(state_rec, state_chk, atol=1e-5)
+
+
+def test_when_chunk_and_recurrent_then_gradients_match() -> None:
+    """Autograd through the chunkwise path must match the sequential oracle."""
+    b, t, h, d_k, d_v = 1, 9, 2, 8, 8
+    torch.manual_seed(7)
+    tensors = (
+        torch.randn(b, t, h, d_k, requires_grad=True),  # q
+        torch.randn(b, t, h, d_k, requires_grad=True),  # k
+        torch.randn(b, t, h, d_v, requires_grad=True),  # v
+        -torch.rand(b, t, h, d_k).abs().requires_grad_(),  # g
+        torch.sigmoid(torch.randn(b, t, h, d_k)).requires_grad_(),  # b
+        torch.sigmoid(torch.randn(b, t, h, d_v)).requires_grad_(),  # w
+    )
+
+    def run(fn: Any, chunk_size: int | None) -> list[torch.Tensor]:
+        q, k, v, g, b, w = tensors
+        kw: dict[str, Any] = {}
+        if chunk_size is not None:
+            kw["chunk_size"] = chunk_size
+        out = fn(q, k, v, g, b, w, output_final_state=False, **kw)[0]
+        return torch.autograd.grad(
+            out.sum(), tensors, retain_graph=True, allow_unused=True
+        )
+
+    grads_rec = run(torch_recurrent_gdn2, None)
+    grads_chk = run(torch_chunk_gdn2, 8)
+    for name, gr, gc in zip(("q", "k", "v", "g", "b", "w"), grads_rec, grads_chk):
+        assert gr is not None and gc is not None
+        assert torch.allclose(gr, gc, atol=1e-5), f"gradient mismatch in {name}"
+
+
+def test_when_chunk_incremental_then_matches_recurrent() -> None:
+    """Chunking an already-running recurrent state must give identical outputs."""
+    b, t, h, d_k, d_v = 2, 12, 3, 16, 16
+    torch.manual_seed(3)
+    q = torch.randn(b, t, h, d_k)
+    k = torch.randn(b, t, h, d_k)
+    v = torch.randn(b, t, h, d_v)
+    g = -torch.rand(b, t, h, d_k).abs()
+    b_gate = torch.sigmoid(torch.randn(b, t, h, d_k))
+    w_gate = torch.sigmoid(torch.randn(b, t, h, d_v))
+    init = torch.randn(b, h, d_k, d_v) * 0.1
+
+    split = 5
+    q_pre, q_post = q[:, :split], q[:, split:]
+    # Recurrent over the whole sequence, and recurrent-then-chunked.
+    out_full, state_full = torch_recurrent_gdn2(
+        q=q, k=k, v=v, g=g, b=b_gate, w=w_gate,
+        initial_state=init, output_final_state=True,
+    )
+    _, state_pre = torch_recurrent_gdn2(
+        q=q_pre, k=k[:, :split], v=v[:, :split], g=g[:, :split],
+        b=b_gate[:, :split], w=w_gate[:, :split],
+        initial_state=init, output_final_state=True,
+    )
+    out_chk_post, state_post = torch_chunk_gdn2(
+        q=q_post, k=k[:, split:], v=v[:, split:], g=g[:, split:],
+        b=b_gate[:, split:], w=w_gate[:, split:],
+        initial_state=state_pre, output_final_state=True, chunk_size=4,
+    )
+    assert torch.allclose(out_full[:, split:], out_chk_post, atol=1e-4)
+    assert torch.allclose(state_full, state_post, atol=1e-4)
 
 
 def test_when_gdn2_forward_with_dict_cache_then_updates_state() -> None:

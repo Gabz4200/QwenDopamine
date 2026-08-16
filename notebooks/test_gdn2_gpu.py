@@ -349,7 +349,7 @@ class FineWebMicroConfig:
     max_seq_len: int = 512
     max_train_examples: int | None = None
     max_val_examples: int | None = None
-    batch_size: int = 1
+    batch_size: int = 2
     val_split_ratio: float = 0.1
     seed: int = 42
 
@@ -424,7 +424,7 @@ class TrainConfig:
     weight_decay: float = 0.1
     warmup_steps: int = 50
     grad_clip: float = 1.0
-    grad_accum_steps: int = 8
+    grad_accum_steps: int = 4
     use_amp: bool = True
     early_stopping_patience: int = 4
     early_stopping_min_delta: float = 1e-3
@@ -488,7 +488,6 @@ def evaluate(
     model.eval()
     total_loss = 0.0
     total_tokens = 0
-    nll_total = 0.0
     eval_t0 = time.perf_counter()
 
     with torch.no_grad():
@@ -507,16 +506,15 @@ def evaluate(
             batch_tokens = yb.numel()
             total_loss += float(loss.item()) * batch_tokens
             total_tokens += batch_tokens
-            nll_total += float(loss.item()) * batch_tokens
 
     eval_time = time.perf_counter() - eval_t0
 
     if WORLD_SIZE > 1:
         stats = torch.tensor(
-            [total_loss, total_tokens, nll_total], device=device
+            [total_loss, total_tokens], device=device
         )
         dist.all_reduce(stats, op=dist.ReduceOp.SUM)
-        total_loss, total_tokens, nll_total = stats.tolist()
+        total_loss, total_tokens = stats.tolist()
 
     avg_loss = total_loss / max(total_tokens, 1.0)
     perplexity = math.exp(min(avg_loss, 50))
@@ -524,7 +522,7 @@ def evaluate(
     return {
         "val_loss": avg_loss,
         "val_perplexity": perplexity,
-        "val_nll": nll_total,
+        "val_nll": avg_loss,
         "val_tokens": total_tokens,
         "val_tps": tps,
     }
@@ -845,7 +843,7 @@ def main() -> None:
 
     data_cfg = FineWebMicroConfig(
         max_seq_len=512,
-        batch_size=1,
+        batch_size=2,
         val_split_ratio=0.1,
     )
 
@@ -893,7 +891,7 @@ def main() -> None:
         min_lr=3e-5,
         weight_decay=0.1,
         warmup_steps=50,
-        grad_accum_steps=8,
+        grad_accum_steps=4,
         early_stopping_patience=4,
         early_stopping_min_delta=1e-3,
     )

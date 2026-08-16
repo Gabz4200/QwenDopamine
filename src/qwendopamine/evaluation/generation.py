@@ -1,3 +1,5 @@
+r"""Autoregressive text generation utilities."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,17 +16,19 @@ def generate_text(
     max_new_tokens: int = 256,
     **kwargs: Any,
 ) -> str:
-    r"""Generate text from a prompt using the model's ``generate`` method.
+    r"""generate_text(model, tokenizer, prompt, max_new_tokens=256, **kwargs) -> str
+
+    Generates text continuation from a prompt using model generation method and tokenizer decoding.
 
     Args:
-        model (Any): causal language model with ``generate``.
-        tokenizer (Any): tokenizer with ``__call__`` and ``decode``.
-        prompt (str): text prompt to continue.
-        max_new_tokens (int): maximum number of tokens to generate. Default: ``256``.
-        **kwargs: additional keyword arguments forwarded to ``model.generate``.
+        model (Any): Causal language model instance with ``generate`` method.
+        tokenizer (Any): Tokenizer instance with encoding and decoding methods.
+        prompt (str): Text prompt string to continue.
+        max_new_tokens (int, optional): Maximum number of new tokens to generate. Default: ``256``.
+        **kwargs (Any): Additional keyword arguments passed to ``model.generate``.
 
     Returns:
-        str: decoded generated text without special tokens.
+        str: Decoded generated output text string without special tokens.
     """
     model.eval()
     device = _get_model_device(model)
@@ -41,3 +45,6 @@ def generate_text(
         )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+__all__ = ["generate_text"]

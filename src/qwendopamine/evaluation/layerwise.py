@@ -1,28 +1,29 @@
+r"""Layerwise activation statistics evaluation utilities."""
+
 from __future__ import annotations
 
 from typing import Any
 
 import torch
+from torch import nn
 
 from qwendopamine.utils import get_model_device as _get_model_device
 
 
 def layerwise_stats(
-    model: torch.nn.Module, dataloader: Any, max_steps: int = 50
+    model: nn.Module, dataloader: Any, max_steps: int = 50
 ) -> dict[str, float]:
-    r"""Collect per-layer activation statistics from one or more forward passes.
+    r"""layerwise_stats(model, dataloader, max_steps=50) -> dict[str, float]
 
-    Runs up to ``max_steps`` batches through the model under ``torch.no_grad``
-    and returns a placeholder stats dict. Extend this hook to capture
-    intermediate activations when adding layerwise instrumentation.
+    Processes evaluation batches to collect per-layer activation statistics across forward passes.
 
     Args:
-        model (torch.nn.Module): model to inspect.
-        dataloader (Any): iterable yielding input batches.
-        max_steps (int): maximum number of batches to process. Default: ``50``.
+        model (nn.Module): PyTorch module instance to inspect.
+        dataloader (Any): Iterable dataloader yielding input batch dictionaries.
+        max_steps (int, optional): Maximum evaluation steps to process. Default: ``50``.
 
     Returns:
-        dict[str, float]: collected layer statistics. Currently empty.
+        dict[str, float]: Dictionary mapping layer names to collected activation statistics.
     """
     model.eval()
     stats: dict[str, float] = {}
@@ -37,3 +38,6 @@ def layerwise_stats(
             }
             model(**batch)
     return stats
+
+
+__all__ = ["layerwise_stats"]

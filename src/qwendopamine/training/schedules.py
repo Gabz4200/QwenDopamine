@@ -1,3 +1,5 @@
+r"""Learning-rate schedulers and linear warmup wrappers."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,21 +12,21 @@ from torch.optim.lr_scheduler import LRScheduler
 def build_scheduler(
     optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5
 ) -> LRScheduler:
-    r"""Build a learning-rate scheduler with linear warmup.
+    r"""build_scheduler(optimizer, name, warmup_steps=2000, min_lr=1e-5) -> LRScheduler
 
-    Currently supports ``"cosine"`` with linear warmup.
+    Constructs a learning-rate scheduler with linear warmup wrapper.
 
     Args:
-        optimizer (Optimizer): wrapped optimizer.
-        name (str): scheduler name. Accepted values: ``"cosine"``.
-        warmup_steps (int): number of warmup steps. Default: ``2000``.
-        min_lr (float): minimum learning rate after decay. Default: ``1e-5``.
+        optimizer (Optimizer): PyTorch optimizer instance to schedule.
+        name (str): Scheduler name string. Supported values: ``"cosine"``.
+        warmup_steps (int, optional): Number of linear warmup steps. Default: ``2000``.
+        min_lr (float, optional): Minimum learning rate floor after decay. Default: ``1e-5``.
 
     Returns:
-        LRScheduler: wrapped scheduler with warmup.
+        LRScheduler: Wrapped learning rate scheduler with warmup logic.
 
     Raises:
-        KeyError: if ``name`` is not supported.
+        KeyError: If ``name`` is not a supported scheduler type.
     """
     if name == "cosine":
         base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -35,16 +37,16 @@ def build_scheduler(
 
 
 class LinearWarmupScheduler(LRScheduler):
-    r"""Linear warmup scheduler wrapping a base LR scheduler.
+    r"""LinearWarmupScheduler(optimizer, base_scheduler, warmup_steps, min_lr)
 
-    During the first ``warmup_steps`` calls, the learning rate scales linearly
-    from ``0`` to ``initial_lr``. Afterwards, the base scheduler takes over.
+    Linearly increases learning rate from zero to initial base learning rate over initial warmup steps
+    before delegating scheduling to a base scheduler.
 
     Args:
-        optimizer (Optimizer): wrapped optimizer.
-        base_scheduler (LRScheduler): scheduler to delegate to after warmup.
-        warmup_steps (int): number of warmup steps.
-        min_lr (float): minimum learning rate floor.
+        optimizer (Optimizer): PyTorch optimizer instance.
+        base_scheduler (LRScheduler): Base scheduler taking over after warmup.
+        warmup_steps (int): Total number of linear warmup steps.
+        min_lr (float): Minimum learning rate floor.
     """
 
     def __init__(
@@ -62,11 +64,12 @@ class LinearWarmupScheduler(LRScheduler):
         self.step_count = 0
 
     def step(self, epoch: int | None = None) -> None:
-        r"""Step the scheduler.
+        r"""step(epoch=None) -> None
+
+        Steps the scheduler state forward.
 
         Args:
-            epoch (int, optional): unused; kept for compatibility with
-                :class:`torch.optim.lr_scheduler.LRScheduler`.
+            epoch (int, optional): Epoch index. Default: ``None``.
         """
         self.step_count += 1
         if self.step_count <= self.warmup_steps:
@@ -76,20 +79,28 @@ class LinearWarmupScheduler(LRScheduler):
             return
         self.base_scheduler.step(epoch)
 
-    def state_dict(self) -> dict[str, Any]:  # pragma: no cover - placeholder
-        r"""Return the base scheduler state dict.
+    def state_dict(self) -> dict[str, Any]:
+        r"""state_dict() -> dict[str, Any]
+
+        Returns state dictionary of the wrapped base scheduler.
 
         Returns:
-            dict[str, Any]: state dict.
+            dict[str, Any]: Base scheduler state dict.
         """
         return self.base_scheduler.state_dict()
 
-    def load_state_dict(
-        self, state_dict: dict[str, Any]
-    ) -> None:  # pragma: no cover - placeholder
-        r"""Load state into the base scheduler.
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        r"""load_state_dict(state_dict) -> None
+
+        Loads state dictionary into the wrapped base scheduler.
 
         Args:
-            state_dict (dict[str, Any]): state dict to load.
+            state_dict (dict[str, Any]): Target state dictionary.
         """
         self.base_scheduler.load_state_dict(state_dict)
+
+
+__all__ = [
+    "LinearWarmupScheduler",
+    "build_scheduler",
+]

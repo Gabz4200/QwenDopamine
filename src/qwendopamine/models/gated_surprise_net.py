@@ -75,7 +75,17 @@ class SurpriseRecurrenceState:
 
 
 def l2_normalize_last(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    r"""Normalize tensor along the last dimension using L2 norm."""
+    r"""l2_normalize_last(x, eps=1e-6) -> Tensor
+
+    Normalizes a tensor along its final dimension using L2 norm vector scaling.
+
+    Args:
+        x (Tensor): Input tensor of arbitrary shape :math:`(..., D)`.
+        eps (float, optional): Epsilon value to clamp minimum norm for numerical stability. Default: ``1e-6``.
+
+    Returns:
+        Tensor: L2-normalized tensor of same shape as ``x``.
+    """
     return x / x.norm(dim=-1, keepdim=True).clamp_min(eps)
 
 
@@ -86,7 +96,24 @@ def gaussian_nll_diag(
     eps: float = 1e-6,
     full: bool = False,
 ) -> torch.Tensor:
-    r"""Compute diagonal Gaussian Negative Log-Likelihood diagnostic."""
+    r"""gaussian_nll_diag(target, mean, var, eps=1e-6, full=False) -> Tensor
+
+    Computes the diagonal Gaussian Negative Log-Likelihood diagnostic loss.
+
+    .. math::
+        \mathcal{L} = \frac{1}{2} \sum_{i} \left( \log(\sigma_i^2) + \frac{(y_i - \mu_i)^2}{\sigma_i^2} \right)
+
+    Args:
+        target (Tensor): Ground truth target tensor.
+        mean (Tensor): Predicted mean vector tensor.
+        var (Tensor): Predicted variance vector tensor.
+        eps (float, optional): Epsilon threshold for variance clamping. Default: ``1e-6``.
+        full (bool, optional): If ``True``, includes the constant factor :math:`\frac{1}{2}\log(2\pi)`.
+            Default: ``False``.
+
+    Returns:
+        Tensor: Summed negative log-likelihood loss along the feature dimension.
+    """
     var = var.clamp_min(eps)
     loss = 0.5 * (torch.log(var) + (target - mean).square() / var)
     if full:
@@ -97,7 +124,17 @@ def gaussian_nll_diag(
 def torch_get_unpad_data(
     attention_mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, int]:
-    r"""Pure PyTorch helper for unpadding 2D attention masks."""
+    r"""torch_get_unpad_data(attention_mask) -> (Tensor, Tensor, int)
+
+    Computes non-zero token indexing arrays and cumulative sequence lengths for unpadding 2D sequence masks.
+
+    Args:
+        attention_mask (Tensor): Binary mask tensor of shape :math:`(B, L)`.
+
+    Returns:
+        tuple[Tensor, Tensor, int]: Tuple containing non-zero indices, cumulative sequence length tensor,
+            and maximum sequence length integer in batch.
+    """
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = (
@@ -108,14 +145,36 @@ def torch_get_unpad_data(
 
 
 def torch_index_first_axis(x: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
-    r"""Index first axis of a tensor using flat indices."""
+    r"""torch_index_first_axis(x, indices) -> Tensor
+
+    Indexes the outer axis of a multi-dimensional tensor using flat 1D indices.
+
+    Args:
+        x (Tensor): Input tensor.
+        indices (Tensor): Flat index tensor.
+
+    Returns:
+        Tensor: Gathered tensor sliced along axis 0.
+    """
     return x[indices]
 
 
 def torch_pad_input(
     hidden_states: torch.Tensor, indices: torch.Tensor, batch_size: int, seq_len: int
 ) -> torch.Tensor:
-    r"""Pad flattened sequence back to [batch_size, seq_len, ...] shape."""
+    r"""torch_pad_input(hidden_states, indices, batch_size, seq_len) -> Tensor
+
+    Pads a 1D unpadded sequence tensor back to 3D batch shape :math:`(B, L, D)`.
+
+    Args:
+        hidden_states (Tensor): Flattened non-padded sequence tensor.
+        indices (Tensor): Original token index tensor.
+        batch_size (int): Target batch size :math:`B`.
+        seq_len (int): Target sequence length :math:`L`.
+
+    Returns:
+        Tensor: Padded 3D sequence tensor.
+    """
     output_shape = (batch_size * seq_len,) + hidden_states.shape[1:]
     padded = torch.zeros(
         output_shape, dtype=hidden_states.dtype, device=hidden_states.device

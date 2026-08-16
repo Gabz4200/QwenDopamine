@@ -1,3 +1,5 @@
+r"""Normalization layers and token mask utilities for Qwen-style architectures."""
+
 from __future__ import annotations
 
 import torch
@@ -5,17 +7,25 @@ from torch import nn
 
 
 class RMSNorm(nn.Module):
-    r"""Root Mean Square Layer Normalization.
+    r"""RMSNorm(hidden_size, eps=1e-6)
 
-    Applies RMS normalization over the last dimension without centering,
-    followed by a learned weight scale.
+    Applies Root Mean Square Layer Normalization over the last dimension without feature mean centering.
 
     .. math::
         \text{RMSNorm}(x) = w \odot \frac{x}{\sqrt{\text{mean}(x^2) + \epsilon}}
 
     Args:
-        hidden_size (int): last dimension of the input tensor.
-        eps (float): epsilon added to variance for numerical stability. Default: ``1e-6``.
+        hidden_size (int): Hidden dimension size of the input tensor.
+        eps (float, optional): Epsilon value added to the variance calculation for numerical stability.
+            Default: ``1e-6``.
+
+    Examples::
+
+        >>> norm = RMSNorm(hidden_size=64)
+        >>> x = torch.randn(2, 5, 64)
+        >>> out = norm(x)
+        >>> out.shape
+        torch.Size([2, 5, 64])
     """
 
     def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
@@ -24,16 +34,41 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        r"""forward(hidden_states) -> Tensor
+
+        Args:
+            hidden_states (Tensor): Input feature tensor of shape :math:`(..., \text{hidden\_size})`.
+
+        Returns:
+            Tensor: Normalized feature tensor of same shape and dtype as ``hidden_states``.
+        """
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
         return self.weight * hidden_states
 
 
 class RMSNormGated(nn.Module):
-    r"""Reference Qwen3-style gated RMSNorm.
+    r"""RMSNormGated(hidden_size, eps=1e-6, *, activation="silu")
 
-    This follows the upstream Qwen3.5 implementation where the gate is applied to
-    the normalized hidden states after RMS scaling.
+    Applies RMSNorm with optional element-wise activation gating on normalized hidden states.
+
+    .. math::
+        y = (w \odot \text{RMSNorm}(x)) \odot \text{SiLU}(g)
+
+    Args:
+        hidden_size (int): Hidden dimension size of input feature tensor.
+        eps (float, optional): Small constant added for numerical stability during normalization.
+            Default: ``1e-6``.
+        activation (str, optional): Activation function applied to the gating tensor. Default: ``"silu"``.
+
+    Examples::
+
+        >>> norm_gated = RMSNormGated(hidden_size=64)
+        >>> x = torch.randn(2, 5, 64)
+        >>> gate = torch.randn(2, 5, 64)
+        >>> out = norm_gated(x, gate)
+        >>> out.shape
+        torch.Size([2, 5, 64])
     """
 
     def __init__(
@@ -47,6 +82,15 @@ class RMSNormGated(nn.Module):
     def forward(
         self, hidden_states: torch.Tensor, gate: torch.Tensor | None = None
     ) -> torch.Tensor:
+        r"""forward(hidden_states, gate=None) -> Tensor
+
+        Args:
+            hidden_states (Tensor): Input feature tensor of shape :math:`(..., \text{hidden\_size})`.
+            gate (Tensor, optional): Optional gating tensor of same shape as ``hidden_states``. Default: ``None``.
+
+        Returns:
+            Tensor: Gated normalized hidden states of same shape as ``hidden_states``.
+        """
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
@@ -62,7 +106,18 @@ class RMSNormGated(nn.Module):
 def apply_mask_to_padding_states(
     hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None
 ) -> torch.Tensor:
-    """Zero out padded tokens before recurrent computation."""
+    r"""apply_mask_to_padding_states(hidden_states, attention_mask=None) -> Tensor
+
+    Zeros out hidden state vectors corresponding to padded token positions before recurrent scans.
+
+    Args:
+        hidden_states (Tensor): Sequence hidden states of shape :math:`(B, L, D)`.
+        attention_mask (Tensor, optional): Binary attention mask tensor of shape :math:`(B, L)` where ``1``
+            indicates valid tokens and ``0`` indicates padding tokens. Default: ``None``.
+
+    Returns:
+        Tensor: Masked sequence hidden states of shape :math:`(B, L, D)`.
+    """
     if attention_mask is not None:
         dtype = hidden_states.dtype
         hidden_states = (hidden_states * attention_mask[:, :, None]).to(dtype)

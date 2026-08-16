@@ -1,3 +1,5 @@
+r"""Tokenizer loading utilities for Qwen architectures."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,22 +8,23 @@ from transformers import AutoTokenizer
 
 
 def load_qwen35_tokenizer(model_name: str, **kwargs: Any) -> AutoTokenizer:
-    r"""Load a Qwen3.5 tokenizer with a fallback repo candidate.
+    r"""load_qwen35_tokenizer(model_name, **kwargs) -> AutoTokenizer
 
-    If ``model_name`` is a GGUF path, the function strips the filename and
-    retries against the base repo. If that fails, it falls back to
-    ``Qwen/Qwen3.5-0.8B``.
+    Loads a Qwen3.5 tokenizer with automatic GGUF repo resolution and fallback candidates.
 
     Args:
-        model_name (str): Hugging Face repo id or local GGUF path.
-        **kwargs: extra keyword arguments forwarded to
-            :meth:`transformers.AutoTokenizer.from_pretrained`.
+        model_name (str): Hugging Face repository ID or local GGUF file path.
+        **kwargs (Any): Additional keyword arguments passed to :meth:`transformers.AutoTokenizer.from_pretrained`.
 
     Returns:
-        AutoTokenizer: loaded tokenizer.
+        AutoTokenizer: Loaded tokenizer instance.
 
     Raises:
-        RuntimeError: if all candidate repos fail to load.
+        RuntimeError: If all candidate repositories fail to load a valid tokenizer.
+
+    Examples::
+
+        >>> tokenizer = load_qwen35_tokenizer("Qwen/Qwen3.5-0.8B")
     """
     if model_name.endswith(".gguf"):
         model_name = model_name.rsplit("/", 1)[0]
@@ -39,3 +42,6 @@ def load_qwen35_tokenizer(model_name: str, **kwargs: Any) -> AutoTokenizer:
         "Failed to load Qwen3.5 tokenizer from candidate repos. "
         f"Last error: {last_error}"
     )
+
+
+__all__ = ["load_qwen35_tokenizer"]

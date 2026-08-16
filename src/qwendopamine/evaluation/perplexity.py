@@ -1,29 +1,32 @@
+r"""Perplexity computation utilities for causal language models."""
+
 from __future__ import annotations
 
 from typing import Any
 
 import torch
+from torch import nn
 
 from qwendopamine.utils import get_model_device
 
 
 def compute_perplexity(
-    model: torch.nn.Module, dataloader: Any, max_steps: int = 500
+    model: nn.Module, dataloader: Any, max_steps: int = 500
 ) -> float:
-    r"""Estimate perplexity over a dataloader.
+    r"""compute_perplexity(model, dataloader, max_steps=500) -> float
 
-    Accumulates cross-entropy loss token-wise and exponentiates the average
-    negative log-likelihood. The model is put in eval mode and no gradients
-    are computed.
+    Estimates perplexity over a dataloader sequence by accumulating token-weighted cross-entropy loss.
+
+    .. math::
+        \text{PPL} = \exp\left( \frac{1}{N} \sum_{i=1}^N \mathcal{L}_i \right)
 
     Args:
-        model (torch.nn.Module): causal language model that returns ``loss``
-            under ``**batch`` or as ``outputs.loss``.
-        dataloader (Any): iterable yielding dicts with ``input_ids`` tensors.
-        max_steps (int): maximum number of batches to evaluate. Default: ``500``.
+        model (nn.Module): Causal language model returning scalar loss or loss dict.
+        dataloader (Any): Iterable dataloader yielding batch dictionaries with ``input_ids`` tensors.
+        max_steps (int, optional): Maximum number of evaluation steps to compute over. Default: ``500``.
 
     Returns:
-        float: exponentiated average loss as perplexity.
+        float: Exponentiated average per-token cross-entropy loss value.
     """
     model.eval()
     total_loss = 0.0
@@ -44,3 +47,6 @@ def compute_perplexity(
             total_tokens += batch["input_ids"].numel()
 
     return torch.exp(torch.tensor(total_loss / max(total_tokens, 1))).item()
+
+
+__all__ = ["compute_perplexity"]

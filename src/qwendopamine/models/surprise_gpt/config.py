@@ -38,13 +38,13 @@ class SurpriseGPTConfig:
     gradient_checkpointing: bool = False
 
     # GatedSurpriseNet gate bound options (Option A defaults).
-    max_write_bound: float = 1.50
-    max_erase_bound: float = 3.00
+    max_write_bound: float = 1.00
+    max_erase_bound: float = 2.00
     max_precision_bound: float = 2.00
     chunk_size: int | None = None
     allow_neg_eigval: bool = False
     backend: str = "auto"
-    fp32_decay: bool = False
+    fp32_decay: bool = True
     compile_backend: bool = False
 
     def __post_init__(self) -> None:

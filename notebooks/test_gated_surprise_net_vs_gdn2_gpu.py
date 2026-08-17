@@ -1065,8 +1065,8 @@ def main() -> None:
         use_short_conv=True,
         norm_eps=1e-6,
         gradient_checkpointing=True,
-        max_write_bound=1.50,
-        max_erase_bound=3.00,
+        max_write_bound=1.00,
+        max_erase_bound=2.00,
         max_precision_bound=2.00,
     )
     model_surp = GPT(cfg_surp).to(device=device, dtype=dtype)

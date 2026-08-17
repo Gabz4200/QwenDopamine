@@ -486,8 +486,9 @@ class GatedSurpriseNet(nn.Module):
         train_chunk_size: int = 128,
         backend: str = "auto",
         compile_backend: bool = False,
-        max_write_bound: float = 1.50,
-        max_erase_bound: float = 3.00,
+        fp32_decay: bool = True,
+        max_write_bound: float = 1.00,
+        max_erase_bound: float = 2.00,
         max_precision_bound: float = 2.00,
         **kwargs: Any,
     ) -> None:
@@ -521,6 +522,7 @@ class GatedSurpriseNet(nn.Module):
             )
             backend = getattr(cfg, "backend", backend)
             compile_backend = getattr(cfg, "compile_backend", compile_backend)
+            fp32_decay = getattr(cfg, "fp32_decay", fp32_decay)
             max_write_bound = getattr(cfg, "max_write_bound", max_write_bound)
             max_erase_bound = getattr(cfg, "max_erase_bound", max_erase_bound)
             max_precision_bound = getattr(cfg, "max_precision_bound", max_precision_bound)
@@ -542,6 +544,7 @@ class GatedSurpriseNet(nn.Module):
             train_chunk_size = cfg_dict.get("train_chunk_size", train_chunk_size)
             backend = cfg_dict.get("backend", backend)
             compile_backend = cfg_dict.get("compile_backend", compile_backend)
+            fp32_decay = cfg_dict.get("fp32_decay", fp32_decay)
             max_write_bound = cfg_dict.get("max_write_bound", max_write_bound)
             max_erase_bound = cfg_dict.get("max_erase_bound", max_erase_bound)
             max_precision_bound = cfg_dict.get("max_precision_bound", max_precision_bound)
@@ -566,6 +569,7 @@ class GatedSurpriseNet(nn.Module):
         self.train_chunk_size = train_chunk_size
         self.backend = backend
         self.compile_backend = compile_backend
+        self.fp32_decay = bool(fp32_decay)
         self.max_write_bound = float(max_write_bound)
         self.max_erase_bound = float(max_erase_bound)
         self.max_precision_bound = float(max_precision_bound)
@@ -846,7 +850,8 @@ class GatedSurpriseNet(nn.Module):
         g = (
             -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
             * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
-        ).to(hidden_states.dtype)
+        )
+        g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
         b = self.max_erase_bound * self.b_proj(hidden_states).sigmoid()
         w = self.max_write_bound * self.w_proj(hidden_states).sigmoid()
         pi = self.max_precision_bound * self.var_proj(hidden_states).sigmoid()

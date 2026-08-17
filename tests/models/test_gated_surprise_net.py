@@ -421,3 +421,39 @@ def test_when_chunk_gated_surprise_net_op_called_then_matches_reference() -> Non
 
     assert torch.allclose(out, out_ref, atol=1e-5)
     assert torch.allclose(final_state, final_state_ref.memory, atol=1e-5)
+
+
+def test_when_gated_surprise_net_forward_at_full_train_chunk_size_then_output_is_finite() -> None:
+    # Behavioral contract: the per-chunk cumulative decay gamma must not
+    # underflow to zero in float32 during a training forward pass.  When
+    # A_log ~ uniform_(1, 16), A reaches up to 16, and over 128 tokens
+    # cumsum(g) ≈ -A * 128 * E[softplus] ≈ -6000, so exp(cumsum) = 0 in
+    # float32.  kbar = (b*k) / gamma then saturates at 1/clamp_min = 1e12,
+    # silently discarding all memory state information for tokens deep in the
+    # chunk.  The fix is A_log ~ uniform_(0.1, 0.5), keeping cumsum(g) in a
+    # range where gamma stays well above float32 underflow (~1e-38).
+    import torch.nn.functional as F
+
+    train_chunk_size = 128
+    layer = GatedSurpriseNetAdam(
+        hidden_size=64,
+        num_heads=2,
+        head_dim=32,
+        train_chunk_size=train_chunk_size,
+    )
+    layer.eval()
+    torch.manual_seed(0)
+    x = torch.randn(1, train_chunk_size, 64)
+    with torch.no_grad():
+        g = (
+            -layer.A_log.float().exp().repeat_interleave(layer.head_k_dim)
+            * F.softplus(layer.f_proj(x).float() + layer.dt_bias)
+        ).view(1, train_chunk_size, layer.num_heads, layer.head_k_dim)
+        gamma = torch.exp(torch.cumsum(g, dim=1))
+    # gamma must stay above float32 underflow floor so kbar = k/gamma
+    # does not amplify noise to 1e12, silently wiping the memory state.
+    assert gamma.min().item() > 1e-35, (
+        f"Cumulative decay gamma underflowed to {gamma.min().item():.2e} within "
+        f"a {train_chunk_size}-token chunk.  This silently corrupts chunk-scan "
+        "memory state.  Fix: reduce A_log initialization range."
+    )

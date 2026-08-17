@@ -631,7 +631,7 @@ class GatedSurpriseNet(nn.Module):
         )
 
         self.A_log = nn.Parameter(
-            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
+            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0))
         )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
@@ -661,6 +661,12 @@ class GatedSurpriseNet(nn.Module):
 
         self.apply(self._initialize_weights)
 
+        # Initialize var_proj final linear bias to 0.0 after apply() so initial
+        # precision pi ~ 1.0 (max_precision_bound * sigmoid(0) = 2.0 * 0.5 = 1.0)
+        # without running redundant zeroing on every submodule in the tree.
+        if isinstance(self.var_proj[-1], nn.Linear) and self.var_proj[-1].bias is not None:
+            nn.init.zeros_(self.var_proj[-1].bias)
+
     def _initialize_weights(self, module: nn.Module) -> None:
         if getattr(module, "_is_hf_initialized", False):
             return
@@ -671,15 +677,6 @@ class GatedSurpriseNet(nn.Module):
         elif isinstance(module, RMSNormGated):
             nn.init.ones_(module.weight)
         cast(Any, module)._is_hf_initialized = True
-
-        # Initialize var_proj final linear bias to 0.0 so initial precision pi ~ 1.0
-        # (since max_precision_bound * sigmoid(0) = 2.0 * 0.5 = 1.0)
-        if (
-            hasattr(self, "var_proj")
-            and isinstance(self.var_proj[-1], nn.Linear)
-            and self.var_proj[-1].bias is not None
-        ):
-            nn.init.zeros_(self.var_proj[-1].bias)
 
     def _get_cache(
         self, past_key_values: Cache | dict[str, Any] | None

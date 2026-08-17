@@ -319,17 +319,23 @@ def run_gdn2_parity() -> bool:
     out_s, _ = torch_recurrent_gdn2(
         q, k, v, g, b, w, initial_state=None, output_final_state=True
     )
+    # chunk_size=16 keeps cumulative log-decay to ~16 steps per chunk,
+    # preventing gamma underflow (exp(-25) ≈ 1e-11) that makes kbar = k/gamma
+    # numerically explosive. The stability bound is decay-magnitude-dependent,
+    # not seq_len-dependent.
     out_c, _ = torch_chunk_gdn2(
-        q, k, v, g, b, w, initial_state=None, output_final_state=True
+        q, k, v, g, b, w, initial_state=None, output_final_state=True,
+        chunk_size=16,
     )
 
+    max_diff = (out_s.float() - out_c.float()).abs().max().item()
     passed = (
         torch.all(torch.isfinite(out_s)).item()
         and torch.all(torch.isfinite(out_c)).item()
         and torch.allclose(out_s, out_c, atol=1e-3)
     )
     if not passed and IS_MAIN:
-        print("[parity GDN-2] serial vs chunk scan check: FAIL")
+        print(f"[parity GDN-2] serial vs chunk scan check: FAIL (max_diff={max_diff:.4e})")
     return bool(passed)
 
 

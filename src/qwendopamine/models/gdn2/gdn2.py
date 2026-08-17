@@ -323,14 +323,11 @@ def torch_chunk_gdn2(
     scale = d_k**-0.5
     q = q * scale
 
-    # Absolute cumulative decay gamma over the whole sequence: [B, T, H, K].
-    gamma = torch.exp(torch.cumsum(g, dim=1))
-
     # Move to chunk-friendly layout [B, H, T, D].
     q = rearrange(q, "b t h d -> b h t d")
     k = rearrange(k, "b t h d -> b h t d")
     v = rearrange(v, "b t h d -> b h t d")
-    gamma = rearrange(gamma, "b t h d -> b h t d")
+    g = rearrange(g, "b t h d -> b h t d")
     b_f = rearrange(b_f, "b t h d -> b h t d")
     w_f = rearrange(w_f, "b t h d -> b h t d")
 
@@ -350,13 +347,18 @@ def torch_chunk_gdn2(
         q_c = q[:, :, start:end]
         k_c = k[:, :, start:end]
         v_c = v[:, :, start:end]
-        gam_c = gamma[:, :, start:end]
+        g_c = g[:, :, start:end]
         b_c = b_f[:, :, start:end]
         w_c = w_f[:, :, start:end]
 
+        # Chunk-local cumulative decay gamma: [B, H, C, K].
+        gamma = torch.exp(torch.cumsum(g_c, dim=2))
+        gamma_last = gamma[:, :, -1:, :]  # [B, H, 1, K]
+
         # Decay-normalized factors (paper Eq. 33).
-        kbar = k_c / gam_c                  # [B, H, C, K]
-        ebar = gam_c * (b_c * k_c)          # [B, H, C, K]
+        gam_safe = gamma.clamp_min(1e-12)
+        kbar = k_c / gam_safe               # [B, H, C, K]
+        ebar = gamma * (b_c * k_c)          # [B, H, C, K]
         z = w_c * v_c                       # [B, H, C, V]
 
         # WY triangular solve.
@@ -365,24 +367,24 @@ def torch_chunk_gdn2(
         # Normalized state correction: delta = U - Y @ S_start.
         delta = u - torch.matmul(y, state)  # [B, H, C, V]
 
-        # Output read: out = gamma*q @ S_start + Aqk @ delta.
-        q_gamma = gam_c * q_c               # [B, H, C, K]
+        # Output read: out = (gamma*q) @ S_start + Aqk @ delta.
+        q_gamma = gamma * q_c               # [B, H, C, K]
         out_inter = torch.matmul(q_gamma, state)  # [B, H, C, V]
-        aqk = compute_gdn2_intra_chunk_scores(q_c, gam_c, kbar)  # [B, H, C, C]
+        aqk = compute_gdn2_intra_chunk_scores(q_c, gamma, kbar)  # [B, H, C, C]
         out_c = out_inter + torch.matmul(aqk, delta)
         outputs.append(out_c)
 
-        # Carry the normalized state: S <- S + kbar^T * delta.
-        state = state + torch.matmul(kbar.transpose(-1, -2), delta)
+        # Carry state to next chunk: S_next = gamma_last^T * (S_start + kbar^T @ delta).
+        state = gamma_last.transpose(-1, -2) * (
+            state + torch.matmul(kbar.transpose(-1, -2), delta)
+        )
 
     out = torch.cat(outputs, dim=2)         # [B, H, T, V]
     out = rearrange(out, "b h t d -> b t h d").to(out_dtype)
 
     final_state: torch.Tensor | None = None
     if output_final_state:
-        # Real-space final state: apply the absolute decay at the last position.
-        gamma_last = gamma[:, :, -1, :].unsqueeze(-1)  # [B, H, K, 1]
-        final_state = (state * gamma_last).to(out_dtype)
+        final_state = state.to(out_dtype)
 
     return out, final_state
 

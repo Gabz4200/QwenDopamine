@@ -152,7 +152,7 @@ def test_when_chunk_and_recurrent_then_gradients_match() -> None:
         torch.sigmoid(torch.randn(b, t, h, d_v)).requires_grad_(),  # w
     )
 
-    def run(fn: Any, chunk_size: int | None) -> list[torch.Tensor]:
+    def run(fn: Any, chunk_size: int | None) -> tuple[torch.Tensor, ...]:
         q, k, v, g, b, w = tensors
         kw: dict[str, Any] = {}
         if chunk_size is not None:
@@ -199,6 +199,7 @@ def test_when_chunk_incremental_then_matches_recurrent() -> None:
         initial_state=state_pre, output_final_state=True, chunk_size=4,
     )
     assert torch.allclose(out_full[:, split:], out_chk_post, atol=1e-4)
+    assert state_full is not None and state_post is not None
     assert torch.allclose(state_full, state_post, atol=1e-4)
 
 

@@ -6,6 +6,8 @@ gradient checkpointing is safe, and the optional Triton/FLA ops modules still
 import and expose their entry points when CUDA is absent.
 """
 
+from typing import Any, cast
+
 import torch
 from torch import nn
 
@@ -18,8 +20,8 @@ from qwendopamine.models.gdn2.gdn2 import (
 from qwendopamine.models.surprise_gpt import GDN2GPT, GDN2GPTConfig
 
 
-def _make_cfg(**overrides: object) -> GDN2GPTConfig:
-    base: dict[str, object] = {
+def _make_cfg(**overrides: Any) -> GDN2GPTConfig:
+    base: dict[str, Any] = {
         "name": "test",
         "n_layer": 2,
         "n_embd": 128,
@@ -47,8 +49,9 @@ def test_when_all_gdn2_model_then_forward_and_backward_flow() -> None:
     assert logits.shape == (2, 32, 512)
     logits.float().mean().backward()
     # Gradient must flow into the GDN-2 projections (and decay params).
-    assert model.h[0].attn.q_proj.weight.grad is not None
-    assert model.h[0].attn.A_log.grad is not None
+    attn = cast(Any, model.h[0].attn)
+    assert attn.q_proj.weight.grad is not None
+    assert attn.A_log.grad is not None
 
 
 def test_when_gradient_checkpointing_then_output_matches() -> None:
@@ -76,17 +79,17 @@ def test_when_all_gdn2_model_then_overfits_small_batch() -> None:
     xt = torch.randint(0, 512, (4, 20))
     yt = torch.randint(0, 512, (4, 20))
 
-    initial = None
-    final = None
-    for _ in range(30):
+    initial_loss = 0.0
+    final_loss = 0.0
+    for step_idx in range(30):
         opt.zero_grad()
         loss = loss_fn(model(xt).reshape(-1, 512), yt.reshape(-1))
         loss.backward()
         opt.step()
-        if initial is None:
-            initial = float(loss.detach())
-        final = float(loss.detach())
-    assert final < initial * 0.7, f"no learning: {initial:.3f} -> {final:.3f}"
+        if step_idx == 0:
+            initial_loss = float(loss.detach())
+        final_loss = float(loss.detach())
+    assert final_loss < initial_loss * 0.7, f"no learning: {initial_loss:.3f} -> {final_loss:.3f}"
 
 
 def test_when_l2norm_disabled_then_chunk_and_recurrent_still_agree() -> None:
@@ -154,9 +157,9 @@ def test_when_gdn2_block_then_streams_recurrent_state() -> None:
     cache: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
     with torch.no_grad():
         out1 = layer(torch.randn(1, 1, 64), past_key_values=cache, use_cache=True)[0]
-        s1 = cache["recurrent_state"]
+        s1 = cast(torch.Tensor, cache["recurrent_state"])
         out2 = layer(torch.randn(1, 1, 64), past_key_values=cache, use_cache=True)[0]
-        s2 = cache["recurrent_state"]
+        s2 = cast(torch.Tensor, cache["recurrent_state"])
     assert out1.shape == (1, 1, 64)
     assert out2.shape == (1, 1, 64)
     assert not torch.allclose(s1, s2)  # state evolved across steps

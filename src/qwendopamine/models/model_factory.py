@@ -49,9 +49,7 @@ class ResearchDecoder(nn.Module):
             config, "hidden_size", getattr(config, "d_model", 768)
         )
         self.vocab_size = getattr(config, "vocab_size", 151936)
-        self.max_position_embeddings = getattr(
-            config, "max_position_embeddings", 32768
-        )
+        self.max_position_embeddings = getattr(config, "max_position_embeddings", 32768)
 
         self.tok_embeddings = TokenEmbeddings(self.vocab_size, self.hidden_size)
         self.pos_embeddings = PositionEmbeddings(

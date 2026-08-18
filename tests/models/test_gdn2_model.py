@@ -89,7 +89,9 @@ def test_when_all_gdn2_model_then_overfits_small_batch() -> None:
         if step_idx == 0:
             initial_loss = float(loss.detach())
         final_loss = float(loss.detach())
-    assert final_loss < initial_loss * 0.7, f"no learning: {initial_loss:.3f} -> {final_loss:.3f}"
+    assert final_loss < initial_loss * 0.7, (
+        f"no learning: {initial_loss:.3f} -> {final_loss:.3f}"
+    )
 
 
 def test_when_l2norm_disabled_then_chunk_and_recurrent_still_agree() -> None:
@@ -113,15 +115,9 @@ def test_when_l2norm_disabled_then_chunk_and_recurrent_still_agree() -> None:
 
 def test_when_auto_backend_on_cpu_then_chooses_pytorch() -> None:
     assert resolve_gdn2_backend("auto", training=True, seq_len=64) == "torch-chunk"
-    assert (
-        resolve_gdn2_backend("auto", training=False, seq_len=1) == "torch-recurrent"
-    )
-    assert (
-        resolve_gdn2_backend("auto", training=False, seq_len=32) == "torch-recurrent"
-    )
-    assert (
-        resolve_gdn2_backend("auto", training=False, seq_len=256) == "torch-chunk"
-    )
+    assert resolve_gdn2_backend("auto", training=False, seq_len=1) == "torch-recurrent"
+    assert resolve_gdn2_backend("auto", training=False, seq_len=32) == "torch-recurrent"
+    assert resolve_gdn2_backend("auto", training=False, seq_len=256) == "torch-chunk"
     # Forced backends are never auto-rewritten.
     assert resolve_gdn2_backend("torch-recurrent", training=True, seq_len=256) == (
         "torch-recurrent"
@@ -154,7 +150,9 @@ def test_when_intra_chunk_scores_then_strictly_causal() -> None:
 def test_when_gdn2_block_then_streams_recurrent_state() -> None:
     layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, chunk_size=8)
     layer.eval()
-    cache: dict[str, torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+    cache: dict[
+        str, torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ] = {}
     with torch.no_grad():
         out1 = layer(torch.randn(1, 1, 64), past_key_values=cache, use_cache=True)[0]
         s1 = cast(torch.Tensor, cache["recurrent_state"])

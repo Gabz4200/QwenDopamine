@@ -28,15 +28,9 @@ def build_rope_cache(
     """Build Rotary Position Embedding cos and sin tables."""
     theta = 1.0 / (
         base
-        ** (
-            torch.arange(0, n_elem, 2, device=device, dtype=torch.float32)
-            / n_elem
-        )
+        ** (torch.arange(0, n_elem, 2, device=device, dtype=torch.float32) / n_elem)
     )
-    seq_idx = (
-        torch.arange(seq_len, device=device, dtype=torch.float32)
-        / condense_ratio
-    )
+    seq_idx = torch.arange(seq_len, device=device, dtype=torch.float32) / condense_ratio
     idx_theta = torch.outer(seq_idx, theta)
     cos = torch.cos(idx_theta).to(dtype=dtype)
     sin = torch.sin(idx_theta).to(dtype=dtype)
@@ -99,9 +93,7 @@ class SwiGLU(nn.Module):
 class LLaMAMLP(nn.Module):
     def __init__(self, config: SurpriseGPTConfig) -> None:
         super().__init__()
-        self.swiglu = SwiGLU(
-            config.n_embd, config.intermediate_size, bias=config.bias
-        )
+        self.swiglu = SwiGLU(config.n_embd, config.intermediate_size, bias=config.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.swiglu(x)
@@ -163,10 +155,7 @@ class CausalSelfAttention(nn.Module):
         if kv_cache is not None:
             cache_k, cache_v = kv_cache
             if input_pos is not None:
-                if (
-                    max_seq_length is not None
-                    and input_pos[-1] >= max_seq_length
-                ):
+                if max_seq_length is not None and input_pos[-1] >= max_seq_length:
                     input_pos = torch.tensor(
                         max_seq_length - 1, device=input_pos.device
                     )
@@ -205,9 +194,7 @@ class Block(nn.Module):
         if config.surprise_net_layers is not None:
             self.use_surprise_net = layer_idx in config.surprise_net_layers
         elif config.surprise_net_per_layer > 0:
-            self.use_surprise_net = (
-                layer_idx % config.surprise_net_per_layer == 0
-            )
+            self.use_surprise_net = layer_idx % config.surprise_net_per_layer == 0
         else:
             self.use_surprise_net = layer_idx == (config.n_layer // 2)
 
@@ -298,13 +285,9 @@ class SurpriseGPT(nn.Module):
         self.config = config
 
         self.wte = nn.Embedding(config.padded_vocab_size, config.n_embd)
-        self.h = nn.ModuleList(
-            [Block(config, i) for i in range(config.n_layer)]
-        )
+        self.h = nn.ModuleList([Block(config, i) for i in range(config.n_layer)])
         self.ln_f = RMSNorm(config.n_embd, eps=config.norm_eps)
-        self.lm_head = nn.Linear(
-            config.n_embd, config.padded_vocab_size, bias=False
-        )
+        self.lm_head = nn.Linear(config.n_embd, config.padded_vocab_size, bias=False)
 
         self.rope_cache: RoPECache | None = None
         self.mask_cache: torch.Tensor | None = None
@@ -329,9 +312,8 @@ class SurpriseGPT(nn.Module):
                 )
         elif isinstance(module, nn.Linear):
             if self.mamba_init:
-                if (
-                    module.bias is not None
-                    and not getattr(module.bias, "_no_reinit", False)
+                if module.bias is not None and not getattr(
+                    module.bias, "_no_reinit", False
                 ):
                     nn.init.zeros_(module.bias)
             else:
@@ -363,9 +345,8 @@ class SurpriseGPT(nn.Module):
             max_seq_length = block_size
 
         if not self.config.nope:
-            if (
-                self.rope_cache is None
-                or self.rope_cache[0].size(0) < max(t, self.max_len)
+            if self.rope_cache is None or self.rope_cache[0].size(0) < max(
+                t, self.max_len
             ):
                 self.max_len = max(t, self.max_len)
                 self.rope_cache = self.build_rope_cache(idx, self.max_len)
@@ -413,9 +394,7 @@ class SurpriseGPT(nn.Module):
             if start_pos == 0:
                 self.kv_caches = []
 
-            self.kv_caches = self.kv_caches or self.build_kv_caches(
-                x, max_seq_length
-            )
+            self.kv_caches = self.kv_caches or self.build_kv_caches(x, max_seq_length)
 
             for i, block in enumerate(self.h):
                 x, self.kv_caches[i] = block(

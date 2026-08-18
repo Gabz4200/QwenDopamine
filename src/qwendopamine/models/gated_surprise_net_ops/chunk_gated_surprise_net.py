@@ -35,20 +35,39 @@ except (ImportError, RuntimeError, AttributeError):
     tl = None  # type: ignore[assignment]
 
 if TYPE_CHECKING or _HAS_TRITON:
+
     @triton.jit
     def chunk_gated_surprise_net_fwd_solve_kernel(
-        E_ptr,        # (B, H, C, d_k)
-        K_ptr,        # (B, H, C, d_k)
-        Z_ptr,        # (B, H, C, d_v)
-        Pi_ptr,       # (B, H, C, d_v)
-        S0_ptr,       # (B, H, d_k, d_v)
-        R_ptr,        # (B, H, C, d_v) output
-        stride_eb, stride_eh, stride_ec, stride_ek,
-        stride_kb, stride_kh, stride_kc, stride_kk,
-        stride_zb, stride_zh, stride_zc, stride_zv,
-        stride_pib, stride_pih, stride_pic, stride_piv,
-        stride_s0b, stride_s0h, stride_s0k, stride_s0v,
-        stride_rb, stride_rh, stride_rc, stride_rv,
+        E_ptr,  # (B, H, C, d_k)
+        K_ptr,  # (B, H, C, d_k)
+        Z_ptr,  # (B, H, C, d_v)
+        Pi_ptr,  # (B, H, C, d_v)
+        S0_ptr,  # (B, H, d_k, d_v)
+        R_ptr,  # (B, H, C, d_v) output
+        stride_eb,
+        stride_eh,
+        stride_ec,
+        stride_ek,
+        stride_kb,
+        stride_kh,
+        stride_kc,
+        stride_kk,
+        stride_zb,
+        stride_zh,
+        stride_zc,
+        stride_zv,
+        stride_pib,
+        stride_pih,
+        stride_pic,
+        stride_piv,
+        stride_s0b,
+        stride_s0h,
+        stride_s0k,
+        stride_s0v,
+        stride_rb,
+        stride_rh,
+        stride_rc,
+        stride_rv,
         B: tl.constexpr,
         H: tl.constexpr,
         C: tl.constexpr,
@@ -188,9 +207,7 @@ def _pytorch_chunk_gated_surprise_net_solve(
         E_mat = ebar.permute(0, 2, 1, 3)
         K_mat = kbar.permute(0, 2, 1, 3)
 
-        T_mat = torch.tril(
-            torch.matmul(E_mat, K_mat.transpose(-1, -2)), diagonal=-1
-        )
+        T_mat = torch.tril(torch.matmul(E_mat, K_mat.transpose(-1, -2)), diagonal=-1)
 
         S_0_v = S_0.permute(0, 1, 3, 2)
         ES0 = torch.matmul(S_0_v, E_mat.transpose(-1, -2))
@@ -218,17 +235,13 @@ def _pytorch_chunk_gated_surprise_net_solve(
         Q_mat = q_gamma.permute(0, 2, 1, 3)
         O_init = torch.matmul(Q_mat, S_0)
 
-        A_qk = torch.tril(
-            torch.matmul(Q_mat, K_mat.transpose(-1, -2)), diagonal=0
-        )
+        A_qk = torch.tril(torch.matmul(Q_mat, K_mat.transpose(-1, -2)), diagonal=0)
         O_inter = torch.matmul(A_qk, R)
         O_chunk = (O_init + O_inter).permute(0, 2, 1, 3)
         outputs.append(O_chunk)
 
         gamma_last_exp = gamma_last.unsqueeze(1)
-        K_tail = ((gamma_last_exp / gamma.clamp_min(1e-12)) * ekc).permute(
-            0, 2, 1, 3
-        )
+        K_tail = ((gamma_last_exp / gamma.clamp_min(1e-12)) * ekc).permute(0, 2, 1, 3)
         S_chunk = gamma_last.unsqueeze(-1) * S_0 + torch.matmul(
             K_tail.transpose(-1, -2), R
         )

@@ -125,12 +125,25 @@ def test_when_chunk_and_recurrent_then_match_across_chunk_sizes(
     init = torch.randn(b, h, d_k, d_v) * 0.1
 
     out_rec, state_rec = torch_recurrent_gdn2(
-        q=q, k=k, v=v, g=g, b=erase_b, w=write_w,
-        initial_state=init, output_final_state=True,
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        b=erase_b,
+        w=write_w,
+        initial_state=init,
+        output_final_state=True,
     )
     out_chk, state_chk = torch_chunk_gdn2(
-        q=q, k=k, v=v, g=g, b=erase_b, w=write_w,
-        initial_state=init, output_final_state=True, chunk_size=chunk_size,
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        b=erase_b,
+        w=write_w,
+        initial_state=init,
+        output_final_state=True,
+        chunk_size=chunk_size,
     )
 
     assert out_chk.shape == (b, t, h, d_v)
@@ -185,18 +198,35 @@ def test_when_chunk_incremental_then_matches_recurrent() -> None:
     q_pre, q_post = q[:, :split], q[:, split:]
     # Recurrent over the whole sequence, and recurrent-then-chunked.
     out_full, state_full = torch_recurrent_gdn2(
-        q=q, k=k, v=v, g=g, b=b_gate, w=w_gate,
-        initial_state=init, output_final_state=True,
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        b=b_gate,
+        w=w_gate,
+        initial_state=init,
+        output_final_state=True,
     )
     _, state_pre = torch_recurrent_gdn2(
-        q=q_pre, k=k[:, :split], v=v[:, :split], g=g[:, :split],
-        b=b_gate[:, :split], w=w_gate[:, :split],
-        initial_state=init, output_final_state=True,
+        q=q_pre,
+        k=k[:, :split],
+        v=v[:, :split],
+        g=g[:, :split],
+        b=b_gate[:, :split],
+        w=w_gate[:, :split],
+        initial_state=init,
+        output_final_state=True,
     )
     out_chk_post, state_post = torch_chunk_gdn2(
-        q=q_post, k=k[:, split:], v=v[:, split:], g=g[:, split:],
-        b=b_gate[:, split:], w=w_gate[:, split:],
-        initial_state=state_pre, output_final_state=True, chunk_size=4,
+        q=q_post,
+        k=k[:, split:],
+        v=v[:, split:],
+        g=g[:, split:],
+        b=b_gate[:, split:],
+        w=w_gate[:, split:],
+        initial_state=state_pre,
+        output_final_state=True,
+        chunk_size=4,
     )
     assert torch.allclose(out_full[:, split:], out_chk_post, atol=1e-4)
     assert state_full is not None and state_post is not None

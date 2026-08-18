@@ -112,7 +112,9 @@ def test_when_gated_surprise_net_backward_then_gradients_flow() -> None:
             assert param.grad is not None, f"Parameter {name} has no gradient"
 
 
-def test_when_gated_surprise_net_initialized_then_has_var_proj_with_zero_bias_for_unit_precision() -> None:
+def test_when_gated_surprise_net_initialized_then_has_var_proj_with_zero_bias_for_unit_precision() -> (
+    None
+):
     layer = GatedSurpriseNetAdam(hidden_size=64, num_heads=2, head_dim=32)
     assert hasattr(layer, "var_proj")
     final_linear = layer.var_proj[-1]
@@ -321,15 +323,15 @@ def test_when_hybrid_gpt_config_invalid_preset_then_raises_key_error() -> None:
         SurpriseGPTConfig.from_name("invalid_preset_name")
 
 
-def test_when_causal_self_attention_incompatible_heads_then_raises_value_error() -> None:
+def test_when_causal_self_attention_incompatible_heads_then_raises_value_error() -> (
+    None
+):
     from qwendopamine.models.surprise_gpt import (
         CausalSelfAttention,
         SurpriseGPTConfig,
     )
 
-    bad_cfg = SurpriseGPTConfig(
-        n_embd=256, n_head=7, n_query_groups=4, head_size=32
-    )
+    bad_cfg = SurpriseGPTConfig(n_embd=256, n_head=7, n_query_groups=4, head_size=32)
     with pytest.raises(ValueError, match="divisible by n_query_groups"):
         CausalSelfAttention(bad_cfg, layer_idx=0, n_embd=256)
 
@@ -387,9 +389,9 @@ def test_when_hybrid_gpt_forward_backward_then_loss_and_gradients_compute() -> N
     for name, param in model.named_parameters():
         if param.requires_grad:
             assert param.grad is not None, f"Parameter {name} missing gradient"
-            assert not torch.isnan(
-                param.grad
-            ).any(), f"Parameter {name} has NaN gradient"
+            assert not torch.isnan(param.grad).any(), (
+                f"Parameter {name} has NaN gradient"
+            )
 
 
 def test_when_chunk_gated_surprise_net_op_called_then_matches_reference() -> None:
@@ -408,7 +410,12 @@ def test_when_chunk_gated_surprise_net_op_called_then_matches_reference() -> Non
         q=q, k=k, v=v, g=g, b=b, w=w, pi=pi, chunk_size=8
     )
 
-    mem = SurpriseMemory(hidden_size=num_heads * head_k_dim, num_heads=num_heads, head_k_dim=head_k_dim, head_v_dim=head_v_dim)
+    mem = SurpriseMemory(
+        hidden_size=num_heads * head_k_dim,
+        num_heads=num_heads,
+        head_k_dim=head_k_dim,
+        head_v_dim=head_v_dim,
+    )
     sigma_sq = 1.0 / pi.clamp_min(1e-6)
     out_ref, final_state_ref, _ = mem.chunk_parallel_training_scan(
         q=q, k=k, v=v, g=g, b=b, w=w, sigma_sq=sigma_sq, chunk_size=8
@@ -423,7 +430,9 @@ def test_when_chunk_gated_surprise_net_op_called_then_matches_reference() -> Non
     assert torch.allclose(final_state, final_state_ref.memory, atol=1e-5)
 
 
-def test_when_gated_surprise_net_forward_at_full_train_chunk_size_then_output_is_finite() -> None:
+def test_when_gated_surprise_net_forward_at_full_train_chunk_size_then_output_is_finite() -> (
+    None
+):
     # Behavioral contract: the per-chunk cumulative decay gamma must not
     # underflow to zero in float32 during a training forward pass.  When
     # A_log ~ uniform_(1, 16), A reaches up to 16, and over 128 tokens

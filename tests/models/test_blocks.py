@@ -126,7 +126,9 @@ def test_when_research_decoder_forward_with_gdn2_block_then_executes_successfull
     assert not torch.isnan(logits).any()
 
 
-def test_when_token_wise_film_forward_called_then_modulates_features_correctly() -> None:
+def test_when_token_wise_film_forward_called_then_modulates_features_correctly() -> (
+    None
+):
     film = TokenWiseFiLM(dim=32)
     x = torch.randn(2, 4, 32)
     cond = torch.randn(2, 64)

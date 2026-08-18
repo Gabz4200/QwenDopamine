@@ -22,7 +22,9 @@ def test_when_token_wise_film_initialized_then_has_correct_dimension() -> None:
     assert film.cond_dim == 64
 
 
-def test_when_token_wise_film_forward_with_unit_scale_and_zero_shift_then_matches_modulation() -> None:
+def test_when_token_wise_film_forward_with_unit_scale_and_zero_shift_then_matches_modulation() -> (
+    None
+):
     dim = 16
     film = TokenWiseFiLM(dim=dim)
     x = torch.randn(2, 4, dim)
@@ -33,7 +35,9 @@ def test_when_token_wise_film_forward_with_unit_scale_and_zero_shift_then_matche
     assert not torch.isnan(output).any()
 
 
-def test_when_token_wise_film_receives_2d_cond_then_broadcasts_over_sequence_dimension() -> None:
+def test_when_token_wise_film_receives_2d_cond_then_broadcasts_over_sequence_dimension() -> (
+    None
+):
     dim = 16
     film = TokenWiseFiLM(dim=dim)
     x = torch.randn(3, 5, dim)
@@ -44,7 +48,9 @@ def test_when_token_wise_film_receives_2d_cond_then_broadcasts_over_sequence_dim
     assert not torch.isnan(output).any()
 
 
-def test_when_token_wise_film_forward_backward_then_computes_gradients_for_x_and_cond() -> None:
+def test_when_token_wise_film_forward_backward_then_computes_gradients_for_x_and_cond() -> (
+    None
+):
     dim = 16
     film = TokenWiseFiLM(dim=dim)
     x = torch.randn(2, 4, dim, requires_grad=True)
@@ -63,17 +69,23 @@ def test_when_token_wise_film_forward_backward_then_computes_gradients_for_x_and
 # --- LearnableFourierFeatures Tests ---
 
 
-def test_when_learnable_fourier_features_initialized_with_odd_f_dim_then_raises_value_error() -> None:
+def test_when_learnable_fourier_features_initialized_with_odd_f_dim_then_raises_value_error() -> (
+    None
+):
     with pytest.raises(ValueError, match="divisible by 2"):
         LearnableFourierFeatures(pos_dim=4, f_dim=15, h_dim=32, d_dim=64)
 
 
-def test_when_learnable_fourier_features_initialized_with_incompatible_g_dim_then_raises_value_error() -> None:
+def test_when_learnable_fourier_features_initialized_with_incompatible_g_dim_then_raises_value_error() -> (
+    None
+):
     with pytest.raises(ValueError, match="divisible by g_dim"):
         LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=5)
 
 
-def test_when_learnable_fourier_features_forward_with_include_input_true_then_outputs_expected_shape() -> None:
+def test_when_learnable_fourier_features_forward_with_include_input_true_then_outputs_expected_shape() -> (
+    None
+):
     lff = LearnableFourierFeatures(
         pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=2, include_input=True
     )
@@ -83,7 +95,9 @@ def test_when_learnable_fourier_features_forward_with_include_input_true_then_ou
     assert not torch.isnan(out).any()
 
 
-def test_when_learnable_fourier_features_forward_with_include_input_false_then_outputs_expected_shape() -> None:
+def test_when_learnable_fourier_features_forward_with_include_input_false_then_outputs_expected_shape() -> (
+    None
+):
     lff = LearnableFourierFeatures(
         pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1, include_input=False
     )
@@ -143,7 +157,9 @@ def test_when_reward_encoder_forward_with_2d_rewards_then_processes_correctly() 
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_forward_with_3d_multi_rewards_then_computes_stats_correctly() -> None:
+def test_when_reward_encoder_forward_with_3d_multi_rewards_then_computes_stats_correctly() -> (
+    None
+):
     encoder = RewardEncoder(dim=32, hidden_dim=32)
     x = torch.randn(2, 4, 32)
     # (B=2, L=4, K=3) multi-reward tensor
@@ -154,7 +170,9 @@ def test_when_reward_encoder_forward_with_3d_multi_rewards_then_computes_stats_c
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_forward_with_constant_rewards_then_produces_valid_output() -> None:
+def test_when_reward_encoder_forward_with_constant_rewards_then_produces_valid_output() -> (
+    None
+):
     encoder = RewardEncoder(dim=16, hidden_dim=16)
     x = torch.randn(2, 3, 16)
     # All reward values equal to 1.0 (median == mean == max == min)
@@ -180,7 +198,9 @@ def test_when_reward_encoder_device_or_dtype_mismatched_then_auto_aligns() -> No
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_backward_called_then_gradients_flow_to_inputs_and_params() -> None:
+def test_when_reward_encoder_backward_called_then_gradients_flow_to_inputs_and_params() -> (
+    None
+):
     encoder = RewardEncoder(dim=16, hidden_dim=16)
     x = torch.randn(2, 3, 16, requires_grad=True)
     reward_values = torch.randn(2, 3, 2, requires_grad=True)
@@ -224,7 +244,9 @@ def test_when_reward_encoder_receives_variable_sequence_lengths_then_executes_su
     assert not torch.isnan(out).any()
 
 
-def test_when_reward_encoder_receives_single_unbatched_embedding_then_modulates_correctly() -> None:
+def test_when_reward_encoder_receives_single_unbatched_embedding_then_modulates_correctly() -> (
+    None
+):
     encoder = RewardEncoder(dim=32, hidden_dim=64)
     # Single 1D embedding (dim,) and 1D rewards (K=5,)
     x_single = torch.randn(32)
@@ -235,7 +257,9 @@ def test_when_reward_encoder_receives_single_unbatched_embedding_then_modulates_
     assert not torch.isnan(out).any()
 
 
-def test_when_reward_encoder_receives_single_step_batched_embeddings_then_modulates_correctly() -> None:
+def test_when_reward_encoder_receives_single_step_batched_embeddings_then_modulates_correctly() -> (
+    None
+):
     encoder = RewardEncoder(dim=32, hidden_dim=64)
     # Single step batched embeddings (B=4, dim=32) and 2D rewards (B=4, K=8)
     x_batched = torch.randn(4, 32)

@@ -159,11 +159,15 @@ if not _HAS_TRITON_FLA:
 
         @staticmethod
         def heuristics(*args, **kwargs):
-            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            return lambda fn: (
+                _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            )
 
         @staticmethod
         def autotune(*args, **kwargs):
-            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            return lambda fn: (
+                _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            )
 
         @staticmethod
         def cdiv(x, y):
@@ -248,7 +252,6 @@ def pre_process_fwd_kernel_merged(
         stride_v = H * V
         i_v = i_col
 
-        # Initialize h accumulators
         b_h1 = tl.zeros([64, BLOCK_SIZE], dtype=tl.float32)
         if K > 64:
             b_h2 = tl.zeros([64, BLOCK_SIZE], dtype=tl.float32)
@@ -446,7 +449,6 @@ def pre_process_fwd_kernel_merged(
         b_m = tl.where(row[:, None] == col[None, :], 1.0, 0.0)
 
         for i_t in range(NT):
-            # Load k and w with full BK1 rows
             p_k = tl.make_block_ptr(
                 k, (T, K), (stride_k, 1), (i_t * BT, 0), (BT, BK1), (1, 0)
             )
@@ -564,7 +566,6 @@ def merge_fwd_bwd_kernel(
         if i_seq >= NUM_SEQ_ENTRIES:
             return
 
-        # Load offsets for this sequence
         ss_start = tl.load(seq_offsets + i_seq).to(tl.int32)
         ss_end = tl.load(seq_offsets + i_seq + 1).to(tl.int32)
         init_base = tl.load(init_offsets + i_seq).to(tl.int32)
@@ -775,7 +776,6 @@ def pre_process_bwd_kernel_merged(
         stride_v = H * V
         i_v = i_col
 
-        # Initialize dh accumulators
         b_dh1 = tl.zeros([64, BLOCK_SIZE], dtype=tl.float32)
         if K > 64:
             b_dh2 = tl.zeros([64, BLOCK_SIZE], dtype=tl.float32)
@@ -817,7 +817,6 @@ def pre_process_bwd_kernel_merged(
             )
             b_do = tl.load(p_do, boundary_check=(0, 1))
 
-            # Update dv
             p_k = tl.make_block_ptr(
                 k, (T, K), (stride_qk, 1), (i_t * BT, 0), (BT, 64), (1, 0)
             )
@@ -907,7 +906,6 @@ def pre_process_bwd_kernel_merged(
                 b_dv *= tl.where(m_t, exp(bg_last - b_g), 0)[:, None]
             b_dv += tl.load(p_dv, boundary_check=(0, 1))
 
-            # Update dh
             p_w = tl.make_block_ptr(
                 w, (K, T), (1, stride_w), (0, i_t * BT), (64, BT), (0, 1)
             )
@@ -1042,7 +1040,6 @@ def pre_process_bwd_kernel_merged(
             # Reverse order for backward
             i_t = NT - 1 - _i_t
 
-            # Load k and w with full BK1 rows
             p_k = tl.make_block_ptr(
                 k, (T, K), (stride_qk, 1), (i_t * BT, 0), (BT, BK1), (1, 0)
             )
@@ -1397,7 +1394,6 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
     if STORE_FINAL_STATE:
         ht = ht + i_nh * K * V
 
-    # load initial state
     if USE_INITIAL_STATE:
         if TRANSPOSE_STATE:
             p_h0_1 = tl.make_block_ptr(
@@ -1985,7 +1981,6 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
 
         b_do = tl.load(p_do, boundary_check=(0, 1))
 
-        # Update dv
         p_k = tl.make_block_ptr(k, (T, K), (Hq * K, 1), (i_t * BT, 0), (BT, 64), (1, 0))
         b_k = tl.load(p_k, boundary_check=(0, 1))
         if USE_GK:
@@ -2052,7 +2047,6 @@ def chunk_gated_delta_rule_bwd_kernel_dhu_blockdim64(
         b_dv += tl.load(p_dv, boundary_check=(0, 1))
 
         tl.store(p_dv2, b_dv.to(p_dv.dtype.element_ty), boundary_check=(0, 1))
-        # Update dh
         p_w = tl.make_block_ptr(w, (K, T), (1, H * K), (0, i_t * BT), (64, BT), (0, 1))
         p_q = tl.make_block_ptr(q, (K, T), (1, Hq * K), (0, i_t * BT), (64, BT), (0, 1))
         b_w = tl.load(p_w, boundary_check=(0, 1))
@@ -4648,7 +4642,6 @@ def chunk_kda_fwd(
         transpose_state_layout=transpose_state_layout,
     )
     if disable_recompute is False:
-        # Delete to save memory
         w, u, qg, kg, v_new = None, None, None, None, None
         if not return_intermediate_states:
             # Only delete h if not requested for inference

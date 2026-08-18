@@ -409,9 +409,7 @@ class SurpriseMemory(nn.Module):
             L_3d = L.reshape(num_systems, c_len, c_len)
             RHS_3d = RHS.reshape(num_systems, c_len, 1)
 
-            R_vec_3d = torch.linalg.solve_triangular(
-                L_3d, RHS_3d, upper=False
-            )
+            R_vec_3d = torch.linalg.solve_triangular(L_3d, RHS_3d, upper=False)
             R_vec = R_vec_3d.view(bs, self.num_heads, self.head_v_dim, c_len)
             R = R_vec.permute(0, 1, 3, 2)
 
@@ -525,7 +523,9 @@ class GatedSurpriseNet(nn.Module):
             fp32_decay = getattr(cfg, "fp32_decay", fp32_decay)
             max_write_bound = getattr(cfg, "max_write_bound", max_write_bound)
             max_erase_bound = getattr(cfg, "max_erase_bound", max_erase_bound)
-            max_precision_bound = getattr(cfg, "max_precision_bound", max_precision_bound)
+            max_precision_bound = getattr(
+                cfg, "max_precision_bound", max_precision_bound
+            )
         elif isinstance(hidden_size_or_config, dict):
             cfg_dict = hidden_size_or_config
             hidden_size = cfg_dict.get("hidden_size", 2048)
@@ -547,7 +547,9 @@ class GatedSurpriseNet(nn.Module):
             fp32_decay = cfg_dict.get("fp32_decay", fp32_decay)
             max_write_bound = cfg_dict.get("max_write_bound", max_write_bound)
             max_erase_bound = cfg_dict.get("max_erase_bound", max_erase_bound)
-            max_precision_bound = cfg_dict.get("max_precision_bound", max_precision_bound)
+            max_precision_bound = cfg_dict.get(
+                "max_precision_bound", max_precision_bound
+            )
         elif hidden_size is None:
             hidden_size = int(hidden_size_or_config)
 
@@ -635,7 +637,9 @@ class GatedSurpriseNet(nn.Module):
         )
 
         self.A_log = nn.Parameter(
-            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0))
+            torch.log(
+                torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0)
+            )
         )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
@@ -668,7 +672,10 @@ class GatedSurpriseNet(nn.Module):
         # Initialize var_proj final linear bias to 0.0 after apply() so initial
         # precision pi ~ 1.0 (max_precision_bound * sigmoid(0) = 2.0 * 0.5 = 1.0)
         # without running redundant zeroing on every submodule in the tree.
-        if isinstance(self.var_proj[-1], nn.Linear) and self.var_proj[-1].bias is not None:
+        if (
+            isinstance(self.var_proj[-1], nn.Linear)
+            and self.var_proj[-1].bias is not None
+        ):
             nn.init.zeros_(self.var_proj[-1].bias)
 
     def _initialize_weights(self, module: nn.Module) -> None:
@@ -765,7 +772,13 @@ class GatedSurpriseNet(nn.Module):
                         past_key_values.update_recurrent_state(
                             state_tensor, self.layer_idx
                         )
-                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                    except (
+                        TypeError,
+                        ValueError,
+                        AttributeError,
+                        RuntimeError,
+                        IndexError,
+                    ) as e:
                         _warn_fallback_once(f"update_recurrent_state failed: {e}")
                 elif state_tensor is not None:
                     rec_dict = getattr(layer_cache, "recurrent_states", None)
@@ -783,7 +796,13 @@ class GatedSurpriseNet(nn.Module):
                         past_key_values.update_conv_state(
                             cast(Any, conv_state), self.layer_idx
                         )
-                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                    except (
+                        TypeError,
+                        ValueError,
+                        AttributeError,
+                        RuntimeError,
+                        IndexError,
+                    ) as e:
                         _warn_fallback_once(f"update_conv_state failed: {e}")
                 elif conv_state is not None:
                     conv_dict = getattr(layer_cache, "conv_states", None)
@@ -847,9 +866,8 @@ class GatedSurpriseNet(nn.Module):
             k = F.silu(self.k_proj(hidden_states))
             v = F.silu(self.v_proj(hidden_states))
 
-        g = (
-            -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
-            * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
+        g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
+            self.f_proj(hidden_states).float() + self.dt_bias
         )
         g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
         b = self.max_erase_bound * self.b_proj(hidden_states).sigmoid()
@@ -938,7 +956,9 @@ class GatedSurpriseNet(nn.Module):
                 )
 
                 pi_tensor = 1.0 / (sigma_sq.float().clamp_min(1e-6))
-                init_mem = recurrent_state.memory if recurrent_state is not None else None
+                init_mem = (
+                    recurrent_state.memory if recurrent_state is not None else None
+                )
                 out_op, final_mem = _chunk_gated_surprise_net_op(
                     q=q,
                     k=k,

@@ -61,17 +61,6 @@ except (ImportError, AttributeError) as e:
     _HAS_TRITON_OPS = False
     _warn_fallback_once(f"Triton ops failed to load: {e}")
 
-
-# ---------------------------------------------------------------------------
-# Backend selection.
-#
-# The GDN-2 maths never knows how it is accelerated. The ``backend`` string on
-# ``GatedDeltaNet2`` is the only place device/training/sequence-length decisions
-# live; ``resolve_gdn2_backend`` maps a requested name to the concrete path used
-# by ``forward``. ``torch*`` backends run on any device; ``triton``/``fla`` are
-# optional, lazily-imported CUDA accelerators of the same maths.
-# ---------------------------------------------------------------------------
-
 GDN2_BACKENDS = (
     "auto",
     "torch",
@@ -357,9 +346,9 @@ def torch_chunk_gdn2(
 
         # Decay-normalized factors (paper Eq. 33).
         gam_safe = gamma.clamp_min(1e-12)
-        kbar = k_c / gam_safe               # [B, H, C, K]
-        ebar = gamma * (b_c * k_c)          # [B, H, C, K]
-        z = w_c * v_c                       # [B, H, C, V]
+        kbar = k_c / gam_safe  # [B, H, C, K]
+        ebar = gamma * (b_c * k_c)  # [B, H, C, K]
+        z = w_c * v_c  # [B, H, C, V]
 
         # WY triangular solve.
         y, u = compute_gdn2_wy_coefficients(kbar, ebar, z, device=q.device)
@@ -368,7 +357,7 @@ def torch_chunk_gdn2(
         delta = u - torch.matmul(y, state)  # [B, H, C, V]
 
         # Output read: out = (gamma*q) @ S_start + Aqk @ delta.
-        q_gamma = gamma * q_c               # [B, H, C, K]
+        q_gamma = gamma * q_c  # [B, H, C, K]
         out_inter = torch.matmul(q_gamma, state)  # [B, H, C, V]
         aqk = compute_gdn2_intra_chunk_scores(q_c, gamma, kbar)  # [B, H, C, C]
         out_c = out_inter + torch.matmul(aqk, delta)
@@ -379,7 +368,7 @@ def torch_chunk_gdn2(
             state + torch.matmul(kbar.transpose(-1, -2), delta)
         )
 
-    out = torch.cat(outputs, dim=2)         # [B, H, T, V]
+    out = torch.cat(outputs, dim=2)  # [B, H, T, V]
     out = rearrange(out, "b h t d -> b t h d").to(out_dtype)
 
     final_state: torch.Tensor | None = None
@@ -516,7 +505,9 @@ class GatedDeltaNet2(nn.Module):
             norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
             allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
             expand_v = getattr(cfg, "expand_v", expand_v)
-            chunk_size = getattr(cfg, "chunk_size", getattr(cfg, "train_chunk_size", chunk_size))
+            chunk_size = getattr(
+                cfg, "chunk_size", getattr(cfg, "train_chunk_size", chunk_size)
+            )
             backend = getattr(cfg, "backend", backend)
             compile_backend = getattr(cfg, "compile_backend", compile_backend)
             fp32_decay = getattr(cfg, "fp32_decay", fp32_decay)
@@ -579,7 +570,9 @@ class GatedDeltaNet2(nn.Module):
 
         # Decay-gate parameters
         self.A_log = nn.Parameter(
-            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0))
+            torch.log(
+                torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0)
+            )
         )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
@@ -607,10 +600,13 @@ class GatedDeltaNet2(nn.Module):
         self._compiled_chunk: Any = None
         if self.compile_backend:
             try:
-                self._compiled_chunk = torch.compile(
-                    torch_chunk_gdn2, dynamic=True
-                )
-            except (RuntimeError, ValueError, TypeError, AttributeError) as e:  # compile is purely optional
+                self._compiled_chunk = torch.compile(torch_chunk_gdn2, dynamic=True)
+            except (
+                RuntimeError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ) as e:  # compile is purely optional
                 _warn_fallback_once(f"torch.compile unavailable ({e})")
                 self._compiled_chunk = None
 
@@ -707,7 +703,13 @@ class GatedDeltaNet2(nn.Module):
                         past_key_values.update_recurrent_state(
                             recurrent_state, self.layer_idx
                         )
-                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                    except (
+                        TypeError,
+                        ValueError,
+                        AttributeError,
+                        RuntimeError,
+                        IndexError,
+                    ) as e:
                         _warn_fallback_once(f"update_recurrent_state failed: {e}")
                 elif recurrent_state is not None:
                     rec_dict = getattr(layer_cache, "recurrent_states", None)
@@ -725,7 +727,13 @@ class GatedDeltaNet2(nn.Module):
                         past_key_values.update_conv_state(
                             cast(Any, conv_state), self.layer_idx
                         )
-                    except (TypeError, ValueError, AttributeError, RuntimeError, IndexError) as e:
+                    except (
+                        TypeError,
+                        ValueError,
+                        AttributeError,
+                        RuntimeError,
+                        IndexError,
+                    ) as e:
                         _warn_fallback_once(f"update_conv_state failed: {e}")
                 elif conv_state is not None:
                     conv_dict = getattr(layer_cache, "conv_states", None)
@@ -786,9 +794,8 @@ class GatedDeltaNet2(nn.Module):
             k = F.silu(self.k_proj(hidden_states))
             v = F.silu(self.v_proj(hidden_states))
 
-        g = (
-            -self.A_log.float().exp().repeat_interleave(self.head_k_dim)
-            * F.softplus(self.f_proj(hidden_states).float() + self.dt_bias)
+        g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
+            self.f_proj(hidden_states).float() + self.dt_bias
         )
         # The decay activation is always computed in fp32 (paper Sec. D.1); toggle
         # whether it stays fp32 end-to-end or is cast to the model dtype.
@@ -864,8 +871,16 @@ class GatedDeltaNet2(nn.Module):
                     )
                 else:
                     raise RuntimeError("Triton ops present but no kernel is callable")
-            except (RuntimeError, TypeError, ValueError, AttributeError, ImportError) as e:
-                _warn_fallback_once(f"Triton kernel failed ({e}); falling back to pure PyTorch")
+            except (
+                RuntimeError,
+                TypeError,
+                ValueError,
+                AttributeError,
+                ImportError,
+            ) as e:
+                _warn_fallback_once(
+                    f"Triton kernel failed ({e}); falling back to pure PyTorch"
+                )
                 backend = "torch-chunk" if mode == "chunk" else "torch-recurrent"
 
         if o is None:
@@ -920,7 +935,6 @@ class GatedDeltaNet2(nn.Module):
                 else:
                     o, recurrent_state = _chunk_call()
 
-        # Update cache
         if use_cache or past_key_values is not None:
             self._update_cache(
                 past_key_values,

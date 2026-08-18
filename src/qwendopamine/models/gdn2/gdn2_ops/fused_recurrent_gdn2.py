@@ -96,11 +96,15 @@ if not _HAS_TRITON_FLA:
 
         @staticmethod
         def heuristics(*args, **kwargs):
-            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            return lambda fn: (
+                _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            )
 
         @staticmethod
         def autotune(*args, **kwargs):
-            return lambda fn: _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            return lambda fn: (
+                _DummyKernel(fn) if not isinstance(fn, _DummyKernel) else fn
+            )
 
         @staticmethod
         def cdiv(x, y):

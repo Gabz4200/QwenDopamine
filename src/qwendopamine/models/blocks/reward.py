@@ -344,9 +344,7 @@ class TokenWiseFiLM(nn.Module):
                     f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
                 )
             cond = cond.squeeze(1)
-        elif x.dim() == cond.dim():
-            pass
-        else:
+        elif x.dim() != cond.dim():
             raise ValueError(
                 "Unsupported combination of x and cond shapes: "
                 f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."

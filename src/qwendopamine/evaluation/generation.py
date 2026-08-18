@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from qwendopamine.utils import get_model_device as _get_model_device
+from qwendopamine.utils import get_model_device
 
 
 def generate_text(
@@ -31,7 +31,7 @@ def generate_text(
         str: Decoded generated output text string without special tokens.
     """
     model.eval()
-    device = _get_model_device(model)
+    device = get_model_device(model)
     inputs = tokenizer(prompt, return_tensors="pt")
     input_ids = inputs.input_ids.to(device)
     attention_mask = inputs.attention_mask.to(device)

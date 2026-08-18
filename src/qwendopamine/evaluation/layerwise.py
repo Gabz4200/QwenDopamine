@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from qwendopamine.utils import get_model_device as _get_model_device
+from qwendopamine.utils import get_model_device
 
 
 def layerwise_stats(
@@ -27,7 +27,7 @@ def layerwise_stats(
     """
     model.eval()
     stats: dict[str, float] = {}
-    device = _get_model_device(model)
+    device = get_model_device(model)
     with torch.no_grad():
         for step, batch in enumerate(dataloader):
             if step >= max_steps:

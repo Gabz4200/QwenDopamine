@@ -192,6 +192,7 @@ class SurpriseMemory(nn.Module):
         self.head_v_dim = head_v_dim
         self.nll_var_eps = nll_var_eps
         self.nll_full = nll_full
+        self._eye_cache: dict[tuple[int, torch.device], torch.Tensor] = {}
 
         init = torch.zeros(num_heads, head_k_dim, head_v_dim)
         if learnable_init:
@@ -351,9 +352,6 @@ class SurpriseMemory(nn.Module):
 
         outputs: list[torch.Tensor] = []
         losses: list[torch.Tensor] = []
-
-        if not hasattr(self, "_eye_cache") or not isinstance(self._eye_cache, dict):
-            self._eye_cache: dict[tuple[int, torch.device], torch.Tensor] = {}
 
         for start in range(0, ts, chunk_size):
             end = min(start + chunk_size, ts)

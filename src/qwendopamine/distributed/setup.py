@@ -14,8 +14,6 @@ def _default_backend() -> str:
     """
     if torch.cuda.is_available():
         return "nccl"
-    if torch.backends.mps.is_available():
-        return "gloo"
     return "gloo"
 
 

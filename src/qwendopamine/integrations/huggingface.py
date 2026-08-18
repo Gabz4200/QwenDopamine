@@ -251,54 +251,13 @@ class GatedSurpriseNetHFBlock(nn.Module):
             self.config: GatedSurpriseNetHFConfig = config
         elif isinstance(config, dict):
             self.config = GatedSurpriseNetHFConfig(**config)
+        elif hasattr(config, "to_dict"):
+            self.config = GatedSurpriseNetHFConfig(**config.to_dict())
         else:
-            attrs = {
-                k: getattr(config, k)
-                for k in [
-                    "hidden_size",
-                    "num_heads",
-                    "head_dim",
-                    "num_v_heads",
-                    "expand_v",
-                    "conv_size",
-                    "conv_bias",
-                    "allow_neg_eigval",
-                    "norm_eps",
-                    "local_adam_lr",
-                    "local_adam_beta1",
-                    "local_adam_beta2",
-                    "local_adam_eps",
-                    "nll_var_eps",
-                    "nll_full",
-                    "learnable_init_state",
-                    "train_chunk_size",
-                ]
-                if hasattr(config, k)
-            }
-            self.config = GatedSurpriseNetHFConfig(**attrs)
+            self.config = config  # type: ignore[assignment]
 
         self.layer_idx = layer_idx
-        kwargs_dict = {
-            "hidden_size": getattr(self.config, "hidden_size", 2048),
-            "num_heads": getattr(self.config, "num_heads", 16),
-            "head_dim": getattr(self.config, "head_dim", 128),
-            "num_v_heads": getattr(self.config, "num_v_heads", None),
-            "expand_v": getattr(self.config, "expand_v", 1.0),
-            "conv_size": getattr(self.config, "conv_size", 4),
-            "conv_bias": getattr(self.config, "conv_bias", False),
-            "allow_neg_eigval": getattr(self.config, "allow_neg_eigval", False),
-            "norm_eps": getattr(self.config, "norm_eps", 1e-5),
-            "local_adam_lr": getattr(self.config, "local_adam_lr", 1e-3),
-            "local_adam_beta1": getattr(self.config, "local_adam_beta1", 0.9),
-            "local_adam_beta2": getattr(self.config, "local_adam_beta2", 0.999),
-            "local_adam_eps": getattr(self.config, "local_adam_eps", 1e-8),
-            "nll_var_eps": getattr(self.config, "nll_var_eps", 1e-6),
-            "nll_full": getattr(self.config, "nll_full", False),
-            "learnable_init_state": getattr(self.config, "learnable_init_state", False),
-            "train_chunk_size": getattr(self.config, "train_chunk_size", 128),
-        }
-        kwargs_dict.update(kwargs)
-        self.mixer = GatedSurpriseNetAdam(layer_idx=layer_idx, **kwargs_dict)
+        self.mixer = GatedSurpriseNetAdam(self.config, layer_idx=layer_idx, **kwargs)
 
     def forward(
         self,
@@ -366,30 +325,14 @@ class HFIntegration:
         data: dict[str, Any] = {}
         if isinstance(config_or_dict, dict):
             data.update(config_or_dict)
+        elif hasattr(config_or_dict, "to_dict"):
+            data.update(config_or_dict.to_dict())
         elif config_or_dict is not None:
             data.update(
                 {
                     k: getattr(config_or_dict, k)
-                    for k in [
-                        "hidden_size",
-                        "num_heads",
-                        "head_dim",
-                        "num_v_heads",
-                        "expand_v",
-                        "conv_size",
-                        "conv_bias",
-                        "allow_neg_eigval",
-                        "norm_eps",
-                        "local_adam_lr",
-                        "local_adam_beta1",
-                        "local_adam_beta2",
-                        "local_adam_eps",
-                        "nll_var_eps",
-                        "nll_full",
-                        "learnable_init_state",
-                        "train_chunk_size",
-                    ]
-                    if hasattr(config_or_dict, k)
+                    for k in dir(config_or_dict)
+                    if not k.startswith("_") and not callable(getattr(config_or_dict, k))
                 }
             )
         data.update(kwargs)

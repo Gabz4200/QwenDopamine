@@ -41,15 +41,9 @@ def _warn_fallback_once(reason: str) -> None:
 # Safe optional Triton/FLA ops imports
 _HAS_TRITON_OPS = False
 try:
-    from .gdn2_ops.chunk_gdn2 import (
-        _HAS_TRITON_FLA as _CHUNK_HAS_TRITON,
-    )
-    from .gdn2_ops.chunk_gdn2 import (
-        chunk_gdn2 as _triton_chunk_gdn2,
-    )
-    from .gdn2_ops.fused_recurrent_gdn2 import (
-        _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON,
-    )
+    from .gdn2_ops.chunk_gdn2 import _HAS_TRITON_FLA as _CHUNK_HAS_TRITON
+    from .gdn2_ops.chunk_gdn2 import chunk_gdn2 as _triton_chunk_gdn2
+    from .gdn2_ops.fused_recurrent_gdn2 import _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON
     from .gdn2_ops.fused_recurrent_gdn2 import (
         fused_recurrent_gdn2 as _triton_fused_recurrent_gdn2,
     )
@@ -101,9 +95,6 @@ def resolve_gdn2_backend(
     if seq_len <= 64:
         return "torch-recurrent"
     return "torch-chunk"
-
-
-# Pure PyTorch reference functions for GDN-2 recurrence
 
 
 def torch_recurrent_gdn2(
@@ -163,12 +154,12 @@ def torch_recurrent_gdn2(
     exp_g = torch.exp(g)
 
     for t in range(seq_len):
-        q_t = q[:, t]  # [B, H, d_k]
-        k_t = k[:, t]  # [B, H, d_k]
-        v_t = v[:, t]  # [B, H, d_v]
-        g_t = exp_g[:, t]  # [B, H, d_k]
-        b_t = b_f[:, t]  # [B, H, d_k]
-        w_t = w_f[:, t]  # [B, H, d_v]
+        q_t = q[:, t]
+        k_t = k[:, t]
+        v_t = v[:, t]
+        g_t = exp_g[:, t]
+        b_t = b_f[:, t]
+        w_t = w_f[:, t]
 
         # 1. Decay state along key channels
         state = state * g_t.unsqueeze(-1)
@@ -378,9 +369,6 @@ def torch_chunk_gdn2(
     return out, final_state
 
 
-# Pure PyTorch modules for short convolution and gated RMSNorm
-
-
 class ShortConvolution(nn.Module):
     """Pure PyTorch depthwise 1D short convolution layer with causal padding."""
 
@@ -455,9 +443,6 @@ class RMSNormGated(nn.Module):
         variance = x.pow(2).mean(-1, keepdim=True)
         normed = x * torch.rsqrt(variance + self.eps) * self.weight
         return normed * F.silu(z)
-
-
-# Hardware-agnostic GatedDeltaNet2 module
 
 
 class GatedDeltaNet2(nn.Module):

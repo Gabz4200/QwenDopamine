@@ -78,21 +78,25 @@ class TrainingLoop:
                 loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
                 loss = loss / self.config.grad_accum_steps
 
-            self.scaler.scale(loss).backward()  # type: ignore[arg-type]
+            loss_tensor: torch.Tensor = (
+                loss if isinstance(loss, torch.Tensor) else torch.as_tensor(loss)
+            )
+            self.scaler.scale(loss_tensor).backward()
 
             if accum % self.config.grad_accum_steps == 0:
-                self._optimizer_step()
-                self.scheduler.step()
-                self.optimizer.zero_grad(set_to_none=True)
-                self.global_step += 1
+                self._step_optimizer()
                 if self.global_step >= self.config.max_steps:
                     break
 
         if accum > 0 and accum % self.config.grad_accum_steps != 0:
-            self._optimizer_step()
-            self.scheduler.step()
-            self.optimizer.zero_grad(set_to_none=True)
-            self.global_step += 1
+            self._step_optimizer()
+
+    def _step_optimizer(self) -> None:
+        r"""Unscale, clip gradients, step optimizer/scheduler, and advance global step."""
+        self._optimizer_step()
+        self.scheduler.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        self.global_step += 1
 
     def _optimizer_step(self) -> None:
         r"""Unscale gradients, clip, and perform an optimizer step."""

@@ -1,5 +1,6 @@
 defaults:
-  - train: frozen_backbone
+  - /train: frozen_backbone
+  - _self_
 
 experiment:
   name: ablation_unfreezing

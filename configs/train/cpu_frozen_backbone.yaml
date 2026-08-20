@@ -1,5 +1,6 @@
 defaults:
-  - train: cpu
+  - /train: cpu
+  - _self_
 
 freeze:
   base_model: true

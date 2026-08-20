@@ -1,6 +1,7 @@
 defaults:
-  - data: pretrain
-  - model: base
+  - /data: pretrain
+  - /model: base
+  - _self_
 
 train:
   max_steps: 100000

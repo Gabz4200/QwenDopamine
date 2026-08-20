@@ -65,9 +65,6 @@ qwendopamine = "qwendopamine:main"
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
 
-[tool.ruff]
-exclude = ["notebooks/**"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]

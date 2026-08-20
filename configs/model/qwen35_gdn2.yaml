@@ -1,5 +1,6 @@
 defaults:
-  - base: base
+  - /model: base
+  - _self_
 
 model_type: qwen35_gdn2
 base_model: Qwen/Qwen3.5-0.8B

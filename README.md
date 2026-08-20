@@ -17,16 +17,13 @@ It provides a pure PyTorch training and evaluation harness paired with Hugging F
 - `annotations/` — experimental logs and run diagnostic annotations.
 - `assets/` — metrics plots, visualization charts, and benchmark figures.
 - `configs/` — Hydra configuration hierarchy for models, training protocols, and ablation studies.
-- `docs/` — design specifications, architecture documentation, and run history insights.
-- `notebooks/` — GPU verification scripts (e.g. `test_gdn2_gpu.py` for Kaggle).
-- `scripts/` — shell utility wrappers for training and evaluation.
 - `src/qwendopamine/` — core Python package:
   - `models/` — model factory, core layers, modular Qwen3.5, and block registry.
   - `integrations/` — Hugging Face, GGUF, safetensors, and tokenizer loaders.
   - `training/` — training loop, learning rate schedules, freezing logic, and metrics.
   - `evaluation/` — perplexity computation, generation, and layerwise stats.
   - `distributed/` — process group setup and DDP utilities.
-  - `cli/` — Hydra CLI entrypoints (`train.py`, `evaluate.py`, `convert.py`).
+  - `cli/` — Hydra CLI entrypoint (`train.py`).
 - `tests/` — behavioral pytest suite covering models, schedules, normalization, and weight loaders.
 
 ## Setup & Usage
@@ -52,8 +49,8 @@ uv run pytest -v
 ### GPU Pre-Training (2x T4 DDP / Single GPU)
 
 ```bash
-# Run GDN-2 GPU verification script
-torchrun --nproc_per_node=2 notebooks/test_gdn2_gpu.py
+# Run with a GPU training Hydra config (e.g. single_gpu or fsdp2)
+uv run python -m qwendopamine.cli.train --config-name train/single_gpu
 ```
 
 ## Development Conventions

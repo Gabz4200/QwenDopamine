@@ -1,5 +1,6 @@
 defaults:
-  - train: single_gpu
+  - /train: single_gpu
+  - _self_
 
 freeze:
   base_model: true

@@ -7,15 +7,13 @@ import types
 import pytest
 import torch
 
-from qwendopamine.blocks import (
+from qwendopamine.models.blocks import (
+    BLOCKS,
     GatedDeltaNetBlock,
+    LearnableFourierFeatures,
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
     QwenDecoderLayer,
-)
-from qwendopamine.models.blocks import (
-    BLOCKS,
-    LearnableFourierFeatures,
     RewardEncoder,
     TokenWiseFiLM,
     build_block,

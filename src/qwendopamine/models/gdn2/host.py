@@ -1,6 +1,14 @@
 # Copyright (c) 2026, NVIDIA CORPORATION & QwenDopamine Authors.
 # Licensed under the Apache License 2.0 or MIT license.
 
+"""Lightweight decoder-only host stacking :class:`GatedDeltaNet2` blocks.
+
+This is a minimal GPT-style host (embedding -> GDN-2 blocks -> final norm ->
+LM head) used by the model initialization tests. The production hybrid model
+is :class:`qwendopamine.models.gdn2_gpt.GDN2GPT`, which mixes standard
+attention, MLP, and GDN-2 layers.
+"""
+
 from __future__ import annotations
 
 from typing import Any, cast
@@ -8,9 +16,9 @@ from typing import Any, cast
 import torch
 from torch import nn
 
-from .config import GDN2Config
-from .gdn2 import GatedDeltaNet2
-from .rmsnorm import RMSNorm
+from qwendopamine.models.gdn2.config import GDN2Config
+from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+from qwendopamine.models.normalization import RMSNorm
 
 
 class Block(nn.Module):
@@ -37,8 +45,8 @@ class Block(nn.Module):
         return residual + out, past_key_values
 
 
-class GPT(nn.Module):
-    """GPT architecture using GDN-2 blocks."""
+class GDN2Host(nn.Module):
+    """GPT-style decoder using only GDN-2 blocks."""
 
     def __init__(self, config: GDN2Config) -> None:
         super().__init__()
@@ -76,4 +84,4 @@ class GPT(nn.Module):
         return logits, past_key_values
 
 
-__all__ = ["GPT", "Block"]
+__all__ = ["Block", "GDN2Host"]

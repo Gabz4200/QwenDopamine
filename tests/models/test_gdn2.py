@@ -269,13 +269,13 @@ def test_when_gdn2_config_from_name_valid_then_returns_config() -> None:
     assert cfg.hidden_size == 2304
 
 
-def test_when_gdn2_and_gpt_initialized_then_parameters_have_correct_initial_values() -> (
+def test_when_gdn2_host_initialized_then_parameters_have_correct_initial_values() -> (
     None
 ):
-    from qwendopamine.models.gdn2.model import GPT
+    from qwendopamine.models.gdn2.host import GDN2Host
 
     cfg = GDN2Config(hidden_size=64, num_heads=2, head_dim=32, num_layers=2)
-    model = GPT(cfg)
+    model = GDN2Host(cfg)
 
     # Embeddings initialized with std=0.02
     assert model.embed.weight.shape == (cfg.vocab_size, cfg.hidden_size)

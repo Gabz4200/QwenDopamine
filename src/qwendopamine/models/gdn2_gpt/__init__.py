@@ -6,12 +6,12 @@ from qwendopamine.models.gdn2_gpt.model import (
     Block,
     CausalSelfAttention,
     LLaMAMLP,
-    RMSNorm,
     SwiGLU,
     apply_rotary_emb,
     build_rope_cache,
     compute_model_params,
 )
+from qwendopamine.models.normalization import RMSNorm
 
 __all__ = [
     "GDN2GPT",

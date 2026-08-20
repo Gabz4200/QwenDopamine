@@ -431,7 +431,14 @@ class ShortConvolution(nn.Module):
 
 
 class RMSNormGated(nn.Module):
-    """Pure PyTorch SiLU-gated RMS Normalization."""
+    """Pure PyTorch SiLU-gated RMS Normalization.
+
+    Intentionally distinct from :class:`qwendopamine.models.normalization.RMSNormGated`:
+    this reference-faithful variant computes entirely in the input dtype on the
+    GDN-2 value-side hot path, whereas the ``models.normalization`` utility
+    promotes to float32. The two differ in bf16 (up to ~3e-2) and therefore must
+    not be silently merged.
+    """
 
     def __init__(self, hidden_size: int, eps: float = 1e-5) -> None:
         super().__init__()

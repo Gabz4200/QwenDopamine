@@ -33,6 +33,10 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.eps = eps
 
+    def reset_parameters(self) -> None:
+        r"""Reset the learned scale weight back to a vector of ones."""
+        nn.init.ones_(self.weight)
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         r"""forward(hidden_states) -> Tensor
 

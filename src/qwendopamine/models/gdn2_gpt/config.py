@@ -1,4 +1,4 @@
-"""Configuration for Hybrid GPT model with center GatedSurpriseNet."""
+"""Configuration for GDN-2 GPT Decoder Architecture (lit_gpt-inspired hybrid transformer)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 @dataclass
-class SurpriseGPTConfig:
+class GDN2GPTConfig:
     name: str = "1B"
     block_size: int = 2048
     vocab_size: int = 50257
@@ -24,8 +24,8 @@ class SurpriseGPTConfig:
     rotary_percentage: float = 1.0
     rope_base: float = 10000.0
     condense_ratio: float = 1.0
-    surprise_net_layers: list[int] | None = None
-    surprise_net_per_layer: int = 0
+    gdn2_layers: list[int] | None = None
+    gdn2_per_layer: int = 0
     mlp: bool = True
     parallel_residual: bool = False
     shared_attention_norm: bool = False
@@ -34,13 +34,7 @@ class SurpriseGPTConfig:
     expand_v: float = 1.0
     use_short_conv: bool = True
     train_chunk_size: int = 128
-    mixer_type: str = "surprise"
     gradient_checkpointing: bool = False
-
-    # GatedSurpriseNet gate bound options (Option A defaults).
-    max_write_bound: float = 1.00
-    max_erase_bound: float = 2.00
-    max_precision_bound: float = 2.00
     chunk_size: int | None = None
     allow_neg_eigval: bool = False
     backend: str = "auto"
@@ -54,7 +48,7 @@ class SurpriseGPTConfig:
             self.chunk_size = self.train_chunk_size
 
     @classmethod
-    def from_name(cls, name: str, **kwargs: Any) -> SurpriseGPTConfig:
+    def from_name(cls, name: str, **kwargs: Any) -> GDN2GPTConfig:
         presets: dict[str, dict[str, Any]] = {
             "1B": {
                 "name": "1B",

@@ -362,3 +362,43 @@ def test_when_gdn2_incremental_decoding_then_updates_recurrent_state() -> None:
     assert out1.shape == (1, 1, 64)
     assert out2.shape == (1, 1, 64)
     assert not torch.allclose(rec_state_1, rec_state_2)
+
+
+def test_when_padded_attention_mask_then_padding_tokens_are_zeroed() -> None:
+    layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, chunk_size=8)
+    x = torch.randn(2, 6, 64)
+    attention_mask = torch.tensor(
+        [[1, 1, 1, 1, 1, 1], [1, 1, 1, 0, 0, 0]], dtype=torch.long
+    )
+
+    out, _, _ = layer(x, attention_mask=attention_mask)
+    assert out.shape == (2, 6, 64)
+    assert torch.all(out[1, 3:6] == 0.0)
+
+    unmasked, _, _ = layer(x)
+    assert not torch.allclose(out, unmasked)
+
+
+def test_when_a_log_initialized_then_decay_rate_in_reference_range() -> None:
+    layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32)
+    exp_a = layer.A_log.exp()
+    assert bool((exp_a >= 1.0).all())
+    assert bool((exp_a <= 16.0).all())
+
+
+def test_when_fp32_decay_defaults_true_then_matches_reference() -> None:
+    layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32)
+    assert layer.fp32_decay is True
+
+
+def test_when_fp32_decay_default_and_bf16_then_forward_is_finite() -> None:
+    layer = GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32).to(torch.bfloat16)
+    x = torch.randn(2, 8, 64, dtype=torch.bfloat16)
+    out, _, _ = layer(x)
+    assert out.dtype == torch.bfloat16
+    assert torch.isfinite(out.float()).all()
+
+
+def test_when_num_v_heads_not_divisible_then_raises() -> None:
+    with pytest.raises(ValueError):
+        GatedDeltaNet2(hidden_size=64, num_heads=2, head_dim=32, num_v_heads=3)

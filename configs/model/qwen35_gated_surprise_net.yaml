@@ -1,7 +1,0 @@
-defaults:
-  - base: base
-
-model_type: qwen35_gated_surprise_net
-base_model: Qwen/Qwen3.5-0.8B
-block_type: gated_surprise_net
-block_layers: [2]

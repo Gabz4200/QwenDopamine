@@ -6,7 +6,7 @@ It provides a pure PyTorch training and evaluation harness paired with Hugging F
 
 ## Key Features
 
-- **Novel Recurrent Token Mixers**: Modular block architecture supporting pure-recurrent layers, including `GatedSurpriseNetAdam` (closed-form algebraic surprise fast-weights) and `GatedDeltaNet2` (`gdn2`).
+- **Novel Recurrent Token Mixers**: Modular block architecture supporting pure-recurrent layers, including `GatedDeltaNet2` (`gdn2`).
 - **Transformers & GGUF Interoperability**: Modular Qwen3.5 decoder alignment, native `safetensors` support, and dynamic GGUF weight tensor mapping.
 - **CPU-First Local Environment**: Local development resolves against CPU PyTorch wheels via `uv`, isolating GPU dependencies (`flash-linear-attention`, `unsloth`) to remote/Kaggle environments to avoid Triton driver conflicts.
 - **Production GPU Training Pipeline**: Multi-GPU DDP training scripts with 8-bit `PagedAdamW`, gradient checkpointing, automatic mixed precision (AMP), and early stopping.
@@ -18,7 +18,7 @@ It provides a pure PyTorch training and evaluation harness paired with Hugging F
 - `assets/` — metrics plots, visualization charts, and benchmark figures.
 - `configs/` — Hydra configuration hierarchy for models, training protocols, and ablation studies.
 - `docs/` — design specifications, architecture documentation, and run history insights.
-- `notebooks/` — GPU verification scripts (e.g. `test_gated_surprise_net_gpu.py`, `test_gdn2_gpu.py`).
+- `notebooks/` — GPU verification scripts (e.g. `test_gdn2_gpu.py` for Kaggle).
 - `scripts/` — shell utility wrappers for training and evaluation.
 - `src/qwendopamine/` — core Python package:
   - `models/` — model factory, core layers, modular Qwen3.5, and block registry.
@@ -52,8 +52,8 @@ uv run pytest -v
 ### GPU Pre-Training (2x T4 DDP / Single GPU)
 
 ```bash
-# 2x T4 DDP training via torchrun
-torchrun --nproc_per_node=2 notebooks/test_gated_surprise_net_gpu.py
+# Run GDN-2 GPU verification script
+torchrun --nproc_per_node=2 notebooks/test_gdn2_gpu.py
 ```
 
 ## Development Conventions

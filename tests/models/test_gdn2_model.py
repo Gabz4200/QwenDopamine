@@ -17,7 +17,7 @@ from qwendopamine.models.gdn2.gdn2 import (
     compute_gdn2_wy_coefficients,
     resolve_gdn2_backend,
 )
-from qwendopamine.models.surprise_gpt import GDN2GPT, GDN2GPTConfig
+from qwendopamine.models.gdn2_gpt import GDN2GPT, GDN2GPTConfig
 
 
 def _make_cfg(**overrides: Any) -> GDN2GPTConfig:
@@ -34,8 +34,7 @@ def _make_cfg(**overrides: Any) -> GDN2GPTConfig:
         "norm_eps": 1e-6,
         "vocab_size": 512,
         "block_size": 64,
-        "mixer_type": "gdn2",
-        "surprise_net_per_layer": 1,
+        "gdn2_per_layer": 1,
     }
     base.update(overrides)
     return GDN2GPTConfig(**base)

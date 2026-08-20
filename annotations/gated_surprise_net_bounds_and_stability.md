@@ -1,3 +1,5 @@
+> **Note:** GatedSurpriseNet was removed from the QwenDopamine codebase. This document is retained for historical reference only.
+
 # Empirical Analysis and Mathematical Boundaries of Precision-Weighted GatedSurpriseNet
 
 ## 1. Executive Summary

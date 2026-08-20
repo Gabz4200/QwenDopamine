@@ -1,4 +1,4 @@
-"""Hybrid GPT Decoder Architecture with central GatedSurpriseNet token mixer."""
+"""GDN-2 GPT Decoder Architecture (lit_gpt-inspired hybrid transformer with GatedDeltaNet2)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from qwendopamine.models.gated_surprise_net import GatedSurpriseNetAdam
 from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
-from qwendopamine.models.surprise_gpt.config import SurpriseGPTConfig
+from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
 
 RoPECache = tuple[torch.Tensor, torch.Tensor]
 KVCache = tuple[torch.Tensor, torch.Tensor]
@@ -91,7 +90,7 @@ class SwiGLU(nn.Module):
 
 
 class LLaMAMLP(nn.Module):
-    def __init__(self, config: SurpriseGPTConfig) -> None:
+    def __init__(self, config: GDN2GPTConfig) -> None:
         super().__init__()
         self.swiglu = SwiGLU(config.n_embd, config.intermediate_size, bias=config.bias)
 
@@ -102,7 +101,7 @@ class LLaMAMLP(nn.Module):
 class CausalSelfAttention(nn.Module):
     def __init__(
         self,
-        config: SurpriseGPTConfig,
+        config: GDN2GPTConfig,
         layer_idx: int,
         n_embd: int,
         head_size: int | None = None,
@@ -185,55 +184,36 @@ class CausalSelfAttention(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config: SurpriseGPTConfig, layer_idx: int) -> None:
+    def __init__(self, config: GDN2GPTConfig, layer_idx: int) -> None:
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
         self.norm_1 = RMSNorm(config.n_embd, eps=config.norm_eps)
 
-        if config.surprise_net_layers is not None:
-            self.use_surprise_net = layer_idx in config.surprise_net_layers
-        elif config.surprise_net_per_layer > 0:
-            self.use_surprise_net = layer_idx % config.surprise_net_per_layer == 0
+        if config.gdn2_layers is not None:
+            self.use_gdn2 = layer_idx in config.gdn2_layers
+        elif config.gdn2_per_layer > 0:
+            self.use_gdn2 = layer_idx % config.gdn2_per_layer == 0
         else:
-            self.use_surprise_net = layer_idx == (config.n_layer // 2)
+            self.use_gdn2 = layer_idx == (config.n_layer // 2)
 
-        if self.use_surprise_net:
-            if config.mixer_type == "gdn2":
-                self.attn = GatedDeltaNet2(
-                    hidden_size=config.n_embd,
-                    num_heads=config.n_head,
-                    head_dim=config.head_size,
-                    num_v_heads=config.n_head,
-                    layer_idx=layer_idx,
-                    norm_eps=config.norm_eps,
-                    conv_size=config.conv_size,
-                    expand_v=config.expand_v,
-                    use_short_conv=config.use_short_conv,
-                    chunk_size=config.chunk_size or config.train_chunk_size,
-                    allow_neg_eigval=config.allow_neg_eigval,
-                    backend=config.backend,
-                    fp32_decay=config.fp32_decay,
-                    compile_backend=config.compile_backend,
-                )
-            else:
-                self.attn = GatedSurpriseNetAdam(
-                    hidden_size=config.n_embd,
-                    num_heads=config.n_head,
-                    head_dim=config.head_size,
-                    num_v_heads=config.n_head,
-                    layer_idx=layer_idx,
-                    norm_eps=config.norm_eps,
-                    conv_size=config.conv_size,
-                    expand_v=config.expand_v,
-                    use_short_conv=config.use_short_conv,
-                    train_chunk_size=config.train_chunk_size,
-                    backend=config.backend,
-                    compile_backend=config.compile_backend,
-                    max_write_bound=config.max_write_bound,
-                    max_erase_bound=config.max_erase_bound,
-                    max_precision_bound=config.max_precision_bound,
-                )
+        if self.use_gdn2:
+            self.attn = GatedDeltaNet2(
+                hidden_size=config.n_embd,
+                num_heads=config.n_head,
+                head_dim=config.head_size,
+                num_v_heads=config.n_head,
+                layer_idx=layer_idx,
+                norm_eps=config.norm_eps,
+                conv_size=config.conv_size,
+                expand_v=config.expand_v,
+                use_short_conv=config.use_short_conv,
+                chunk_size=config.chunk_size or config.train_chunk_size,
+                allow_neg_eigval=config.allow_neg_eigval,
+                backend=config.backend,
+                fp32_decay=config.fp32_decay,
+                compile_backend=config.compile_backend,
+            )
         else:
             self.attn = CausalSelfAttention(
                 config, layer_idx=layer_idx, n_embd=config.n_embd
@@ -258,7 +238,7 @@ class Block(nn.Module):
         kv_cache: KVCache | None = None,
     ) -> tuple[torch.Tensor, KVCache | None]:
         n_1 = self.norm_1(x)
-        if self.use_surprise_net:
+        if self.use_gdn2:
             h, _, new_kv_cache = self.attn(n_1, attention_mask=None)
         else:
             h, new_kv_cache = self.attn(
@@ -278,8 +258,8 @@ class Block(nn.Module):
         return x, new_kv_cache
 
 
-class SurpriseGPT(nn.Module):
-    def __init__(self, config: SurpriseGPTConfig) -> None:
+class GDN2GPT(nn.Module):
+    def __init__(self, config: GDN2GPTConfig) -> None:
         super().__init__()
         assert config.padded_vocab_size is not None
         self.config = config
@@ -416,8 +396,8 @@ class SurpriseGPT(nn.Module):
         self.config.gradient_checkpointing = False
 
     @classmethod
-    def from_name(cls, name: str, **kwargs: Any) -> SurpriseGPT:
-        return cls(SurpriseGPTConfig.from_name(name, **kwargs))
+    def from_name(cls, name: str, **kwargs: Any) -> GDN2GPT:
+        return cls(GDN2GPTConfig.from_name(name, **kwargs))
 
     def build_rope_cache(self, idx: torch.Tensor, seq_len: int) -> RoPECache:
         return build_rope_cache(
@@ -448,7 +428,7 @@ class SurpriseGPT(nn.Module):
 
         caches: list[KVCache | None] = []
         for block in self.h:
-            if block.use_surprise_net:
+            if block.use_gdn2:
                 caches.append(None)
             else:
                 caches.append(
@@ -460,7 +440,7 @@ class SurpriseGPT(nn.Module):
         return caches
 
 
-def compute_model_params(cfg: SurpriseGPTConfig) -> dict[str, int]:
+def compute_model_params(cfg: GDN2GPTConfig) -> dict[str, int]:
     """Analytically compute model parameter counts across components."""
     padded_vocab = cfg.padded_vocab_size or cfg.vocab_size
     embed_params = padded_vocab * cfg.n_embd
@@ -476,28 +456,23 @@ def compute_model_params(cfg: SurpriseGPTConfig) -> dict[str, int]:
     attn_params_per_layer = (cfg.n_embd * qkv_dim) + (cfg.n_embd * cfg.n_embd)
 
     k_dim = cfg.n_head * cfg.head_size
-    # Value-side flat dimension and per-head value dimension. The GDN-2
-    # projection stack uses the per-head value dim (head_v_dim) on the first
-    # layer of f_proj/g_proj and the flat value dim on o_proj / b/w/g tails.
     hv = int(cfg.head_size * cfg.expand_v)
     v_dim = int(cfg.n_head * hv)
-    surprise_projs = (cfg.n_embd * k_dim * 2) + (cfg.n_embd * v_dim)
+    gdn2_projs = (cfg.n_embd * k_dim * 2) + (cfg.n_embd * v_dim)
     conv_params = (
         (k_dim * cfg.conv_size * 2) + (v_dim * cfg.conv_size)
         if cfg.use_short_conv
         else 0
     )
-    # f_proj: Linear(hidden -> head_v_dim) then Linear(head_v_dim -> key_dim).
     f_proj = (cfg.n_embd * hv) + (hv * k_dim)
     b_proj = cfg.n_embd * k_dim
     w_proj = cfg.n_embd * v_dim
-    # g_proj: Linear(hidden -> head_v_dim) then Linear(head_v_dim -> value_dim, bias).
     g_proj = (cfg.n_embd * hv) + (hv * v_dim) + v_dim
     o_proj = v_dim * cfg.n_embd
-    o_norm = hv  # RMSNormGated weight is per value head
+    o_norm = hv
     dt_and_a = cfg.n_head + k_dim
-    surprise_attn_params = (
-        surprise_projs
+    gdn2_attn_params = (
+        gdn2_projs
         + conv_params
         + f_proj
         + b_proj
@@ -508,16 +483,12 @@ def compute_model_params(cfg: SurpriseGPTConfig) -> dict[str, int]:
         + dt_and_a
     )
 
-    num_surprise_layers = (
-        len(cfg.surprise_net_layers)
-        if cfg.surprise_net_layers is not None
-        else (
-            cfg.n_layer // cfg.surprise_net_per_layer
-            if cfg.surprise_net_per_layer > 0
-            else 1
-        )
+    num_gdn2_layers = (
+        len(cfg.gdn2_layers)
+        if cfg.gdn2_layers is not None
+        else (cfg.n_layer // cfg.gdn2_per_layer if cfg.gdn2_per_layer > 0 else 1)
     )
-    num_standard_attn_layers = cfg.n_layer - num_surprise_layers
+    num_standard_attn_layers = cfg.n_layer - num_gdn2_layers
 
     total = (
         embed_params
@@ -525,7 +496,7 @@ def compute_model_params(cfg: SurpriseGPTConfig) -> dict[str, int]:
         + final_norm_params
         + (mlp_params_per_layer + norm_params_per_layer) * cfg.n_layer
         + attn_params_per_layer * num_standard_attn_layers
-        + surprise_attn_params * num_surprise_layers
+        + gdn2_attn_params * num_gdn2_layers
     )
     return {
         "total": total,
@@ -534,9 +505,7 @@ def compute_model_params(cfg: SurpriseGPTConfig) -> dict[str, int]:
         "standard_block": mlp_params_per_layer
         + norm_params_per_layer
         + attn_params_per_layer,
-        "surprise_block": mlp_params_per_layer
-        + norm_params_per_layer
-        + surprise_attn_params,
+        "gdn2_block": mlp_params_per_layer + norm_params_per_layer + gdn2_attn_params,
         "num_standard_layers": num_standard_attn_layers,
-        "num_surprise_layers": num_surprise_layers,
+        "num_gdn2_layers": num_gdn2_layers,
     }

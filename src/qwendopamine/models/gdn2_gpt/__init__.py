@@ -1,20 +1,17 @@
-"""Hybrid GPT Decoder Architecture with central GatedSurpriseNet token mixer."""
+"""GDN-2 GPT Decoder Architecture (lit_gpt-inspired hybrid transformer with GatedDeltaNet2)."""
 
-from qwendopamine.models.surprise_gpt.config import SurpriseGPTConfig
-from qwendopamine.models.surprise_gpt.model import (
+from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
+from qwendopamine.models.gdn2_gpt.model import (
+    GDN2GPT,
     Block,
     CausalSelfAttention,
     LLaMAMLP,
     RMSNorm,
-    SurpriseGPT,
     SwiGLU,
     apply_rotary_emb,
     build_rope_cache,
     compute_model_params,
 )
-
-GDN2GPT = SurpriseGPT
-GDN2GPTConfig = SurpriseGPTConfig
 
 __all__ = [
     "GDN2GPT",
@@ -23,8 +20,6 @@ __all__ = [
     "GDN2GPTConfig",
     "LLaMAMLP",
     "RMSNorm",
-    "SurpriseGPT",
-    "SurpriseGPTConfig",
     "SwiGLU",
     "apply_rotary_emb",
     "build_rope_cache",

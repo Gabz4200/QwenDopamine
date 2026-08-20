@@ -6,6 +6,8 @@
 **Hardware Executed:** $2\times$ NVIDIA Tesla T4 (16GB VRAM each) via PyTorch FP16 AMP + 8-bit PagedAdamW (executed single-GPU fallback)  
 **Dataset:** `bhavnicksm/fineweb-edu-micro` ($T=512$ sequence length, ~1M tokens)
 
+> **Note:** GatedSurpriseNet was removed from the QwenDopamine codebase in a later cleanup. The comparative references to `GatedSurpriseNetAdam` in this document are historical only.
+
 ---
 
 ## 1. Executive Summary

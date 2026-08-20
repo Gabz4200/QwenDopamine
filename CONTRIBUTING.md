@@ -14,7 +14,7 @@ GDN-2 has three layers, and they must stay separate:
    - `compute_gdn2_*` helpers (WY solve, intra-chunk scores), the decay-gate
      activation, and the pure-PyTorch short-conv / gated-RMSNorm modules.
    - This layer must **never** depend on hardware-specific libraries.
-2. **Model integration** — the host `SurpriseGPT` (`surprise_gpt/`) and the
+2. **Model integration** — the host `GDN2GPT` (`gdn2_gpt/`) and the
    `Qwen3_5`/`gdn2` blocks.
    - These decide *which* layers are GDN-2 and own caches/short-conv state.
    - They must **not** contain GDN-2 mathematics.

@@ -2,6 +2,10 @@
 
 from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
 from qwendopamine.models.gdn2 import GatedDeltaNet2
+from qwendopamine.models.gdn2_gpt import (
+    GDN2GPT,
+    GDN2GPTConfig,
+)
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
     build_model,
@@ -18,12 +22,6 @@ from qwendopamine.models.qwen35 import (
     Qwen3_5PreTrainedModel,
     Qwen3_5TextConfig,
     Qwen3_5TextModel,
-)
-from qwendopamine.models.surprise_gpt import (
-    GDN2GPT,
-    GDN2GPTConfig,
-    SurpriseGPT,
-    SurpriseGPTConfig,
 )
 
 __all__ = [
@@ -42,8 +40,6 @@ __all__ = [
     "Qwen3_5TextModel",
     "RMSNorm",
     "ResearchDecoder",
-    "SurpriseGPT",
-    "SurpriseGPTConfig",
     "TokenEmbeddings",
     "build_model",
     "build_reference_model",

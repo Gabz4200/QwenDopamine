@@ -445,6 +445,39 @@ class RMSNormGated(nn.Module):
         return normed * F.silu(z)
 
 
+def _get_unpad_data(
+    attention_mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    r"""Derive packed-token indices from a padding mask.
+
+    Mirrors ``transformers``' ``get_unpad_data`` (used by the NVlabs reference):
+    ``1`` marks a real token, ``0`` marks padding. Returns
+    ``(indices, cu_seqlens, max_seqlen_in_batch)`` where ``indices`` select the
+    real tokens in the flattened ``(batch, seq)`` layout.
+    """
+    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+    indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
+    max_seqlen_in_batch = int(seqlens_in_batch.max().item())
+    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
+    return indices, cu_seqlens, max_seqlen_in_batch
+
+
+def _index_first_axis(x: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    r"""Gather ``x`` along the flattened ``(batch, seq)`` axis (packed layout)."""
+    return x.view(-1, *x.shape[2:])[indices]
+
+
+def _pad_input(
+    hidden: torch.Tensor, indices: torch.Tensor, batch: int, seqlen: int
+) -> torch.Tensor:
+    r"""Scatter a packed sequence back into the padded ``[batch, seqlen, ...]`` layout."""
+    output = torch.zeros(
+        batch * seqlen, *hidden.shape[1:], device=hidden.device, dtype=hidden.dtype
+    )
+    output[indices] = hidden
+    return rearrange(output, "(b s) ... -> b s ...", b=batch)
+
+
 class GatedDeltaNet2(nn.Module):
     """Gated DeltaNet 2 (GDN-2) token-mixing layer."""
 
@@ -466,7 +499,7 @@ class GatedDeltaNet2(nn.Module):
         chunk_size: int = 64,
         backend: str = "auto",
         compile_backend: bool = False,
-        fp32_decay: bool = False,
+        fp32_decay: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -508,6 +541,10 @@ class GatedDeltaNet2(nn.Module):
         self.num_heads = num_heads if num_heads is not None else 16
         self.head_dim = head_dim if head_dim is not None else 128
         self.num_v_heads = num_v_heads if num_v_heads is not None else self.num_heads
+        if self.num_v_heads > self.num_heads and self.num_v_heads % self.num_heads != 0:
+            raise ValueError(
+                f"num_v_heads={self.num_v_heads} must be divisible by num_heads={self.num_heads}."
+            )
         self.layer_idx = layer_idx
         self.mode = mode
         self.use_short_conv = use_short_conv
@@ -555,9 +592,7 @@ class GatedDeltaNet2(nn.Module):
 
         # Decay-gate parameters
         self.A_log = nn.Parameter(
-            torch.log(
-                torch.empty(self.num_heads, dtype=torch.float32).uniform_(0.1, 2.0)
-            )
+            torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
         )
         cast(Any, self.A_log)._no_weight_decay = True
         dt = torch.exp(
@@ -744,8 +779,8 @@ class GatedDeltaNet2(nn.Module):
         output_attentions: bool | None = False,
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None, Cache | dict[str, Any] | None]:
-        _, q_len, _ = hidden_states.shape
-        mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
+        batch, seq_len, _ = hidden_states.shape
+        mode = "fused_recurrent" if (seq_len <= 64 and not self.training) else self.mode
 
         recurrent_state, conv_states = self._get_cache(past_key_values)
         conv_state_q, conv_state_k, conv_state_v = (
@@ -753,6 +788,22 @@ class GatedDeltaNet2(nn.Module):
         )
 
         cu_seqlens = kwargs.get("cu_seqlens")
+
+        # Padding masking via unpad/repad, mirroring the NVlabs reference: tokens
+        # with `attention_mask == 0` are dropped, the packed sequence runs through
+        # the layer, and the output is scattered back to the padded layout. Skipped
+        # for single-token decode and whenever a cache is already live, where the
+        # batch layout must be preserved for the recurrent state.
+        is_padded = (
+            attention_mask is not None
+            and seq_len > 1
+            and past_key_values is None
+            and bool((attention_mask == 0).any())
+        )
+        indices: torch.Tensor | None = None
+        if is_padded:
+            indices, cu_seqlens, _ = _get_unpad_data(attention_mask)
+            hidden_states = _index_first_axis(hidden_states, indices).unsqueeze(0)
 
         # Convolutions
         if self.use_short_conv:
@@ -810,7 +861,7 @@ class GatedDeltaNet2(nn.Module):
         # Resolve and dispatch the concrete backend. The GDN-2 maths below never
         # branches on device; only this block performs the (auto) selection.
         backend = resolve_gdn2_backend(
-            self.backend, training=self.training, seq_len=q_len
+            self.backend, training=self.training, seq_len=seq_len
         )
         o: torch.Tensor | None = None
 
@@ -939,5 +990,8 @@ class GatedDeltaNet2(nn.Module):
         o = self.o_norm(o, gate)
         o = rearrange(o, "... h d -> ... (h d)")
         out = self.o_proj(o)
+
+        if is_padded and indices is not None:
+            out = _pad_input(out.squeeze(0), indices, batch, seq_len)
 
         return out, None, past_key_values

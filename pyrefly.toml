@@ -60,32 +60,6 @@ unbound-name = false
 not-callable = false
 
 [[sub-config]]
-matches = "src/qwendopamine/models/gated_surprise_net_ops/**"
-[sub-config.errors]
-implicit-import = false
-implicit-any = false
-unannotated-return = false
-unannotated-parameter = false
-bad-override = false
-bad-override-mutable-attribute = false
-bad-argument-type = false
-bad-assignment = false
-bad-unpacking = false
-bad-specialization = false
-not-iterable = false
-missing-attribute = false
-unsupported-operation = false
-bad-function-definition = false
-bad-return = false
-implicit-any-type-argument = false
-implicit-any-lambda = false
-implicit-any-empty-container = false
-bad-argument-count = false
-missing-import = false
-unbound-name = false
-not-callable = false
-
-[[sub-config]]
 matches = "tests/**"
 [sub-config.errors]
 implicit-import = false

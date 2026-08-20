@@ -5,19 +5,18 @@ suite guards it against drifting away from the actual ``nn.Module`` structure
 (e.g. the value-side projection stack using per-head vs flat dims).
 """
 
-from qwendopamine.models.surprise_gpt.config import SurpriseGPTConfig
-from qwendopamine.models.surprise_gpt.model import (
-    SurpriseGPT,
+from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
+from qwendopamine.models.gdn2_gpt.model import (
+    GDN2GPT,
     compute_model_params,
 )
 
 
 def test_when_gdn2_only_model_then_param_counts_match_reality() -> None:
-    cfg = SurpriseGPTConfig.from_name(
+    cfg = GDN2GPTConfig.from_name(
         "1B_mha",
         n_layer=2,
-        mixer_type="gdn2",
-        surprise_net_per_layer=1,  # every layer is GDN-2
+        gdn2_per_layer=1,
         use_short_conv=True,
         expand_v=1.0,
         n_embd=256,
@@ -27,10 +26,10 @@ def test_when_gdn2_only_model_then_param_counts_match_reality() -> None:
         vocab_size=50257,
     )
     stats = compute_model_params(cfg)
-    model = SurpriseGPT(cfg)
+    model = GDN2GPT(cfg)
     real = sum(p.numel() for p in model.parameters())
     assert stats["total"] == real
-    assert stats["num_surprise_layers"] == cfg.n_layer
+    assert stats["num_gdn2_layers"] == cfg.n_layer
     assert stats["num_standard_layers"] == 0
 
 

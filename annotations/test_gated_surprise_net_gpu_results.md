@@ -1,3 +1,5 @@
+> **Note:** GatedSurpriseNet was removed from the QwenDopamine codebase. This document is retained for historical reference only.
+
 # Experimental Log: 1.3B Pure Recurrent GatedSurpriseNet Pre-Training
 
 **Date:** August 15, 2026  

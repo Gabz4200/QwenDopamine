@@ -10,7 +10,10 @@ from qwendopamine.models.blocks.registry import BLOCKS, build_block
 from qwendopamine.models.blocks.reward import (
     AsinhScaler,
     LearnableFourierFeatures,
-    RewardEncoder,
+    LearnableSoftsign,
+    RewardFiLM,
+    RewardFourierEncoder,
+    RewardStatisticsExtractor,
     TokenWiseFiLM,
 )
 from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
@@ -30,10 +33,13 @@ __all__ = [
     "GatedDeltaNet2Block",
     "GatedDeltaNetBlock",
     "LearnableFourierFeatures",
+    "LearnableSoftsign",
     "Qwen3_5DecoderLayer",
     "Qwen3_5GatedDeltaNet",
     "QwenDecoderLayer",
-    "RewardEncoder",
+    "RewardFiLM",
+    "RewardFourierEncoder",
+    "RewardStatisticsExtractor",
     "TokenWiseFiLM",
     "build_block",
 ]

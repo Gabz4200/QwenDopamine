@@ -9,7 +9,9 @@ from torch import nn
 from qwendopamine.models.blocks.reward import (
     AsinhScaler,
     LearnableFourierFeatures,
-    RewardEncoder,
+    RewardFiLM,
+    RewardFourierEncoder,
+    RewardStatisticsExtractor,
     TokenWiseFiLM,
 )
 
@@ -27,12 +29,11 @@ def test_when_token_wise_film_forward_with_unit_scale_and_zero_shift_then_matche
 ):
     dim = 16
     film = TokenWiseFiLM(dim=dim)
-    x = torch.randn(2, 4, dim)
-    cond = torch.randn(2, 4, dim)
-
+    x = torch.randn(2, 5, dim)
+    cond = torch.zeros(2, 5, dim)
     output = film(x, cond)
-    assert output.shape == (2, 4, dim)
-    assert not torch.isnan(output).any()
+    assert output.shape == (2, 5, dim)
+    assert torch.allclose(output, x, atol=1e-6)
 
 
 def test_when_token_wise_film_receives_2d_cond_then_broadcasts_over_sequence_dimension() -> (
@@ -40,12 +41,12 @@ def test_when_token_wise_film_receives_2d_cond_then_broadcasts_over_sequence_dim
 ):
     dim = 16
     film = TokenWiseFiLM(dim=dim)
-    x = torch.randn(3, 5, dim)
-    cond_2d = torch.randn(3, dim)
-
-    output = film(x, cond_2d)
-    assert output.shape == (3, 5, dim)
-    assert not torch.isnan(output).any()
+    x = torch.randn(2, 5, dim)
+    cond = torch.ones(2, dim)  # (B, D) -> should broadcast to (B, L, D)
+    output = film(x, cond)
+    assert output.shape == (2, 5, dim)
+    expected = x * torch.ones_like(x)
+    assert torch.allclose(output, expected, atol=1e-6)
 
 
 def test_when_token_wise_film_forward_backward_then_computes_gradients_for_x_and_cond() -> (
@@ -53,13 +54,11 @@ def test_when_token_wise_film_forward_backward_then_computes_gradients_for_x_and
 ):
     dim = 16
     film = TokenWiseFiLM(dim=dim)
-    x = torch.randn(2, 4, dim, requires_grad=True)
-    cond = torch.randn(2, 4, dim, requires_grad=True)
-
-    out = film(x, cond)
-    loss = out.sum()
+    x = torch.randn(2, 5, dim, requires_grad=True)
+    cond = torch.randn(2, 5, dim, requires_grad=True)
+    output = film(x, cond)
+    loss = output.sum()
     loss.backward()
-
     assert x.grad is not None
     assert cond.grad is not None
     assert not torch.isnan(x.grad).any()
@@ -86,10 +85,8 @@ def test_when_learnable_fourier_features_initialized_with_incompatible_g_dim_the
 def test_when_learnable_fourier_features_forward_with_include_input_true_then_outputs_expected_shape() -> (
     None
 ):
-    lff = LearnableFourierFeatures(
-        pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=2, include_input=True
-    )
-    pos = torch.randn(2, 5, 2, 4)  # (B, L, G=2, M=4)
+    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1)
+    pos = torch.randn(2, 5, 1, 4)
     out = lff(pos)
     assert out.shape == (2, 5, 64)
     assert not torch.isnan(out).any()
@@ -98,9 +95,7 @@ def test_when_learnable_fourier_features_forward_with_include_input_true_then_ou
 def test_when_learnable_fourier_features_forward_with_include_input_false_then_outputs_expected_shape() -> (
     None
 ):
-    lff = LearnableFourierFeatures(
-        pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1, include_input=False
-    )
+    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1, include_input=False)
     pos = torch.randn(2, 5, 1, 4)
     out = lff(pos)
     assert out.shape == (2, 5, 64)
@@ -108,15 +103,12 @@ def test_when_learnable_fourier_features_forward_with_include_input_false_then_o
 
 
 def test_when_learnable_fourier_features_backward_then_updates_parameters() -> None:
-    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64)
-    pos = torch.randn(2, 3, 1, 4)
-
+    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1)
+    pos = torch.randn(2, 5, 1, 4, requires_grad=True)
     out = lff(pos)
-    loss = out.pow(2).sum()
+    loss = out.sum()
     loss.backward()
-
-    assert lff.Wr.grad is not None
-    for param in lff.mlp.parameters():
+    for param in lff.parameters():
         assert param.grad is not None
 
 
@@ -125,87 +117,275 @@ def test_when_learnable_fourier_features_backward_then_updates_parameters() -> N
 
 def test_when_asinh_scaler_forward_called_then_scales_heavy_tailed_features() -> None:
     scaler = AsinhScaler(dim=16)
-    x = torch.randn(2, 5, 16) * 100.0
+    x = torch.randn(2, 5, 16) * 100  # large values
     out = scaler(x)
     assert out.shape == (2, 5, 16)
-    assert not torch.isnan(out).any()
     assert (out.abs() < x.abs()).all()
 
 
-# --- LearnableFourierFeatures Tests ---
+# --- RewardStatisticsExtractor Tests ---
 
 
-def test_when_reward_encoder_same_dim_then_uses_identity_projection() -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=32)
-    assert isinstance(encoder.x_proj, nn.Identity)
+def test_when_reward_statistics_extractor_forward_then_outputs_six_stats() -> None:
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.randn(2, 5, 10)
+    stats = extractor(rewards, batch_size=2, seq_len=5)
+    assert stats.shape == (2, 5, 6)
+    assert not torch.isnan(stats).any()
 
 
-def test_when_reward_encoder_different_dim_then_uses_linear_projection() -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=64)
-    assert isinstance(encoder.x_proj, nn.Linear)
-    assert encoder.x_proj.in_features == 32
-    assert encoder.x_proj.out_features == 64
+def test_when_reward_statistics_extractor_forward_with_2d_rewards_then_processes_correctly() -> None:
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.tensor([[0.5, 0.2, 0.9, 0.1, 0.4], [0.3, 0.7, 0.1, 0.8, 0.5]])
+    stats = extractor(rewards, batch_size=2, seq_len=5)
+    assert stats.shape == (2, 5, 6)
+    assert not torch.isnan(stats).any()
 
 
-def test_when_reward_encoder_forward_with_2d_rewards_then_processes_correctly() -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=32)
+def test_when_reward_statistics_extractor_forward_with_3d_multi_rewards_then_computes_stats_correctly() -> (
+    None
+):
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.randn(2, 4, 3)
+    stats = extractor(rewards, batch_size=2, seq_len=4)
+    assert stats.shape == (2, 4, 6)
+    assert not torch.isnan(stats).any()
+
+
+def test_when_reward_statistics_extractor_forward_with_constant_rewards_then_produces_valid_output() -> (
+    None
+):
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.ones(2, 3, 4)  # All reward values equal to 1.0
+    stats = extractor(rewards, batch_size=2, seq_len=3)
+    assert stats.shape == (2, 3, 6)
+    assert not torch.isnan(stats).any()
+
+
+def test_when_reward_statistics_extractor_device_or_dtype_mismatched_then_auto_aligns() -> None:
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.randn(2, 3, 2, dtype=torch.float32)
+    extractor.to(dtype=torch.bfloat16)
+    stats = extractor(rewards, batch_size=2, seq_len=3)
+    assert stats.shape == (2, 3, 6)
+    assert stats.dtype == torch.bfloat16
+    assert not torch.isnan(stats).any()
+
+
+# --- RewardFourierEncoder Tests ---
+
+
+def test_when_reward_fourier_encoder_initialized_then_has_correct_dimensions() -> None:
+    encoder = RewardFourierEncoder(f_dim=32, h_dim=64, d_dim=64)
+    assert encoder.f_dim == 32
+    assert encoder.h_dim == 64
+    assert encoder.d_dim == 64
+    assert encoder.g_dim == 1
+    assert encoder.include_input is True
+
+
+def test_when_reward_fourier_encoder_forward_then_outputs_expected_shape() -> None:
+    encoder = RewardFourierEncoder(f_dim=32, h_dim=64, d_dim=64)
+    stats = torch.randn(2, 5, 6)
+    cond = encoder(stats)
+    assert cond.shape == (2, 5, 64)
+    assert not torch.isnan(cond).any()
+
+
+def test_when_reward_fourier_encoder_forward_with_custom_d_dim_then_outputs_correct_shape() -> None:
+    encoder = RewardFourierEncoder(f_dim=32, h_dim=64, d_dim=128)
+    stats = torch.randn(2, 5, 6)
+    cond = encoder(stats)
+    assert cond.shape == (2, 5, 128)
+    assert not torch.isnan(cond).any()
+
+
+def test_when_reward_fourier_encoder_backward_then_updates_parameters() -> None:
+    encoder = RewardFourierEncoder(f_dim=32, h_dim=64, d_dim=64)
+    stats = torch.randn(2, 5, 6, requires_grad=True)
+    cond = encoder(stats)
+    loss = cond.sum()
+    loss.backward()
+    for param in encoder.parameters():
+        assert param.grad is not None
+
+
+# --- RewardFiLM Tests ---
+
+
+def test_when_reward_film_initialized_then_has_correct_dimensions() -> None:
+    film = RewardFiLM(dim=32, hidden_dim=64)
+    assert film.dim == 32
+    assert film.hidden_dim == 64
+
+
+def test_when_reward_film_same_dim_then_uses_identity_projection() -> None:
+    film = RewardFiLM(dim=32, hidden_dim=32)
+    assert isinstance(film.x_proj, nn.Identity)
+
+
+def test_when_reward_film_different_dim_then_uses_linear_projection() -> None:
+    film = RewardFiLM(dim=32, hidden_dim=64)
+    assert isinstance(film.x_proj, nn.Linear)
+    assert film.x_proj.in_features == 32
+    assert film.x_proj.out_features == 64
+
+
+def test_when_reward_film_forward_with_3d_input_then_outputs_correct_shape() -> None:
+    film = RewardFiLM(dim=32, hidden_dim=32)
     x = torch.randn(2, 5, 32)
-    reward_2d = torch.tensor([[0.5, 0.2, 0.9, 0.1, 0.4], [0.3, 0.7, 0.1, 0.8, 0.5]])
-
-    output = encoder(x, reward_2d)
+    cond = torch.randn(2, 5, 32)
+    output = film(x, cond)
     assert output.shape == (2, 5, 32)
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_forward_with_3d_multi_rewards_then_computes_stats_correctly() -> (
-    None
-):
-    encoder = RewardEncoder(dim=32, hidden_dim=32)
+def test_when_reward_film_forward_with_2d_input_then_outputs_correct_shape() -> None:
+    film = RewardFiLM(dim=32, hidden_dim=32)
+    x = torch.randn(4, 32)  # (B, D)
+    cond = torch.randn(4, 32)  # (B, D)
+    output = film(x, cond)
+    assert output.shape == (4, 32)
+    assert not torch.isnan(output).any()
+
+
+def test_when_reward_film_forward_with_1d_input_then_outputs_correct_shape() -> None:
+    film = RewardFiLM(dim=32, hidden_dim=32)
+    x = torch.randn(32)  # (D,)
+    cond = torch.randn(32)  # (D,)
+    output = film(x, cond)
+    assert output.shape == (32,)
+    assert not torch.isnan(output).any()
+
+
+def test_when_reward_film_device_or_dtype_mismatched_then_auto_aligns() -> None:
+    film = RewardFiLM(dim=16, hidden_dim=16)
+    x = torch.randn(2, 3, 16, dtype=torch.bfloat16)
+    cond = torch.randn(2, 3, 16, dtype=torch.float32)
+    film.to(dtype=torch.bfloat16)
+    output = film(x, cond)
+    assert output.shape == (2, 3, 16)
+    assert output.dtype == torch.bfloat16
+    assert not torch.isnan(output).any()
+
+
+def test_when_reward_film_backward_called_then_gradients_flow_to_inputs_and_params() -> None:
+    film = RewardFiLM(dim=16, hidden_dim=16)
+    x = torch.randn(2, 3, 16, requires_grad=True)
+    cond = torch.randn(2, 3, 16, requires_grad=True)
+    output = film(x, cond)
+    loss = output.sum()
+    loss.backward()
+    assert x.grad is not None
+    assert cond.grad is not None
+    assert not torch.isnan(x.grad).any()
+    assert not torch.isnan(cond.grad).any()
+    for param in film.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+
+
+# --- Chained Reward Encoder Tests (Integration) ---
+
+
+def test_when_chained_reward_components_then_produces_expected_output() -> None:
+    """Test that the three components chain together correctly."""
+    batch_size, seq_len, dim, hidden_dim = 2, 5, 32, 64
+    x = torch.randn(batch_size, seq_len, dim)
+    reward_values = torch.randn(batch_size, seq_len, 10)
+
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=hidden_dim)
+    film = RewardFiLM(dim=dim, hidden_dim=hidden_dim)
+
+    stats = extractor(reward_values, batch_size=batch_size, seq_len=seq_len)
+    cond = fourier(stats)
+    out = film(x, cond)
+
+    assert out.shape == (batch_size, seq_len, hidden_dim)
+    assert not torch.isnan(out).any()
+
+
+def test_when_chained_reward_components_with_2d_rewards_then_processes_correctly() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=32)
+    film = RewardFiLM(dim=32, hidden_dim=32)
+
+    x = torch.randn(2, 5, 32)
+    reward_2d = torch.tensor([[0.5, 0.2, 0.9, 0.1, 0.4], [0.3, 0.7, 0.1, 0.8, 0.5]])
+
+    stats = extractor(reward_2d, batch_size=2, seq_len=5)
+    cond = fourier(stats)
+    output = film(x, cond)
+
+    assert output.shape == (2, 5, 32)
+    assert not torch.isnan(output).any()
+
+
+def test_when_chained_reward_components_with_3d_multi_rewards_then_computes_correctly() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=32)
+    film = RewardFiLM(dim=32, hidden_dim=32)
+
     x = torch.randn(2, 4, 32)
-    # (B=2, L=4, K=3) multi-reward tensor
     reward_3d = torch.randn(2, 4, 3)
 
-    output = encoder(x, reward_3d)
+    stats = extractor(reward_3d, batch_size=2, seq_len=4)
+    cond = fourier(stats)
+    output = film(x, cond)
+
     assert output.shape == (2, 4, 32)
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_forward_with_constant_rewards_then_produces_valid_output() -> (
-    None
-):
-    encoder = RewardEncoder(dim=16, hidden_dim=16)
+def test_when_chained_reward_components_with_constant_rewards_then_produces_valid_output() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=16)
+    film = RewardFiLM(dim=16, hidden_dim=16)
+
     x = torch.randn(2, 3, 16)
-    # All reward values equal to 1.0 (median == mean == max == min)
     reward_const = torch.ones(2, 3, 4)
 
-    output = encoder(x, reward_const)
+    stats = extractor(reward_const, batch_size=2, seq_len=3)
+    cond = fourier(stats)
+    output = film(x, cond)
+
     assert output.shape == (2, 3, 16)
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_device_or_dtype_mismatched_then_auto_aligns() -> None:
-    encoder = RewardEncoder(dim=16, hidden_dim=16)
-    x = torch.randn(2, 3, 16, dtype=torch.bfloat16)
+def test_when_chained_reward_components_device_or_dtype_mismatched_then_auto_aligns() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=16)
+    film = RewardFiLM(dim=16, hidden_dim=16)
 
-    # reward_values in float32
+    x = torch.randn(2, 3, 16, dtype=torch.bfloat16)
     reward_values = torch.randn(2, 3, 2, dtype=torch.float32)
 
-    encoder.to(dtype=torch.bfloat16)
-    output = encoder(x, reward_values)
+    extractor.to(dtype=torch.bfloat16)
+    fourier.to(dtype=torch.bfloat16)
+    film.to(dtype=torch.bfloat16)
+
+    stats = extractor(reward_values, batch_size=2, seq_len=3)
+    cond = fourier(stats)
+    output = film(x, cond)
 
     assert output.shape == (2, 3, 16)
     assert output.dtype == torch.bfloat16
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_encoder_backward_called_then_gradients_flow_to_inputs_and_params() -> (
-    None
-):
-    encoder = RewardEncoder(dim=16, hidden_dim=16)
+def test_when_chained_reward_components_backward_called_then_gradients_flow() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=16)
+    film = RewardFiLM(dim=16, hidden_dim=16)
+
     x = torch.randn(2, 3, 16, requires_grad=True)
     reward_values = torch.randn(2, 3, 2, requires_grad=True)
 
-    output = encoder(x, reward_values)
+    stats = extractor(reward_values, batch_size=2, seq_len=3)
+    cond = fourier(stats)
+    output = film(x, cond)
     loss = output.sum()
     loss.backward()
 
@@ -213,58 +393,86 @@ def test_when_reward_encoder_backward_called_then_gradients_flow_to_inputs_and_p
     assert reward_values.grad is not None
     assert not torch.isnan(x.grad).any()
     assert not torch.isnan(reward_values.grad).any()
-    for param in encoder.parameters():
+    for param in extractor.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+    for param in fourier.parameters():
+        if param.requires_grad:
+            assert param.grad is not None
+    for param in film.parameters():
         if param.requires_grad:
             assert param.grad is not None
 
 
 @pytest.mark.parametrize("num_rewards", [1, 2, 5, 20, 100])
-def test_when_reward_encoder_receives_unbounded_k_rewards_then_regularizes_and_encodes(
+def test_when_chained_reward_components_receive_unbounded_k_rewards_then_regularizes_and_encodes(
     num_rewards: int,
 ) -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=64)
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=64)
+    film = RewardFiLM(dim=32, hidden_dim=64)
+
     x = torch.randn(2, 8, 32)
     rewards = torch.randn(2, 8, num_rewards)
 
-    out = encoder(x, rewards)
+    stats = extractor(rewards, batch_size=2, seq_len=8)
+    cond = fourier(stats)
+    out = film(x, cond)
+
     assert out.shape == (2, 8, 64)
     assert not torch.isnan(out).any()
 
 
 @pytest.mark.parametrize("seq_len", [1, 5, 32, 128])
-def test_when_reward_encoder_receives_variable_sequence_lengths_then_executes_successfully(
+def test_when_chained_reward_components_receive_variable_sequence_lengths_then_executes_successfully(
     seq_len: int,
 ) -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=64)
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=64)
+    film = RewardFiLM(dim=32, hidden_dim=64)
+
     x = torch.randn(2, seq_len, 32)
     rewards = torch.randn(2, seq_len, 4)
 
-    out = encoder(x, rewards)
+    stats = extractor(rewards, batch_size=2, seq_len=seq_len)
+    cond = fourier(stats)
+    out = film(x, cond)
+
     assert out.shape == (2, seq_len, 64)
     assert not torch.isnan(out).any()
 
 
-def test_when_reward_encoder_receives_single_unbatched_embedding_then_modulates_correctly() -> (
+def test_when_chained_reward_components_receive_single_unbatched_embedding_then_modulates_correctly() -> (
     None
 ):
-    encoder = RewardEncoder(dim=32, hidden_dim=64)
-    # Single 1D embedding (dim,) and 1D rewards (K=5,)
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=64)
+    film = RewardFiLM(dim=32, hidden_dim=64)
+
     x_single = torch.randn(32)
     rewards_single = torch.randn(5)
 
-    out = encoder(x_single, rewards_single)
+    stats = extractor(rewards_single, batch_size=1, seq_len=1)
+    cond = fourier(stats)
+    out = film(x_single, cond)
+
     assert out.shape == (64,)
     assert not torch.isnan(out).any()
 
 
-def test_when_reward_encoder_receives_single_step_batched_embeddings_then_modulates_correctly() -> (
+def test_when_chained_reward_components_receive_single_step_batched_embeddings_then_modulates_correctly() -> (
     None
 ):
-    encoder = RewardEncoder(dim=32, hidden_dim=64)
-    # Single step batched embeddings (B=4, dim=32) and 2D rewards (B=4, K=8)
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=64)
+    film = RewardFiLM(dim=32, hidden_dim=64)
+
     x_batched = torch.randn(4, 32)
     rewards_batched = torch.randn(4, 8)
 
-    out = encoder(x_batched, rewards_batched)
+    stats = extractor(rewards_batched, batch_size=4, seq_len=1)
+    cond = fourier(stats)
+    out = film(x_batched, cond)
+
     assert out.shape == (4, 64)
     assert not torch.isnan(out).any()

@@ -10,14 +10,26 @@ from .gdn2 import (
     torch_recurrent_gdn2,
 )
 from .host import Block, GDN2Host
+from .reinforced_delta import (
+    AdvantageGate,
+    DeltaMemoryCore,
+    GatedRewardNet,
+    ReinforcedDeltaLayer,
+    ValueBaselineEMA,
+)
 
 __all__ = [
+    "AdvantageGate",
     "Block",
+    "DeltaMemoryCore",
     "GDN2Config",
     "GDN2Host",
     "GatedDeltaNet2",
+    "GatedRewardNet",
     "RMSNormGated",
+    "ReinforcedDeltaLayer",
     "ShortConvolution",
+    "ValueBaselineEMA",
     "torch_chunk_gdn2",
     "torch_recurrent_gdn2",
 ]

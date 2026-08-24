@@ -14,7 +14,9 @@ from qwendopamine.models.blocks import (
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
     QwenDecoderLayer,
-    RewardEncoder,
+    RewardFiLM,
+    RewardFourierEncoder,
+    RewardStatisticsExtractor,
     TokenWiseFiLM,
     build_block,
 )
@@ -147,33 +149,52 @@ def test_when_learnable_fourier_features_forward_then_encodes_position() -> None
     assert not torch.isnan(enc).any()
 
 
-def test_when_reward_encoder_forward_called_then_returns_conditioned_features() -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=64)
+def test_when_reward_components_forward_called_then_returns_conditioned_features() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=64)
+    film = RewardFiLM(dim=32, hidden_dim=64)
+
     x = torch.randn(2, 5, 32)
     reward_2d = torch.randn(2, 5)
 
-    out = encoder(x, reward_2d)
+    stats = extractor(reward_2d, batch_size=2, seq_len=5)
+    cond = fourier(stats)
+    out = film(x, cond)
     assert out.shape == (2, 5, 64)
     assert not torch.isnan(out).any()
 
     reward_3d = torch.randn(2, 5, 3)
-    out_3d = encoder(x, reward_3d)
+    stats_3d = extractor(reward_3d, batch_size=2, seq_len=5)
+    cond_3d = fourier(stats_3d)
+    out_3d = film(x, cond_3d)
     assert out_3d.shape == (2, 5, 64)
     assert not torch.isnan(out_3d).any()
 
 
-def test_when_reward_encoder_dtype_differs_then_aligns_and_executes() -> None:
-    encoder = RewardEncoder(dim=32, hidden_dim=32)
+def test_when_reward_components_dtype_differs_then_aligns_and_executes() -> None:
+    extractor = RewardStatisticsExtractor()
+    fourier = RewardFourierEncoder(d_dim=32)
+    film = RewardFiLM(dim=32, hidden_dim=32)
+
     x = torch.randn(2, 4, 32, dtype=torch.bfloat16)
     reward_values = torch.randn(2, 4, 2, dtype=torch.float32)
 
-    encoder.to(dtype=torch.bfloat16)
-    out = encoder(x, reward_values)
+    extractor.to(dtype=torch.bfloat16)
+    fourier.to(dtype=torch.bfloat16)
+    film.to(dtype=torch.bfloat16)
+
+    stats = extractor(reward_values, batch_size=2, seq_len=4)
+    cond = fourier(stats)
+    out = film(x, cond)
     assert out.shape == (2, 4, 32)
     assert out.dtype == torch.bfloat16
     assert not torch.isnan(out).any()
 
 
 def test_when_blocks_registry_contains_reward_blocks() -> None:
-    assert "reward_encoder" in BLOCKS
-    assert BLOCKS["reward_encoder"] is RewardEncoder
+    assert "reward_stats_extractor" in BLOCKS
+    assert BLOCKS["reward_stats_extractor"] is RewardStatisticsExtractor
+    assert "reward_fourier_encoder" in BLOCKS
+    assert BLOCKS["reward_fourier_encoder"] is RewardFourierEncoder
+    assert "reward_film" in BLOCKS
+    assert BLOCKS["reward_film"] is RewardFiLM

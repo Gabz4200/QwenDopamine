@@ -289,16 +289,19 @@ class LearnableFourierFeatures(nn.Module):
         self.Wr = nn.Parameter(torch.empty(self.enc_f_dim, pos_dim))
         nn.init.normal_(self.Wr, mean=0.0, std=gamma)
 
-        self.mlp = nn.Sequential(
-            nn.Linear(self.mlp_in_dim, h_dim),
-            nn.GELU(approximate="tanh"),
-            nn.Linear(h_dim, self.dg_dim),
-        )
+        linear1 = nn.Linear(self.mlp_in_dim, h_dim)
+        linear2 = nn.Linear(h_dim, self.dg_dim)
         # Best init for GELU MLP: He/Kaiming for hidden, Xavier small for output
-        nn.init.kaiming_uniform_(self.mlp[0].weight, a=0, mode="fan_in", nonlinearity="relu")
-        nn.init.zeros_(self.mlp[0].bias)
-        nn.init.xavier_uniform_(self.mlp[2].weight, gain=0.5)
-        nn.init.zeros_(self.mlp[2].bias)
+        nn.init.kaiming_uniform_(linear1.weight, a=0, mode="fan_in", nonlinearity="relu")
+        nn.init.zeros_(linear1.bias)
+        nn.init.xavier_uniform_(linear2.weight, gain=0.5)
+        nn.init.zeros_(linear2.bias)
+
+        self.mlp = nn.Sequential(
+            linear1,
+            nn.GELU(approximate="tanh"),
+            linear2,
+        )
 
     def forward(self, pos: torch.Tensor) -> torch.Tensor:
         """

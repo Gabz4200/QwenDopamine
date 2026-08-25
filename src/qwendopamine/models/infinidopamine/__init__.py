@@ -1,0 +1,41 @@
+"""InfiniDopamine modular architecture."""
+
+from qwendopamine.models.infinidopamine.modular_infinidopamine import (
+    InfiniDopamineConfig,
+    InfiniDopamineDecoderLayer,
+    InfiniDopamineForCausalLM,
+    InfiniDopamineForConditionalGeneration,
+    InfiniDopamineForSequenceClassification,
+    InfiniDopamineForTokenClassification,
+    InfiniDopamineGatedDeltaNet,
+    InfiniDopamineGatedRewardNet,
+    InfiniDopamineModel,
+    InfiniDopaminePreTrainedModel,
+    InfiniDopamineTextConfig,
+    InfiniDopamineTextForSequenceClassification,
+    InfiniDopamineTextModel,
+    InfiniDopamineTextRotaryEmbedding,
+    InfiniDopamineVisionConfig,
+    InfiniDopamineVisionModel,
+    InfiniDopamineVisionRotaryEmbedding,
+)
+
+__all__ = [
+    "InfiniDopamineConfig",
+    "InfiniDopamineDecoderLayer",
+    "InfiniDopamineForCausalLM",
+    "InfiniDopamineForConditionalGeneration",
+    "InfiniDopamineForSequenceClassification",
+    "InfiniDopamineForTokenClassification",
+    "InfiniDopamineGatedDeltaNet",
+    "InfiniDopamineGatedRewardNet",
+    "InfiniDopamineModel",
+    "InfiniDopaminePreTrainedModel",
+    "InfiniDopamineTextConfig",
+    "InfiniDopamineTextForSequenceClassification",
+    "InfiniDopamineTextModel",
+    "InfiniDopamineTextRotaryEmbedding",
+    "InfiniDopamineVisionConfig",
+    "InfiniDopamineVisionModel",
+    "InfiniDopamineVisionRotaryEmbedding",
+]

@@ -1,0 +1,8 @@
+defaults:
+  - /model: base
+  - _self_
+
+model_type: infinidopamine_gdn2
+base_model: Qwen/Qwen3.5-0.8B
+block_type: gdn2
+block_layers: [2]

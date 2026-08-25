@@ -9,6 +9,11 @@ from torch import nn
 
 from qwendopamine.models.blocks import build_block
 from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineConfig,
+    InfiniDopamineForCausalLM,
+    InfiniDopamineTextConfig,
+)
 from qwendopamine.models.normalization import RMSNorm
 from qwendopamine.models.output_head import LMHead
 from qwendopamine.models.qwen35 import (
@@ -103,7 +108,7 @@ class ResearchDecoder(nn.Module):
 def build_model(config: Any) -> nn.Module:
     r"""build_model(config) -> nn.Module
 
-    Instantiates either the standard Qwen3.5 causal model or the custom ResearchDecoder based on config.
+    Instantiates either a standard Qwen3.5/InfiniDopamine causal model or custom ResearchDecoder based on config.
 
     Args:
         config (Any): Architecture configuration instance.
@@ -112,6 +117,13 @@ def build_model(config: Any) -> nn.Module:
         nn.Module: Instantiated model instance.
     """
     model_type = getattr(config, "model_type", None)
+    if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or model_type in (
+        "infinidopamine",
+        "infini_dopamine",
+        "infinidopamine_text",
+        "infinidopamine_reference",
+    ):
+        return InfiniDopamineForCausalLM(config)
     if isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config)) or model_type in (
         "qwen35",
         "qwen3_5",
@@ -141,6 +153,16 @@ def build_reference_model(
     """
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config
+    model_type = getattr(config, "model_type", None)
+    if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or model_type in (
+        "infinidopamine",
+        "infini_dopamine",
+        "infinidopamine_text",
+        "infinidopamine_reference",
+    ):
+        return InfiniDopamineForCausalLM._from_config(
+            config, device_map=device_map, torch_dtype=torch.bfloat16, **kwargs
+        )
     return Qwen3_5ForCausalLM._from_config(
         config, device_map=device_map, torch_dtype=torch.bfloat16, **kwargs
     )

@@ -143,6 +143,12 @@ class Qwen35GDN2HFConfig(GDN2HFConfig):
     model_type = "qwen35_gdn2"
 
 
+class InfiniDopamineGDN2HFConfig(GDN2HFConfig):
+    r"""Hugging Face PreTrainedConfig adapter for InfiniDopamine GDN-2 variant."""
+
+    model_type = "infinidopamine_gdn2"
+
+
 class GDN2HFBlock(nn.Module):
     r"""Hugging Face compatible nn.Module block wrapper around GatedDeltaNet2."""
 
@@ -184,10 +190,11 @@ class GDN2HFBlock(nn.Module):
 class HFIntegration:
     @staticmethod
     def register_gdn2_hf() -> None:
-        r"""Register GDN2HFConfig and Qwen35GDN2HFConfig with AutoConfig."""
+        r"""Register GDN2HFConfig, Qwen35GDN2HFConfig, and InfiniDopamineGDN2HFConfig with AutoConfig."""
         if AutoConfig is not None and hasattr(AutoConfig, "register"):
             AutoConfig.register("gdn2", GDN2HFConfig, exist_ok=True)
             AutoConfig.register("qwen35_gdn2", Qwen35GDN2HFConfig, exist_ok=True)
+            AutoConfig.register("infinidopamine_gdn2", InfiniDopamineGDN2HFConfig, exist_ok=True)
 
     @staticmethod
     def build_gdn2_hf_config(

@@ -13,6 +13,11 @@ from qwendopamine.models.blocks.reward import (
     RewardStatisticsExtractor,
 )
 from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineDecoderLayer,
+    InfiniDopamineGatedDeltaNet,
+    InfiniDopamineGatedRewardNet,
+)
 from qwendopamine.models.qwen35.modular_qwen3_5 import (
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
@@ -43,6 +48,14 @@ def _lazy_reinforced() -> type:
 BLOCKS: dict[str, type] = {
     "gdn": Qwen3_5GatedDeltaNet,
     "gdn2": GatedDeltaNet2,
+    "infini": InfiniDopamineDecoderLayer,
+    "infini_gdn": InfiniDopamineGatedDeltaNet,
+    "infini_reward": InfiniDopamineGatedRewardNet,
+    "infinidopamine": InfiniDopamineDecoderLayer,
+    "infinidopamine_decoder": InfiniDopamineDecoderLayer,
+    "infinidopamine_gdn": InfiniDopamineGatedDeltaNet,
+    "infinidopamine_reward": InfiniDopamineGatedRewardNet,
+    "infinidopamine_grn": InfiniDopamineGatedRewardNet,
     "qwen": Qwen3_5DecoderLayer,
     "qwen35": Qwen3_5DecoderLayer,
     "qwen35_gdn": Qwen3_5GatedDeltaNet,
@@ -52,14 +65,6 @@ BLOCKS: dict[str, type] = {
     "reward_film": RewardFiLM,
     "learnable_softsign": LearnableSoftsign,
 }
-
-# Register GRN lazily after base BLOCKS to keep import cycle free
-try:
-    from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet as _RegGRN
-    BLOCKS["gated_reward_net"] = _RegGRN
-    BLOCKS["grn"] = _RegGRN
-except ImportError:
-    pass
 
 
 def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
@@ -78,11 +83,10 @@ def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
     Raises:
         KeyError: If ``block_type`` is not present in ``BLOCKS`` registry.
     """
-    # Handle GatedRewardNet specially (has hidden_size, layer_idx constructor)
     if block_type in ("gated_reward_net", "grn"):
-        from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet as _GRN
+        grn_cls = _lazy_grn()
         hidden_size = getattr(config, "hidden_size", getattr(config, "n_embd", 2048))
-        return _GRN(hidden_size=hidden_size, layer_idx=layer_idx)
+        return grn_cls(hidden_size=hidden_size, layer_idx=layer_idx)
     lazy_map = {
         "value_baseline_ema": _lazy_value_ema,
         "advantage_gate": _lazy_adv_gate,

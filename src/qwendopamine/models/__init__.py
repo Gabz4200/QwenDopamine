@@ -6,6 +6,17 @@ from qwendopamine.models.gdn2_gpt import (
     GDN2GPT,
     GDN2GPTConfig,
 )
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineConfig,
+    InfiniDopamineDecoderLayer,
+    InfiniDopamineForCausalLM,
+    InfiniDopamineGatedDeltaNet,
+    InfiniDopamineGatedRewardNet,
+    InfiniDopamineModel,
+    InfiniDopaminePreTrainedModel,
+    InfiniDopamineTextConfig,
+    InfiniDopamineTextModel,
+)
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
     build_model,
@@ -28,6 +39,15 @@ __all__ = [
     "GDN2GPT",
     "GDN2GPTConfig",
     "GatedDeltaNet2",
+    "InfiniDopamineConfig",
+    "InfiniDopamineDecoderLayer",
+    "InfiniDopamineForCausalLM",
+    "InfiniDopamineGatedDeltaNet",
+    "InfiniDopamineGatedRewardNet",
+    "InfiniDopamineModel",
+    "InfiniDopaminePreTrainedModel",
+    "InfiniDopamineTextConfig",
+    "InfiniDopamineTextModel",
     "LMHead",
     "PositionEmbeddings",
     "Qwen3_5Config",

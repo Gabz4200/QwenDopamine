@@ -17,6 +17,11 @@ from qwendopamine.models.blocks.reward import (
     TokenWiseFiLM,
 )
 from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineDecoderLayer,
+    InfiniDopamineGatedDeltaNet,
+    InfiniDopamineGatedRewardNet,
+)
 from qwendopamine.models.qwen35.modular_qwen3_5 import (
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
@@ -26,12 +31,19 @@ from qwendopamine.models.qwen35.modular_qwen3_5 import (
 GatedDeltaNetBlock = Qwen3_5GatedDeltaNet
 GatedDeltaNet2Block = GatedDeltaNet2
 QwenDecoderLayer = Qwen3_5DecoderLayer
+InfiniDecoderLayer = InfiniDopamineDecoderLayer
+InfiniGatedRewardNet = InfiniDopamineGatedRewardNet
 
 __all__ = [
     "BLOCKS",
     "AsinhScaler",
     "GatedDeltaNet2Block",
     "GatedDeltaNetBlock",
+    "InfiniDecoderLayer",
+    "InfiniDopamineDecoderLayer",
+    "InfiniDopamineGatedDeltaNet",
+    "InfiniDopamineGatedRewardNet",
+    "InfiniGatedRewardNet",
     "LearnableFourierFeatures",
     "LearnableSoftsign",
     "Qwen3_5DecoderLayer",

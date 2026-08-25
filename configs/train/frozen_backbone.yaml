@@ -2,6 +2,9 @@ defaults:
   - /train: single_gpu
   - _self_
 
+# NOTE: These unfreeze layers assume a 12+ layer base model (e.g. qwen35_custom_block.yaml).
+# The default /model: base has only 4 layers. Compose with a larger model config.
+
 freeze:
   base_model: true
   new_blocks: false

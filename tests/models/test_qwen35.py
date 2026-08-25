@@ -137,5 +137,5 @@ def test_when_invalid_input_ids_type_then_raises_error(
     model = Qwen3_5ForCausalLM(tiny_qwen35_config)
     invalid_inputs = torch.tensor([[1.5, 2.5], [3.5, 4.5]], dtype=torch.float32)
 
-    with pytest.raises((TypeError, RuntimeError, ValueError)):
+    with pytest.raises(TypeError):
         model(input_ids=invalid_inputs)

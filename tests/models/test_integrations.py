@@ -54,11 +54,18 @@ def test_when_gdn2_hf_block_forward_executed_then_preserves_shape_and_cache() ->
     assert past_cache is not None
 
 
-def test_when_register_gdn2_hf_called_then_autoconfig_resolves_gdn2() -> None:
+def test_when_register_gdn2_hf_called_then_autoconfig_resolves_gdn2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     HFIntegration.register_gdn2_hf()
-    cfg = AutoConfig.for_model("gdn2", hidden_size=128, num_heads=4, head_dim=32)
-    assert isinstance(cfg, GDN2HFConfig)
-    assert cfg.hidden_size == 128
+    try:
+        cfg = AutoConfig.for_model("gdn2", hidden_size=128, num_heads=4, head_dim=32)
+        assert isinstance(cfg, GDN2HFConfig)
+        assert cfg.hidden_size == 128
+    finally:
+        # Teardown: remove gdn2 from AutoConfig registry to avoid side effects
+        if hasattr(AutoConfig, "_model_mapping"):
+            AutoConfig._model_mapping._extra_content.pop("gdn2", None)
 
 
 def test_when_map_gguf_name_to_hf_called_then_maps_expected_keys() -> None:

@@ -2,6 +2,9 @@ defaults:
   - /train: single_gpu
   - _self_
 
+model:
+  num_layers: 6
+
 experiment:
   name: ablation_block_position
   block_types:

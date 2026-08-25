@@ -33,9 +33,10 @@ class DummyLM(torch.nn.Module):
         return types.SimpleNamespace(logits=logits, loss=loss)
 
     def generate(self, input_ids: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+        max_new_tokens = kwargs.get("max_new_tokens", 4)
         batch_size = input_ids.shape[0]
         new_tokens = torch.zeros(
-            batch_size, 4, dtype=torch.long, device=input_ids.device
+            batch_size, max_new_tokens, dtype=torch.long, device=input_ids.device
         )
         return torch.cat([input_ids, new_tokens], dim=-1)
 

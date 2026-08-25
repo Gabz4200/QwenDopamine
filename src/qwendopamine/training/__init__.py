@@ -5,6 +5,7 @@ from qwendopamine.training.freezing import (
     set_trainable,
     trainable_parameters,
     unfreeze_module,
+    validate_unfreeze_phases,
 )
 from qwendopamine.training.loop import TrainingLoop
 from qwendopamine.training.metrics import MetricTracker
@@ -18,4 +19,5 @@ __all__ = [
     "set_trainable",
     "trainable_parameters",
     "unfreeze_module",
+    "validate_unfreeze_phases",
 ]

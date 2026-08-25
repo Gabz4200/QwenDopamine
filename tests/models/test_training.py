@@ -131,8 +131,19 @@ def test_when_training_loop_run_then_advances_global_steps_and_optimizes() -> No
     )
     loop = TrainingLoop(model, optimizer, scheduler, config)
 
+    # Snapshot parameters before training.
+    params_before = [p.clone().detach() for p in model.parameters()]
+
     batches = [{"x": torch.randn(2, 8), "labels": torch.randn(2, 8)} for _ in range(10)]
 
     loop.run(batches)
 
     assert loop.global_step == 4
+
+    # Verify at least one parameter actually changed (optimizer took steps).
+    params_after = [p.detach() for p in model.parameters()]
+    any_changed = any(
+        not torch.equal(before, after)
+        for before, after in zip(params_before, params_after)
+    )
+    assert any_changed, "TrainingLoop ran but no parameters were updated"

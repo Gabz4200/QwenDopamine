@@ -10,6 +10,9 @@ import torch
 from qwendopamine.models.blocks import (
     BLOCKS,
     GatedDeltaNetBlock,
+    InfiniDecoderLayer,
+    InfiniDopamineDecoderLayer,
+    InfiniDopamineGatedDeltaNet,
     LearnableFourierFeatures,
     Qwen3_5DecoderLayer,
     Qwen3_5GatedDeltaNet,
@@ -19,6 +22,10 @@ from qwendopamine.models.blocks import (
     RewardStatisticsExtractor,
     TokenWiseFiLM,
     build_block,
+)
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineForCausalLM,
+    InfiniDopamineTextConfig,
 )
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
@@ -55,8 +62,14 @@ def test_when_blocks_registry_queried_then_contains_qwen35_blocks() -> None:
     assert "gdn" in BLOCKS
     assert "qwen35" in BLOCKS
     assert "qwen35_gdn" in BLOCKS
+    assert "infinidopamine" in BLOCKS
+    assert "infinidopamine_gdn" in BLOCKS
+    assert "infini" in BLOCKS
+    assert "infini_gdn" in BLOCKS
     assert BLOCKS["qwen"] is Qwen3_5DecoderLayer
     assert BLOCKS["gdn"] is Qwen3_5GatedDeltaNet
+    assert BLOCKS["infinidopamine"] is InfiniDopamineDecoderLayer
+    assert BLOCKS["infinidopamine_gdn"] is InfiniDopamineGatedDeltaNet
 
 
 def test_when_build_block_called_then_instantiates_correct_block(
@@ -64,9 +77,13 @@ def test_when_build_block_called_then_instantiates_correct_block(
 ) -> None:
     qwen_layer = build_block("qwen", mock_config, layer_idx=0)
     gdn_layer = build_block("gdn", mock_config, layer_idx=1)
+    infini_layer = build_block("infinidopamine", mock_config, layer_idx=0)
+    infini_gdn_layer = build_block("infinidopamine_gdn", mock_config, layer_idx=1)
 
     assert isinstance(qwen_layer, QwenDecoderLayer)
     assert isinstance(gdn_layer, GatedDeltaNetBlock)
+    assert isinstance(infini_layer, InfiniDecoderLayer)
+    assert isinstance(infini_gdn_layer, InfiniDopamineGatedDeltaNet)
 
 
 def test_when_unknown_block_requested_then_raises_key_error(
@@ -102,6 +119,23 @@ def test_when_build_model_with_qwen35_config_then_returns_causal_lm() -> None:
     )
     model = build_model(cfg)
     assert isinstance(model, Qwen3_5ForCausalLM)
+
+
+def test_when_build_model_with_infinidopamine_config_then_returns_causal_lm() -> None:
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=32,
+        num_hidden_layers=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        intermediate_size=64,
+        vocab_size=100,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+    )
+    model = build_model(cfg)
+    assert isinstance(model, InfiniDopamineForCausalLM)
 
 
 def test_when_build_model_with_research_config_then_returns_research_decoder(

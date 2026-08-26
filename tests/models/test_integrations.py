@@ -90,3 +90,98 @@ def test_when_load_qwen35_tokenizer_all_candidates_fail_then_raises_runtime_erro
 
     with pytest.raises(RuntimeError, match="Failed to load Qwen3.5 tokenizer"):
         load_qwen35_tokenizer("nonexistent/invalid-model-name")
+
+
+def test_when_register_infinidopamine_hf_called_then_autoconfig_and_automodel_resolve() -> None:
+    from transformers import AutoModelForCausalLM
+
+    from qwendopamine.models.infinidopamine import (
+        InfiniDopamineForCausalLM,
+        InfiniDopamineTextConfig,
+    )
+
+    HFIntegration.register_infinidopamine_hf()
+
+    cfg = AutoConfig.for_model(
+        "infinidopamine_text",
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        head_dim=16,
+        sliding_window=4,
+        vocab_size=1000,
+    )
+    assert isinstance(cfg, InfiniDopamineTextConfig)
+
+    model = AutoModelForCausalLM.from_config(cfg)
+    assert isinstance(model, InfiniDopamineForCausalLM)
+
+
+def test_when_build_infinidopamine_helpers_called_then_instantiates_working_causal_lm() -> None:
+    from qwendopamine.models.infinidopamine import (
+        InfiniDopamineForCausalLM,
+        InfiniDopamineTextConfig,
+    )
+
+    cfg = HFIntegration.build_infinidopamine_config(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        head_dim=16,
+        sliding_window=4,
+        vocab_size=500,
+    )
+    assert isinstance(cfg, InfiniDopamineTextConfig)
+
+    model = HFIntegration.build_infinidopamine_model(cfg)
+    assert isinstance(model, InfiniDopamineForCausalLM)
+
+    inputs = torch.randint(0, 500, (2, 8))
+    outputs = model(inputs)
+    assert outputs.logits.shape == (2, 8, 500)
+
+
+def test_when_prepare_model_for_trl_training_called_then_configures_gradient_checkpointing_and_cache() -> None:
+    from qwendopamine.models.infinidopamine import (
+        InfiniDopamineForCausalLM,
+        InfiniDopamineTextConfig,
+    )
+
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        head_dim=16,
+        sliding_window=4,
+        vocab_size=500,
+    )
+    model = InfiniDopamineForCausalLM(cfg)
+
+    prepared_model = HFIntegration.prepare_model_for_trl_training(
+        model, use_gradient_checkpointing=True
+    )
+    assert getattr(prepared_model.config, "use_cache", True) is False
+
+    # Verify input embeddings require gradients when checkpointed
+    emb = prepared_model.get_input_embeddings()
+    assert emb is not None
+    emb_out = emb(torch.tensor([[1, 2]]))
+    assert emb_out.requires_grad is True

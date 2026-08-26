@@ -513,11 +513,13 @@ class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
         The maximum sequence length that this model might ever be used with
     """
 
+    model_type = "infinidopamine_vision"
     deepstack_visual_indexes = AttributeError()
 
 
 @strict
 class InfiniDopamineConfig(Qwen3VLConfig):
+    model_type = "infinidopamine"
     sub_configs: ClassVar[dict[str, type]] = {
         "text_config": InfiniDopamineTextConfig,
         "vision_config": InfiniDopamineVisionConfig,
@@ -893,6 +895,7 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
             config, "linear_num_value_heads", 32
         )
         self.conv_dim = self.key_dim * 2 + self.value_dim
+        self.output_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
         self._register_load_state_dict_pre_hook(self._convert_gdn1_weights_hook)
 
     def _convert_gdn1_weights_hook(
@@ -918,7 +921,16 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
             return
 
         if out_key in state_dict:
-            state_dict[prefix + "output_proj.weight"] = state_dict.pop(out_key)
+            out_w = state_dict.pop(out_key)
+            if out_w.shape != self.output_proj.weight.shape:
+                if (
+                    out_w.shape[0] == self.output_proj.weight.shape[0]
+                    and out_w.shape[1] >= self.output_proj.weight.shape[1]
+                ):
+                    out_w = out_w[:, : self.output_proj.weight.shape[1]]
+                else:
+                    out_w = self.output_proj.weight.data.clone()
+            state_dict[prefix + "output_proj.weight"] = out_w
 
         if qkvz_key in state_dict:
             qkvz = state_dict.pop(qkvz_key)
@@ -1041,7 +1053,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         elif self.block_type in ("full_attention", "sliding_attention"):
             self.self_attn = InfiniDopamineAttention(config, layer_idx)
         if (
-            getattr(config, "num_experts", 0) > 0
+            (getattr(config, "num_experts", None) or 0) > 0
             and layer_idx not in getattr(config, "mlp_only_layers", [])
             and (layer_idx + 1) % getattr(config, "decoder_sparse_step", 1) == 0
         ):
@@ -1109,6 +1121,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
 
 
 class InfiniDopaminePreTrainedModel(Qwen3NextPreTrainedModel):
+    config_class = InfiniDopamineConfig
     config: InfiniDopamineConfig
     _no_split_modules: ClassVar[list[str]] = [
         "InfiniDopamineDecoderLayer",
@@ -1143,6 +1156,7 @@ class InfiniDopaminePreTrainedModel(Qwen3NextPreTrainedModel):
 
 
 class InfiniDopamineVisionModel(Qwen3VLVisionModel):
+    config_class = InfiniDopamineVisionConfig
     config: InfiniDopamineVisionConfig
     _no_split_modules: ClassVar[list[str]] = ["InfiniDopamineVisionBlock"]
 
@@ -1206,6 +1220,7 @@ class InfiniDopamineModelOutputWithPast(Qwen3VLModelOutputWithPast):
 
 
 class InfiniDopamineTextModel(Qwen3NextModel):
+    config_class = InfiniDopamineTextConfig
     config: InfiniDopamineTextConfig
 
     def __init__(self, config: InfiniDopamineTextConfig) -> None:
@@ -1333,14 +1348,44 @@ class InfiniDopamineTextModel(Qwen3NextModel):
             state_dict = weights.state_dict()
         else:
             state_dict = dict(weights)
+
+        has_full_prefix = any(
+            k.startswith(("model.language_model.", "model.", "language_model."))
+            for k in state_dict
+        )
+        if has_full_prefix:
+            remapped_state_dict: dict[str, torch.Tensor] = {}
+            for k, v in state_dict.items():
+                new_k = k
+                if new_k.startswith("model.language_model."):
+                    new_k = new_k[len("model.language_model.") :]
+                elif new_k.startswith("language_model."):
+                    new_k = new_k[len("language_model.") :]
+                elif new_k.startswith("model."):
+                    new_k = new_k[len("model.") :]
+                if not (
+                    k.startswith(("model.visual.", "visual.", "mtp."))
+                    or k == "lm_head.weight"
+                ):
+                    remapped_state_dict[new_k] = v
+            state_dict = remapped_state_dict
+
         return self.load_state_dict(state_dict, strict=strict)
 
 
 class InfiniDopamineModel(Qwen3VLModel):
+    config_class = InfiniDopamineConfig
     _no_split_modules: ClassVar[list[str]] = [
         "InfiniDopamineDecoderLayer",
         "InfiniDopamineVisionBlock",
     ]
+
+    def __init__(self, config: InfiniDopamineConfig) -> None:
+        InfiniDopaminePreTrainedModel.__init__(self, config)
+        self.visual = InfiniDopamineVisionModel(config.vision_config)
+        self.language_model = InfiniDopamineTextModel(config.text_config)
+        self.rope_deltas = None
+        self.post_init()
 
     def get_video_features(
         self, **super_kwargs: Any
@@ -1442,6 +1487,7 @@ class InfiniDopamineModel(Qwen3VLModel):
 
 
 class InfiniDopamineForCausalLM(Qwen3ForCausalLM):
+    config_class = InfiniDopamineTextConfig
     config: InfiniDopamineTextConfig
     _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
         r"^mtp.*",
@@ -1506,16 +1552,49 @@ class InfiniDopamineForCausalLM(Qwen3ForCausalLM):
             state_dict = weights.state_dict()
         else:
             state_dict = dict(weights)
+
+        has_language_model_prefix = any(
+            k.startswith(("model.language_model.", "language_model."))
+            for k in state_dict
+        )
+        if has_language_model_prefix:
+            remapped_state_dict: dict[str, torch.Tensor] = {}
+            for k, v in state_dict.items():
+                if k.startswith("model.language_model."):
+                    remapped_state_dict[k.replace("model.language_model.", "model.")] = v
+                elif k.startswith("language_model."):
+                    remapped_state_dict[k.replace("language_model.", "model.")] = v
+                elif k == "lm_head.weight" or not k.startswith(("model.visual.", "visual.", "mtp.")):
+                    remapped_state_dict[k] = v
+            state_dict = remapped_state_dict
+
         return self.load_state_dict(state_dict, strict=strict)
 
 
 class InfiniDopamineForTokenClassification(
     GenericForTokenClassification, InfiniDopaminePreTrainedModel
 ):
+    config_class = InfiniDopamineConfig
     config: InfiniDopamineConfig
 
 
 class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
+    config_class = InfiniDopamineConfig
+    config: InfiniDopamineConfig
+    _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
+        r"^mtp.*",
+    ]
+
+    def __init__(self, config: InfiniDopamineConfig) -> None:
+        InfiniDopaminePreTrainedModel.__init__(self, config)
+        self.model = InfiniDopamineModel(config)
+        self.lm_head = nn.Linear(
+            config.text_config.hidden_size,
+            config.text_config.vocab_size,
+            bias=False,
+        )
+        self.post_init()
+
     def get_video_features(
         self, **super_kwargs: Any
     ) -> tuple[Any, ...] | BaseModelOutputWithPooling:
@@ -1526,10 +1605,23 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
     ) -> tuple[Any, ...] | BaseModelOutputWithPooling:
         return super().get_image_features(**super_kwargs)
 
+    def load_qwen35_weights(
+        self,
+        weights: dict[str, torch.Tensor] | nn.Module,
+        strict: bool = True,
+    ) -> Any:
+        r"""Load pretrained Qwen3.5 (GDN-1) weights into InfiniDopamine (GDN-2 with SWA)."""
+        if isinstance(weights, nn.Module):
+            state_dict = weights.state_dict()
+        else:
+            state_dict = dict(weights)
+        return self.load_state_dict(state_dict, strict=strict)
+
 
 class InfiniDopamineTextForSequenceClassification(
     GenericForSequenceClassification, InfiniDopaminePreTrainedModel
 ):
+    config_class = InfiniDopamineTextConfig
     config: InfiniDopamineTextConfig
     input_modalities = ("text",)
 
@@ -1537,6 +1629,8 @@ class InfiniDopamineTextForSequenceClassification(
 class InfiniDopamineForSequenceClassification(
     GenericForSequenceClassification, InfiniDopaminePreTrainedModel
 ):
+    config_class = InfiniDopamineConfig
+    config: InfiniDopamineConfig
     def forward(
         self,
         input_ids: torch.LongTensor = None,

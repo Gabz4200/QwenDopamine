@@ -483,6 +483,7 @@ class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
         The maximum sequence length that this model might ever be used with
     """
 
+    model_type = "qwen3_5_vision"
     deepstack_visual_indexes = AttributeError()
 
 
@@ -504,6 +505,11 @@ class Qwen3_5Config(Qwen3VLConfig):
     >>> configuration = model.config
     ```"""
 
+    model_type = "qwen3_5"
+    sub_configs: ClassVar[dict[str, type]] = {
+        "text_config": Qwen3_5TextConfig,
+        "vision_config": Qwen3_5VisionConfig,
+    }
     image_token_id: int = 248056
     video_token_id: int = 248057
     vision_start_token_id: int = 248053
@@ -760,6 +766,7 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
 
 
 class Qwen3_5PreTrainedModel(Qwen3NextPreTrainedModel):
+    config_class = Qwen3_5Config
     config: Qwen3_5Config
     _no_split_modules: ClassVar[list[str]] = [
         "Qwen3_5DecoderLayer",
@@ -794,6 +801,7 @@ class Qwen3_5PreTrainedModel(Qwen3NextPreTrainedModel):
 
 
 class Qwen3_5VisionModel(Qwen3VLVisionModel):
+    config_class = Qwen3_5VisionConfig
     config: Qwen3_5VisionConfig
     _no_split_modules: ClassVar[list[str]] = ["Qwen3_5VisionBlock"]
 
@@ -867,6 +875,7 @@ class Qwen3_5ModelOutputWithPast(Qwen3VLModelOutputWithPast):
 
 
 class Qwen3_5TextModel(Qwen3NextModel):
+    config_class = Qwen3_5TextConfig
     config: Qwen3_5TextConfig
 
     def __init__(self, config: Qwen3_5TextConfig):
@@ -952,10 +961,18 @@ class Qwen3_5TextModel(Qwen3NextModel):
 
 
 class Qwen3_5Model(Qwen3VLModel):
+    config_class = Qwen3_5Config
     _no_split_modules: ClassVar[list[str]] = [
         "Qwen3_5DecoderLayer",
         "Qwen3_5VisionBlock",
     ]
+
+    def __init__(self, config: Qwen3_5Config) -> None:
+        Qwen3_5PreTrainedModel.__init__(self, config)
+        self.visual = Qwen3_5VisionModel(config.vision_config)
+        self.language_model = Qwen3_5TextModel(config.text_config)
+        self.rope_deltas = None
+        self.post_init()
 
     def get_video_features(self, **super_kwargs) -> tuple | BaseModelOutputWithPooling:
         # Same implementation as for images
@@ -1058,6 +1075,7 @@ class Qwen3_5Model(Qwen3VLModel):
 
 
 class Qwen3_5ForCausalLM(Qwen3ForCausalLM):
+    config_class = Qwen3_5TextConfig
     config: Qwen3_5TextConfig
     _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
         r"^mtp.*",
@@ -1072,10 +1090,27 @@ class Qwen3_5ForCausalLM(Qwen3ForCausalLM):
 class Qwen3_5ForTokenClassification(
     GenericForTokenClassification, Qwen3_5PreTrainedModel
 ):
+    config_class = Qwen3_5Config
     config: Qwen3_5Config
 
 
 class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration):
+    config_class = Qwen3_5Config
+    config: Qwen3_5Config
+    _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
+        r"^mtp.*",
+    ]
+
+    def __init__(self, config: Qwen3_5Config) -> None:
+        Qwen3_5PreTrainedModel.__init__(self, config)
+        self.model = Qwen3_5Model(config)
+        self.lm_head = nn.Linear(
+            config.text_config.hidden_size,
+            config.text_config.vocab_size,
+            bias=False,
+        )
+        self.post_init()
+
     def get_video_features(self, **super_kwargs) -> tuple | BaseModelOutputWithPooling:
         return super().get_video_features(**super_kwargs)
 
@@ -1086,6 +1121,7 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration):
 class Qwen3_5TextForSequenceClassification(
     GenericForSequenceClassification, Qwen3_5PreTrainedModel
 ):
+    config_class = Qwen3_5TextConfig
     config: Qwen3_5TextConfig
     input_modalities = ("text",)
 
@@ -1093,6 +1129,8 @@ class Qwen3_5TextForSequenceClassification(
 class Qwen3_5ForSequenceClassification(
     GenericForSequenceClassification, Qwen3_5PreTrainedModel
 ):
+    config_class = Qwen3_5Config
+    config: Qwen3_5Config
     def forward(
         self,
         input_ids: torch.LongTensor = None,

@@ -4,13 +4,14 @@ defaults:
 
 experiment:
   name: ablation_unfreezing
-  phases:
-    - name: train_new_blocks
-      max_steps: 10000
-      unfreeze: [experimental_blocks]
-    - name: unfreeze_nearby
-      max_steps: 10000
-      unfreeze: [experimental_blocks, model.layers.2, model.layers.4]
-    - name: full_finetune
-      max_steps: 10000
-      unfreeze: [model]
+
+freeze:
+  base_model: true
+  new_blocks: false
+  unfreeze_phases:
+    - step: 5000
+      modules: [model.layers.2]
+    - step: 10000
+      modules: [model.layers.4]
+    - step: 15000
+      modules: [model]

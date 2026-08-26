@@ -40,6 +40,9 @@ def init_distributed() -> tuple[int, int, int]:
     if world_size > 1:
         import torch.distributed as dist
 
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+
         if not dist.is_initialized():
             dist.init_process_group(
                 backend=_default_backend(), rank=rank, world_size=world_size

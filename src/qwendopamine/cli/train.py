@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from qwendopamine.integrations.huggingface import HFIntegration
+
+
+def _get_cfg(config: DictConfig, *keys: str, default: Any = None) -> Any:
+    for k in keys:
+        val = OmegaConf.select(config, k, default=None)
+        if val is not None:
+            return val
+    return default
 
 
 @hydra.main(
@@ -19,22 +28,23 @@ def main(config: DictConfig) -> None:
     Loads a Hugging Face model with optional quantization and prints a
     confirmation message.
 
-    The accessor paths below assume a ``train/*`` primary config: Hydra groups
-    the composed result under the ``train`` key (e.g. ``train.train.device``,
-    ``train.quantization.enabled``, ``train.model.base_model``). All lookups
-    fall back to safe defaults so configs that omit optional sections (such as
-    ``train/single_gpu``, which has no ``quantization`` block) still work.
+    The accessor helper ``_get_cfg`` supports both flat and nested Hydra configurations,
+    falling back to safe defaults when optional sections are omitted.
     """
     print(OmegaConf.to_yaml(config))
     quantization_config = None
-    if OmegaConf.select(config, "train.quantization.enabled", default=False):
+    if _get_cfg(config, "quantization.enabled", "train.quantization.enabled", default=False):
         quantization_config = HFIntegration.make_quantization_config(
-            method=OmegaConf.select(config, "train.quantization.method", default="int8")
+            method=_get_cfg(
+                config, "quantization.method", "train.quantization.method", default="int8"
+            )
         )
-    base_model = OmegaConf.select(config, "train.model.base_model", default=None)
-    device = OmegaConf.select(config, "train.train.device", default="cpu")
+    base_model = _get_cfg(
+        config, "model.base_model", "train.model.base_model", default="Qwen/Qwen3.5-0.8B"
+    )
+    device = _get_cfg(config, "train.device", "train.train.device", default="cpu")
     model = HFIntegration.load_model(
-        base_model or "Qwen/Qwen3.5-4B",
+        base_model,
         quantization_config=quantization_config,
         device_map=device,
     )

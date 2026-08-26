@@ -11,7 +11,7 @@ experiment:
     - qwen
     - qwen
     - qwen
-    - experimental
+    - infinidopamine_gdn
     - qwen
     - qwen
   new_block_scale: 0.001

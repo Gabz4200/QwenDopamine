@@ -439,10 +439,10 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
     num_hidden_layers: int = 32
     num_key_value_heads: int = 4
     sliding_window: int | None = 1024
-    attention_dropout: float = 0.0
-    hidden_dropout: float = 0.0
-    reward_dropout: float = 0.0
-    advantage_dropout: float = 0.0
+    attention_dropout: float = 0.05
+    hidden_dropout: float = 0.05
+    reward_dropout: float = 0.10
+    advantage_dropout: float = 0.05
 
     @property
     def attention_dropout_prob(self) -> float:

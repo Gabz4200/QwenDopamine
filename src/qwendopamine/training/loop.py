@@ -93,17 +93,31 @@ class TrainingLoop:
 
     def _step_optimizer(self) -> None:
         r"""Unscale, clip gradients, step optimizer/scheduler, and advance global step."""
-        self._optimizer_step()
-        self.scheduler.step()
+        stepped = self._optimizer_step()
+        if stepped:
+            self.scheduler.step()
+            self.global_step += 1
         self.optimizer.zero_grad(set_to_none=True)
-        self.global_step += 1
 
-    def _optimizer_step(self) -> None:
-        r"""Unscale gradients, clip, and perform an optimizer step."""
+    def _optimizer_step(self) -> bool:
+        r"""Unscale gradients, clip, and perform an optimizer step.
+
+        Returns:
+            bool: True if the optimizer step executed, False if skipped due to non-finite gradients.
+        """
+        if not self.scaler.is_enabled():
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+            self.optimizer.step()
+            return True
+
         self.scaler.unscale_(self.optimizer)
         nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+        scale_before = self.scaler.get_scale()
         self.scaler.step(self.optimizer)
         self.scaler.update()
+        scale_after = self.scaler.get_scale()
+        # If scale decreased, the optimizer step was skipped due to Inf/NaN gradients
+        return scale_after >= scale_before
 
     @staticmethod
     def _move_to_device(model: nn.Module, batch: Any) -> Any:

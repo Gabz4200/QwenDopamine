@@ -39,12 +39,21 @@ def test_when_freeze_and_unfreeze_module_then_toggles_parameter_grad() -> None:
 def test_when_metric_tracker_updated_then_records_and_exports_dict() -> None:
     tracker = MetricTracker()
     tracker.update("loss", 1.25)
+    tracker.update("loss", 1.75)
     tracker.update("ppl", 3.49)
 
+    assert tracker.values["loss"] == 1.75
+    assert tracker.get_mean("loss") == pytest.approx(1.50, rel=1e-6)
+    assert tracker.get_history("loss") == [1.25, 1.75]
+
     state = tracker.state_dict()
-    assert state == {"loss": 1.25, "ppl": 3.49}
+    assert state == {"loss": 1.75, "ppl": 3.49}
     state["loss"] = 9.99
-    assert tracker.values["loss"] == 1.25
+    assert tracker.values["loss"] == 1.75
+
+    tracker.reset()
+    assert len(tracker.values) == 0
+    assert tracker.get_mean("loss") == 0.0
 
 
 def test_when_build_scheduler_cosine_then_returns_linear_warmup_scheduler() -> None:

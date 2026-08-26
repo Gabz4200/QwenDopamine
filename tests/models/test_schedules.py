@@ -131,6 +131,8 @@ def test_when_scheduler_state_dict_roundtrip_then_state_preserved() -> None:
         optimizer2, base_scheduler2, warmup_steps=10, min_lr=1e-5
     )
     scheduler2.load_state_dict(state)
+    assert scheduler2.step_count == 5
+    assert optimizer2.param_groups[0]["lr"] == pytest.approx(5 / 10 * 1e-3, rel=1e-6)
 
 
 def test_when_scheduler_step_count_tracked_then_step_count_increments() -> None:

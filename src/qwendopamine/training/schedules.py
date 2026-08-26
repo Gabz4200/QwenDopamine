@@ -10,9 +10,13 @@ from torch.optim.lr_scheduler import LRScheduler
 
 
 def build_scheduler(
-    optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5
+    optimizer: Optimizer,
+    name: str,
+    warmup_steps: int = 2000,
+    min_lr: float = 1e-5,
+    max_steps: int = 100000,
 ) -> LRScheduler:
-    r"""build_scheduler(optimizer, name, warmup_steps=2000, min_lr=1e-5) -> LRScheduler
+    r"""build_scheduler(optimizer, name, warmup_steps=2000, min_lr=1e-5, max_steps=100000) -> LRScheduler
 
     Constructs a learning-rate scheduler with linear warmup wrapper.
 
@@ -21,6 +25,7 @@ def build_scheduler(
         name (str): Scheduler name string. Supported values: ``"cosine"``.
         warmup_steps (int, optional): Number of linear warmup steps. Default: ``2000``.
         min_lr (float, optional): Minimum learning rate floor after decay. Default: ``1e-5``.
+        max_steps (int, optional): Maximum training steps for cosine decay horizon. Default: ``100000``.
 
     Returns:
         LRScheduler: Wrapped learning rate scheduler with warmup logic.
@@ -30,7 +35,7 @@ def build_scheduler(
     """
     if name == "cosine":
         base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=100000, eta_min=min_lr
+            optimizer, T_max=max(max_steps - warmup_steps, 1), eta_min=min_lr
         )
         return LinearWarmupScheduler(optimizer, base_scheduler, warmup_steps, min_lr)
     raise KeyError(f"Unknown scheduler: {name}")
@@ -84,22 +89,39 @@ class LinearWarmupScheduler(LRScheduler):
     def state_dict(self) -> dict[str, Any]:
         r"""state_dict() -> dict[str, Any]
 
-        Returns state dictionary of the wrapped base scheduler.
+        Returns state dictionary preserving warmup step progress and base scheduler.
 
         Returns:
-            dict[str, Any]: Base scheduler state dict.
+            dict[str, Any]: Combined scheduler state dict.
         """
-        return self.base_scheduler.state_dict()
+        return {
+            "base_scheduler": self.base_scheduler.state_dict(),
+            "step_count": self.step_count,
+            "warmup_steps": self.warmup_steps,
+            "min_lr": self.min_lr,
+        }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         r"""load_state_dict(state_dict) -> None
 
-        Loads state dictionary into the wrapped base scheduler.
+        Loads state dictionary into the scheduler.
 
         Args:
             state_dict (dict[str, Any]): Target state dictionary.
         """
-        self.base_scheduler.load_state_dict(state_dict)
+        if "base_scheduler" in state_dict:
+            self.base_scheduler.load_state_dict(state_dict["base_scheduler"])
+            self.step_count = state_dict.get("step_count", self.step_count)
+            self.warmup_steps = state_dict.get("warmup_steps", self.warmup_steps)
+            self.min_lr = state_dict.get("min_lr", self.min_lr)
+        else:
+            self.base_scheduler.load_state_dict(state_dict)
+
+        if self.step_count <= self.warmup_steps and self.warmup_steps > 0:
+            scale = self.step_count / max(self.warmup_steps, 1)
+            for group in self.optimizer.param_groups:
+                initial_lr = float(group.get("initial_lr", group.get("lr", self.min_lr)) or self.min_lr)
+                group["lr"] = initial_lr * scale
 
 
 __all__ = [

@@ -651,3 +651,95 @@ def test_when_infinidopamine_gated_reward_net_has_reward_dropout_then_regularize
     train1 = grn(hidden_states=hidden, reward_values=rewards)
     train2 = grn(hidden_states=hidden, reward_values=rewards)
     assert not torch.allclose(train1, train2)
+
+
+def test_when_infinidopamine_initialized_then_routing_gates_favor_fifty_fifty() -> (
+    None
+):
+    config = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+    )
+    gdn = InfiniDopamineGatedDeltaNet(config, layer_idx=0)
+
+    # Initial betas are 0.0 -> sigmoid(0) = 0.5 (exact 50/50 balance)
+    assert torch.allclose(gdn.betas, torch.zeros_like(gdn.betas))
+    gate = torch.sigmoid(gdn.betas)
+    assert torch.allclose(gate, torch.full_like(gate, 0.5))
+
+    # At 50/50 initialization, gate regularization penalty is 0.0
+    reg_loss = gdn.get_gate_regularization_loss(target=0.5)
+    assert torch.isclose(reg_loss, torch.tensor(0.0), atol=1e-7)
+
+    # At 50/50 initialization, entropy is maximized at ln(2) ≈ 0.693147
+    entropy = gdn.get_gate_entropy()
+    assert torch.isclose(entropy, torch.tensor(0.693147), atol=1e-4)
+
+
+def test_when_infinidopamine_gate_regularization_loss_computed_then_penalizes_imbalance() -> (
+    None
+):
+    config = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+    )
+    gdn = InfiniDopamineGatedDeltaNet(config, layer_idx=0)
+
+    # Push betas away from 0.0 (e.g. +3.0 -> 95% SWA, 5% GDN-2)
+    gdn.betas.data.fill_(3.0)
+    reg_loss = gdn.get_gate_regularization_loss(target=0.5)
+    assert reg_loss > 0.15
+
+    # Compute gradient of gate regularization loss with respect to betas
+    reg_loss.backward()
+    assert gdn.betas.grad is not None
+    # Gradient should be positive (pulling betas back down toward 0.0)
+    assert (gdn.betas.grad > 0).all()
+
+
+def test_when_infinidopamine_causal_lm_trains_with_gate_loss_then_gate_regularization_applied() -> (
+    None
+):
+    torch.manual_seed(42)
+    config = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        gate_loss_weight=0.1,
+        gate_target_balance=0.5,
+    )
+    model = InfiniDopamineForCausalLM(config)
+    model.train()
+
+    # Move betas away from 0 to introduce gate balance penalty
+    for layer in model.model.layers:
+        linear_attn = getattr(layer, "linear_attn", None)
+        if isinstance(linear_attn, InfiniDopamineGatedDeltaNet):
+            linear_attn.betas.data.fill_(2.0)
+
+    input_ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
+    labels = input_ids.clone()
+
+    out = model(input_ids=input_ids, labels=labels)
+    assert out.loss is not None
+    assert not torch.isnan(out.loss)
+
+    # Gate loss should be positive
+    gate_loss = model.get_gate_regularization_loss(target=0.5)
+    assert gate_loss > 0.0

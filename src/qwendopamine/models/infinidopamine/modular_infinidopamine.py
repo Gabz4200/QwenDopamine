@@ -173,6 +173,7 @@ try:
     from transformers.modeling_outputs import (
         BaseModelOutputWithPast,
         BaseModelOutputWithPooling,
+        CausalLMOutputWithPast,
         SequenceClassifierOutputWithPast,
     )
 except ImportError:
@@ -181,6 +182,9 @@ except ImportError:
         pass
 
     class BaseModelOutputWithPooling:  # type: ignore[no-redef]
+        pass
+
+    class CausalLMOutputWithPast:  # type: ignore[no-redef]
         pass
 
     class SequenceClassifierOutputWithPast:  # type: ignore[no-redef]
@@ -443,6 +447,16 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
     hidden_dropout: float = 0.05
     reward_dropout: float = 0.10
     advantage_dropout: float = 0.05
+    gate_loss_weight: float = 0.01
+    gate_target_balance: float = 0.5
+
+    @property
+    def gate_reg_coef(self) -> float:
+        return self.gate_loss_weight
+
+    @gate_reg_coef.setter
+    def gate_reg_coef(self, val: float) -> None:
+        self.gate_loss_weight = val
 
     @property
     def attention_dropout_prob(self) -> float:
@@ -798,6 +812,25 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         if self.training and self.hidden_dropout > 0.0:
             output = F.dropout(output, p=self.hidden_dropout, training=True)
         return output
+
+    def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
+        r"""Compute mean squared deviation of routing gates from target balance.
+
+        Regularizes sigmoid(betas) toward 50/50 balance early in training,
+        preventing early collapse to either pure SWA or pure GDN-2 before
+        the state representation stabilizes.
+        """
+        gate = torch.sigmoid(self.betas)
+        return torch.mean((gate - target) ** 2)
+
+    def get_gate_entropy(self) -> torch.Tensor:
+        r"""Compute Shannon entropy of the routing gate distribution across heads.
+
+        Maximum entropy ln(2) ≈ 0.693 occurs at 50/50 balance (sigmoid(betas) = 0.5).
+        """
+        gate = torch.sigmoid(self.betas).clamp(1e-6, 1.0 - 1e-6)
+        entropy = -(gate * torch.log(gate) + (1.0 - gate) * torch.log(1.0 - gate))
+        return torch.mean(entropy)
 
 
 class InfiniDopamineGatedRewardNet(GatedRewardNet):
@@ -1246,6 +1279,21 @@ class InfiniDopamineTextModel(Qwen3NextModel):
             past_key_values=past_key_values,
         )
 
+    def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
+        r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
+        losses: list[torch.Tensor] = []
+        for layer in self.layers[: self.config.num_hidden_layers]:
+            if hasattr(layer, "linear_attn") and hasattr(
+                layer.linear_attn, "get_gate_regularization_loss"
+            ):
+                losses.append(
+                    layer.linear_attn.get_gate_regularization_loss(target=target)
+                )
+        if not losses:
+            device = next(self.parameters()).device
+            return torch.tensor(0.0, device=device)
+        return torch.stack(losses).mean()
+
     def load_qwen35_weights(
         self,
         weights: dict[str, torch.Tensor] | nn.Module,
@@ -1374,6 +1422,50 @@ class InfiniDopamineForCausalLM(Qwen3ForCausalLM):
     def __init__(self, config: InfiniDopamineTextConfig) -> None:
         super().__init__(config)
         self.model = InfiniDopamineTextModel(config)
+
+    def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
+        r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
+        return self.model.get_gate_regularization_loss(target=target)
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        reward_values: torch.Tensor | None = None,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> CausalLMOutputWithPast:
+        outputs: CausalLMOutputWithPast = super().forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            reward_values=reward_values,
+            **kwargs,
+        )
+        if (
+            labels is not None
+            and getattr(outputs, "loss", None) is not None
+            and self.training
+            and getattr(self.config, "gate_loss_weight", 0.0) > 0.0
+        ):
+            target = getattr(self.config, "gate_target_balance", 0.5)
+            gate_loss = self.get_gate_regularization_loss(target=target)
+            outputs.loss = outputs.loss + self.config.gate_loss_weight * gate_loss
+        return outputs
 
     def load_qwen35_weights(
         self,

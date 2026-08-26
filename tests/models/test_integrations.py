@@ -70,12 +70,74 @@ def test_when_register_gdn2_hf_called_then_autoconfig_resolves_gdn2(
 
 def test_when_map_gguf_name_to_hf_called_then_maps_expected_keys() -> None:
     assert _map_gguf_name_to_hf("token_embd.weight") == "model.embed_tokens.weight"
+    assert _map_gguf_name_to_hf("output.weight") == "lm_head.weight"
     assert _map_gguf_name_to_hf("output_norm.weight") == "model.norm.weight"
     assert (
         _map_gguf_name_to_hf("blk.0.attn_q.weight")
         == "model.layers.0.self_attn.q_proj.weight"
     )
+    assert (
+        _map_gguf_name_to_hf("blk.3.ssm_conv1d.bias")
+        == "model.layers.3.linear_attn.conv1d.bias"
+    )
     assert _map_gguf_name_to_hf("unknown.tensor.name") is None
+
+
+def test_when_composite_multimodal_config_passed_to_causal_lm_then_unwraps_text_config() -> None:
+    r"""Ensure Qwen3_5ForCausalLM and InfiniDopamineForCausalLM unwrap text_config if given a composite config."""
+    from types import SimpleNamespace
+
+    from qwendopamine.models.infinidopamine import (
+        InfiniDopamineForCausalLM,
+        InfiniDopamineTextConfig,
+    )
+    from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM, Qwen3_5TextConfig
+
+    text_cfg = Qwen3_5TextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        intermediate_size_linear=64,
+        vocab_size=100,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    composite_cfg = SimpleNamespace(
+        model_type="qwen3_5",
+        text_config=text_cfg,
+    )
+
+    model = Qwen3_5ForCausalLM(composite_cfg)
+    assert model.config.vocab_size == 100
+    assert model.model.embed_tokens.num_embeddings == 100
+
+    infini_text_cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        intermediate_size_linear=64,
+        vocab_size=100,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    composite_infini_cfg = SimpleNamespace(
+        model_type="infinidopamine",
+        text_config=infini_text_cfg,
+    )
+
+    infini_model = InfiniDopamineForCausalLM(composite_infini_cfg)
+    assert infini_model.config.vocab_size == 100
+    assert infini_model.model.embed_tokens.num_embeddings == 100
 
 
 def test_when_load_qwen35_tokenizer_all_candidates_fail_then_raises_runtime_error(

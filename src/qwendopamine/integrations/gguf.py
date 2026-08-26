@@ -2,7 +2,6 @@ r"""GGUF weight loading and conversion utilities."""
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Any
 
@@ -15,9 +14,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     dequantize = None
 
 from .huggingface import HFIntegration
+from .safetensors import save_safetensors
 
 GGUF_TO_HF_NAME_MAP: dict[str, str] = {
     "token_embd.weight": "model.embed_tokens.weight",
+    "output.weight": "lm_head.weight",
     "output_norm.weight": "model.norm.weight",
 }
 
@@ -37,6 +38,7 @@ _ATTN_TENSOR_MAP: dict[str, str] = {
     "ssm_out.weight": "linear_attn.out_proj.weight",
     "ssm_norm.weight": "linear_attn.norm.weight",
     "ssm_conv1d.weight": "linear_attn.conv1d.weight",
+    "ssm_conv1d.bias": "linear_attn.conv1d.bias",
     "ssm_dt.bias": "linear_attn.dt_bias",
     "ssm_a": "linear_attn.A_log",
     "ffn_gate.weight": "mlp.gate_proj.weight",
@@ -151,12 +153,9 @@ def convert_gguf_to_safetensors(gguf_path: str, output_dir: str) -> str:
     Returns:
         str: path to written safetensors file.
     """
-    from safetensors.torch import save_file
-
     state_dict = _build_state_dict_from_gguf(gguf_path)
-    os.makedirs(output_dir, exist_ok=True)
     output_path = f"{output_dir}/model.safetensors"
-    save_file(state_dict, output_path)
+    save_safetensors(state_dict, output_path)
     return output_path
 
 

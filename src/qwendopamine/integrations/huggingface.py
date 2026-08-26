@@ -552,8 +552,6 @@ class HFIntegration:
             raise RuntimeError(
                 "transformers is required for HF model loading. Install qwendopamine[hf]."
             )
-        if quantization_config is None:
-            quantization_config = HFIntegration.make_quantization_config()
 
         if from_gguf or model_name.endswith(".gguf"):
             return AutoModelForCausalLM.from_pretrained(

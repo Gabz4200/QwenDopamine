@@ -9,7 +9,7 @@ import torch
 
 
 def save_safetensors(
-    state_dict: dict[str, torch.Tensor], path: Path, **kwargs: Any
+    state_dict: dict[str, torch.Tensor], path: Path | str, **kwargs: Any
 ) -> None:
     r"""save_safetensors(state_dict, path, **kwargs) -> None
 
@@ -19,7 +19,7 @@ def save_safetensors(
 
     Args:
         state_dict (dict[str, Tensor]): State dictionary mapping parameter names to tensors.
-        path (Path): Target output file path.
+        path (Path | str): Target output file path.
         **kwargs (Any): Additional keyword arguments passed to :func:`safetensors.torch.save_file`.
 
     Examples::
@@ -30,17 +30,18 @@ def save_safetensors(
     """
     from safetensors.torch import save_file
 
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     save_file(state_dict, str(path), **kwargs)
 
 
-def load_safetensors(path: Path, device: str = "cpu") -> dict[str, torch.Tensor]:
+def load_safetensors(path: Path | str, device: str = "cpu") -> dict[str, torch.Tensor]:
     r"""load_safetensors(path, device="cpu") -> dict[str, Tensor]
 
     Loads a safetensors file into a PyTorch state dictionary mapped to the target device.
 
     Args:
-        path (Path): Source safetensors file path.
+        path (Path | str): Source safetensors file path.
         device (str, optional): Target device mapping string. Default: ``"cpu"``.
 
     Returns:

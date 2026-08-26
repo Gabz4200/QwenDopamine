@@ -14,9 +14,10 @@ def generate_text(
     tokenizer: Any,
     prompt: str,
     max_new_tokens: int = 256,
+    include_prompt: bool = True,
     **kwargs: Any,
 ) -> str:
-    r"""generate_text(model, tokenizer, prompt, max_new_tokens=256, **kwargs) -> str
+    r"""generate_text(model, tokenizer, prompt, max_new_tokens=256, include_prompt=True, **kwargs) -> str
 
     Generates text continuation from a prompt using model generation method and tokenizer decoding.
 
@@ -25,6 +26,7 @@ def generate_text(
         tokenizer (Any): Tokenizer instance with encoding and decoding methods.
         prompt (str): Text prompt string to continue.
         max_new_tokens (int, optional): Maximum number of new tokens to generate. Default: ``256``.
+        include_prompt (bool, optional): Whether to include prompt in decoded output. Default: ``True``.
         **kwargs (Any): Additional keyword arguments passed to ``model.generate``.
 
     Returns:
@@ -44,7 +46,8 @@ def generate_text(
             **kwargs,
         )
 
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    out_tokens = outputs[0] if include_prompt else outputs[0][input_ids.shape[1] :]
+    return tokenizer.decode(out_tokens, skip_special_tokens=True)
 
 
 __all__ = ["generate_text"]

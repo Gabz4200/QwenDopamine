@@ -43,8 +43,14 @@ def compute_perplexity(
             }
             outputs = model(**batch)
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
-            total_loss += loss.item() * batch["input_ids"].numel()
-            total_tokens += batch["input_ids"].numel()
+            if "labels" in batch:
+                num_tokens = int((batch["labels"] != -100).sum().item())
+            elif "attention_mask" in batch:
+                num_tokens = int(batch["attention_mask"].sum().item())
+            else:
+                num_tokens = batch["input_ids"].numel()
+            total_loss += loss.item() * num_tokens
+            total_tokens += num_tokens
 
     return torch.exp(torch.tensor(total_loss / max(total_tokens, 1))).item()
 

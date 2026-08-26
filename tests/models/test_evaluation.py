@@ -75,6 +75,27 @@ def test_when_generate_text_called_then_returns_decoded_string() -> None:
     assert isinstance(text, str)
     assert text == "generated text output"
 
+    text_no_prompt = generate_text(
+        model, tokenizer, prompt="Hello", max_new_tokens=10, include_prompt=False
+    )
+    assert isinstance(text_no_prompt, str)
+
+
+def test_when_compute_perplexity_with_masked_labels_then_weights_only_active_tokens() -> None:
+    model = DummyLM(vocab_size=50)
+    # Batch with 2 active tokens and 2 masked tokens (-100)
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.long),
+        "labels": torch.tensor([[1, 2, -100, -100]], dtype=torch.long),
+    }
+    dataloader = [batch]
+
+    ppl = compute_perplexity(model, dataloader, max_steps=1)
+
+    assert isinstance(ppl, float)
+    assert ppl > 0.0
+    assert torch.isfinite(torch.tensor(ppl))
+
 
 def test_when_layerwise_stats_called_then_executes_batches_and_returns_dict() -> None:
     model = DummyLM(vocab_size=50)
@@ -84,3 +105,7 @@ def test_when_layerwise_stats_called_then_executes_batches_and_returns_dict() ->
     stats = layerwise_stats(model, dataloader, max_steps=2)
 
     assert isinstance(stats, dict)
+    assert len(stats) > 0
+    assert any("embedding" in k for k in stats)
+    assert any("lm_head" in k for k in stats)
+    assert all(isinstance(v, float) for v in stats.values())

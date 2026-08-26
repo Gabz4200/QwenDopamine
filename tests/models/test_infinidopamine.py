@@ -507,6 +507,43 @@ def test_when_infini_gated_deltanet_trained_then_betas_and_shared_qkv_receive_gr
     assert layer.in_proj_b.weight.grad is not None
     assert layer.in_proj_w.weight.grad is not None
     assert layer.in_proj_a.weight.grad is not None
+    assert layer.in_proj_gate.weight.grad is not None
+    assert layer.in_proj_gate.weight.grad.norm().item() > 0.0
+
+
+def test_when_infinidopamine_gate_is_data_dependent_then_routes_differently_per_token() -> None:
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        sliding_window=4,
+    )
+    layer = InfiniDopamineGatedDeltaNet(cfg, layer_idx=0)
+
+    # At initialization (in_proj_gate.weight == 0, betas == 0), gate is uniform 0.5
+    x = torch.randn(2, 8, 64)
+    with torch.no_grad():
+        gate_logits_init = layer.betas + layer.in_proj_gate(x).unsqueeze(-1)
+        gate_init = torch.sigmoid(gate_logits_init)
+    assert torch.allclose(gate_init, torch.full_like(gate_init, 0.5))
+
+    # Enable data-dependent projection weights
+    nn.init.normal_(layer.in_proj_gate.weight, mean=0.0, std=1.0)
+
+    with torch.no_grad():
+        gate_logits = layer.betas + layer.in_proj_gate(x).unsqueeze(-1)
+        gate = torch.sigmoid(gate_logits)
+
+    # Gates now dynamically vary across tokens (seq_len=8) and heads (num_v_heads=4)
+    assert gate.shape == (2, 8, 4, 1)
+    # Tokens within the same sequence have different gate routing decisions
+    assert not torch.allclose(gate[:, 0, :, :], gate[:, 1, :, :])
+    # Batch items have different gate routing decisions
+    assert not torch.allclose(gate[0, :, :, :], gate[1, :, :, :])
 
 
 def test_when_continued_pretraining_step_performed_then_all_weights_updated() -> None:

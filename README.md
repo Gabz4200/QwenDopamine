@@ -43,9 +43,12 @@ For standard linear recurrent layers, `InfiniDopamineGatedDeltaNet` computes two
 1. **GDN-2 Linear Recurrent Memory ($A_{\text{gdn2}}$)**: Decoupled channel-wise erase gate $\mathbf{b} \in \mathbb{R}^{H_v \times d_k}$ and write gate $\mathbf{w} \in \mathbb{R}^{H_v \times d_v}$ with chunkwise/recurrent delta updates.
 2. **Local Sliding Window Attention ($A_{\text{swa}}$)**: Scaled dot-product attention restricted to a causal sliding window ($W=1024$ by default).
 
-Each head combines the streams with an independent learnable parameter $\beta \in \mathbb{R}^{1 \times 1 \times H_v \times 1}$ (`betas`):
+Each head dynamically combines the streams using a data-dependent gating projection over input token states $x_t$ anchored by a learnable bias $\beta \in \mathbb{R}^{1 \times 1 \times H_v \times 1}$ (`betas`):
 
-$$A = \text{sigmoid}(\beta) \odot A_{\text{swa}} + (1 - \text{sigmoid}(\beta)) \odot A_{\text{gdn2}}$$
+$$\text{gate}_{t} = \text{sigmoid}(\beta + W_{\text{gate}} x_t)$$
+$$A_t = \text{gate}_t \odot A_{\text{swa}, t} + (1 - \text{gate}_t) \odot A_{\text{gdn2}, t}$$
+
+Initialized with $W_{\text{gate}} = 0$ and $\beta = 0$, training begins at an exact 50/50 balance ($\text{gate}_t = 0.5$) regularized toward balance early on before dynamically routing per token as representations mature.
 
 ### 2. Pre-Attention Gated Reward Net (`InfiniDopamineGatedRewardNet`)
 

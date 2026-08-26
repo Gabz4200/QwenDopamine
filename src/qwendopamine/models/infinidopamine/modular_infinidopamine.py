@@ -593,7 +593,10 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         self.in_proj_w = nn.Linear(
             self.hidden_size, self.num_v_heads * self.head_v_dim, bias=False
         )
+        self.in_proj_gate = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
+        nn.init.zeros_(self.in_proj_gate.weight)
         self.betas = nn.Parameter(torch.zeros(1, 1, self.num_v_heads, 1))
+        self.last_gate: torch.Tensor | None = None
 
         self._register_load_state_dict_pre_hook(self._convert_gdn1_weights_hook)
 
@@ -607,9 +610,13 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         qkv_key = prefix + "in_proj_qkv.weight"
         z_key = prefix + "in_proj_z.weight"
         betas_key = prefix + "betas"
+        gate_proj_key = prefix + "in_proj_gate.weight"
 
         if betas_key not in state_dict:
             state_dict[betas_key] = self.betas.data.clone()
+
+        if gate_proj_key not in state_dict:
+            state_dict[gate_proj_key] = self.in_proj_gate.weight.data.clone()
 
         if qkvz_key in state_dict:
             qkvz_weight = state_dict.pop(qkvz_key)
@@ -793,8 +800,12 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             )
         swa_attn_out = torch.matmul(attn_weights, v_heads).transpose(1, 2)
 
-        # Infini-attention per-head gate deciding between SWA and GDN-2
-        attn_gate = torch.sigmoid(self.betas)
+        # Data-dependent Infini-attention per-head gate deciding between SWA and GDN-2
+        gate_logits = self.betas + self.in_proj_gate(hidden_states).unsqueeze(-1)
+        attn_gate = torch.sigmoid(gate_logits)
+        if self.training:
+            self.last_gate = attn_gate
+
         core_attn_out = (
             attn_gate * swa_attn_out + (1.0 - attn_gate) * gdn2_attn_out
         )
@@ -813,22 +824,39 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             output = F.dropout(output, p=self.hidden_dropout, training=True)
         return output
 
-    def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
-        r"""Compute mean squared deviation of routing gates from target balance.
+    def get_gate_regularization_loss(
+        self, target: float = 0.5, hidden_states: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        r"""Compute mean squared deviation of data-dependent routing gates from target balance.
 
-        Regularizes sigmoid(betas) toward 50/50 balance early in training,
+        Regularizes sigmoid(gate_logits) toward 50/50 balance early in training,
         preventing early collapse to either pure SWA or pure GDN-2 before
         the state representation stabilizes.
         """
-        gate = torch.sigmoid(self.betas)
+        if hidden_states is not None:
+            gate_logits = self.betas + self.in_proj_gate(hidden_states).unsqueeze(-1)
+            gate = torch.sigmoid(gate_logits)
+        elif self.last_gate is not None:
+            gate = self.last_gate
+        else:
+            gate = torch.sigmoid(self.betas)
         return torch.mean((gate - target) ** 2)
 
-    def get_gate_entropy(self) -> torch.Tensor:
-        r"""Compute Shannon entropy of the routing gate distribution across heads.
+    def get_gate_entropy(
+        self, hidden_states: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        r"""Compute Shannon entropy of the routing gate distribution across heads and tokens.
 
-        Maximum entropy ln(2) ≈ 0.693 occurs at 50/50 balance (sigmoid(betas) = 0.5).
+        Maximum entropy ln(2) ≈ 0.693 occurs at 50/50 balance (sigmoid(gate_logits) = 0.5).
         """
-        gate = torch.sigmoid(self.betas).clamp(1e-6, 1.0 - 1e-6)
+        if hidden_states is not None:
+            gate_logits = self.betas + self.in_proj_gate(hidden_states).unsqueeze(-1)
+            gate = torch.sigmoid(gate_logits)
+        elif self.last_gate is not None:
+            gate = self.last_gate
+        else:
+            gate = torch.sigmoid(self.betas)
+        gate = gate.clamp(1e-6, 1.0 - 1e-6)
         entropy = -(gate * torch.log(gate) + (1.0 - gate) * torch.log(1.0 - gate))
         return torch.mean(entropy)
 
@@ -1103,6 +1131,7 @@ class InfiniDopaminePreTrainedModel(Qwen3NextPreTrainedModel):
                 .log_(),
             )
             init.zeros_(module.betas)
+            init.zeros_(module.in_proj_gate.weight)
         elif isinstance(module, InfiniDopamineRMSNorm):
             init.zeros_(module.weight)
         elif isinstance(module, InfiniDopamineVisionRotaryEmbedding):

@@ -476,3 +476,84 @@ def test_when_chained_reward_components_receive_single_step_batched_embeddings_t
 
     assert out.shape == (4, 64)
     assert not torch.isnan(out).any()
+
+
+def test_when_reward_statistics_extractor_invalid_dropout_then_raises_error() -> None:
+    with pytest.raises(ValueError, match="reward_dropout"):
+        RewardStatisticsExtractor(reward_dropout=-0.1)
+    with pytest.raises(ValueError, match="reward_dropout"):
+        RewardStatisticsExtractor(reward_dropout=1.0)
+
+
+def test_when_reward_statistics_extractor_dropout_in_train_mode_then_randomly_zeros_rewards() -> (
+    None
+):
+    torch.manual_seed(42)
+    extractor = RewardStatisticsExtractor(reward_dropout=0.5)
+    extractor.train()
+
+    # Pass a multi-channel reward tensor with all positive 1.0s
+    rewards = torch.ones(4, 10, 20)
+    stats1 = extractor(rewards, batch_size=4, seq_len=10)
+    stats2 = extractor(rewards, batch_size=4, seq_len=10)
+
+    # In training mode with dropout=0.5, stochastic drop causes varying outputs across runs
+    assert not torch.allclose(stats1, stats2)
+    assert stats1.shape == (4, 10, 6)
+    assert not torch.isnan(stats1).any()
+
+
+def test_when_reward_statistics_extractor_dropout_in_eval_mode_then_deterministic() -> (
+    None
+):
+    extractor = RewardStatisticsExtractor(reward_dropout=0.5)
+    extractor.eval()
+
+    rewards = torch.randn(2, 5, 10)
+    stats1 = extractor(rewards, batch_size=2, seq_len=5)
+    stats2 = extractor(rewards, batch_size=2, seq_len=5)
+
+    # In eval mode, dropout is deactivated
+    assert torch.allclose(stats1, stats2)
+
+
+def test_when_learnable_fourier_features_invalid_dropout_then_raises_error() -> None:
+    with pytest.raises(ValueError, match="dropout"):
+        LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, dropout=-0.2)
+    with pytest.raises(ValueError, match="dropout"):
+        LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, dropout=1.5)
+
+
+def test_when_learnable_fourier_features_dropout_in_train_vs_eval_mode() -> None:
+    torch.manual_seed(42)
+    lff = LearnableFourierFeatures(
+        pos_dim=4, f_dim=16, h_dim=32, d_dim=64, dropout=0.5
+    )
+    pos = torch.randn(2, 5, 1, 4)
+
+    lff.train()
+    out1 = lff(pos)
+    out2 = lff(pos)
+    assert not torch.allclose(out1, out2)
+
+    lff.eval()
+    eval1 = lff(pos)
+    eval2 = lff(pos)
+    assert torch.allclose(eval1, eval2)
+
+
+def test_when_token_wise_film_dropout_in_train_mode_then_regularizes_conditioning() -> None:
+    torch.manual_seed(42)
+    film = TokenWiseFiLM(dim=16, dropout=0.5, identity_init=False)
+    x = torch.randn(2, 5, 16)
+    cond = torch.randn(2, 5, 16)
+
+    film.train()
+    out1 = film(x, cond)
+    out2 = film(x, cond)
+    assert not torch.allclose(out1, out2)
+
+    film.eval()
+    eval1 = film(x, cond)
+    eval2 = film(x, cond)
+    assert torch.allclose(eval1, eval2)

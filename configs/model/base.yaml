@@ -13,4 +13,6 @@ intermediate_size: 6912
 hidden_act: silu
 hidden_dropout_prob: 0.0
 attention_dropout_prob: 0.0
+reward_dropout_prob: 0.0
+advantage_dropout_prob: 0.0
 rms_norm_eps: 1.0e-6

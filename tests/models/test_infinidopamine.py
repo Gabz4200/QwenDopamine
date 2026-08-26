@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+from torch import nn
 
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
@@ -542,3 +543,111 @@ def test_when_continued_pretraining_step_performed_then_all_weights_updated() ->
 
     updated_betas = layer0_linear.betas
     assert not torch.allclose(initial_betas, updated_betas)
+
+
+def test_when_infinidopamine_has_dropout_configured_then_train_mode_applies_regularization() -> (
+    None
+):
+    torch.manual_seed(42)
+    config = InfiniDopamineTextConfig(
+        hidden_size=128,
+        intermediate_size=256,
+        num_hidden_layers=3,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        layer_types=["linear_attention", "linear_attention", "sliding_attention"],
+        linear_num_key_heads=4,
+        linear_num_value_heads=4,
+        linear_key_head_dim=32,
+        linear_value_head_dim=32,
+        sliding_window=16,
+        attention_dropout=0.3,
+        hidden_dropout=0.3,
+        reward_dropout=0.3,
+        advantage_dropout=0.3,
+    )
+    model = InfiniDopamineForCausalLM(config)
+
+    input_ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]], dtype=torch.long)
+    rewards = torch.ones(1, 8, 4)
+
+    # In eval mode -> deterministic
+    model.eval()
+    with torch.no_grad():
+        eval_out1 = model(input_ids=input_ids, reward_values=rewards).logits
+        eval_out2 = model(input_ids=input_ids, reward_values=rewards).logits
+    assert torch.allclose(eval_out1, eval_out2)
+
+    # In train mode -> stochastic due to dropouts
+    model.train()
+    train_out1 = model(input_ids=input_ids, reward_values=rewards).logits
+    train_out2 = model(input_ids=input_ids, reward_values=rewards).logits
+    assert not torch.allclose(train_out1, train_out2)
+
+
+def test_when_infinidopamine_gated_delta_net_has_attention_dropout_then_regularizes_swa() -> (
+    None
+):
+    torch.manual_seed(42)
+    config = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=32,
+        linear_value_head_dim=32,
+        sliding_window=8,
+        attention_dropout=0.5,
+    )
+    gdn = InfiniDopamineGatedDeltaNet(config, layer_idx=0)
+    # Set betas high so SWA branch dominates
+    gdn.betas.data.fill_(10.0)
+
+    hidden = torch.randn(2, 8, 64)
+
+    gdn.eval()
+    with torch.no_grad():
+        out_eval1 = gdn(hidden_states=hidden)
+        out_eval2 = gdn(hidden_states=hidden)
+    assert torch.allclose(out_eval1, out_eval2)
+
+    gdn.train()
+    out_train1 = gdn(hidden_states=hidden)
+    out_train2 = gdn(hidden_states=hidden)
+    assert not torch.allclose(out_train1, out_train2)
+
+
+def test_when_infinidopamine_gated_reward_net_has_reward_dropout_then_regularizes_rewards() -> (
+    None
+):
+    torch.manual_seed(42)
+    config = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        layer_types=["linear_attention", "full_attention"],
+        linear_conv_kernel_dim=4,
+        rms_norm_eps=1e-5,
+        reward_dropout=0.5,
+    )
+    grn = InfiniDopamineGatedRewardNet(config, layer_idx=0)
+    # Enable non-zero reward modulation weights
+    grn.delta_layer.advantage_gate.advantage_proj.weight.data.fill_(1.0)
+    gamma_proj = getattr(grn.delta_layer.reward_encoder, "gamma_proj", None)
+    if isinstance(gamma_proj, nn.Linear):
+        gamma_proj.weight.data.fill_(0.5)
+
+    hidden = torch.randn(2, 4, 64)
+    rewards = torch.ones(2, 4, 10)
+
+    grn.eval()
+    with torch.no_grad():
+        eval1 = grn(hidden_states=hidden, reward_values=rewards)
+        eval2 = grn(hidden_states=hidden, reward_values=rewards)
+    assert torch.allclose(eval1, eval2)
+
+    grn.train()
+    train1 = grn(hidden_states=hidden, reward_values=rewards)
+    train2 = grn(hidden_states=hidden, reward_values=rewards)
+    assert not torch.allclose(train1, train2)

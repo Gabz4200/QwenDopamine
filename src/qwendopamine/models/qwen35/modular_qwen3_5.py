@@ -70,6 +70,10 @@ try:
     )
 
     def use_kernel_forward_from_hub(*args: Any, **kwargs: Any) -> Any:
+        if not torch.cuda.is_available():
+            def noop_decorator(fn: Any) -> Any:
+                return fn
+            return noop_decorator
         try:
             inner = _hf_use_kernel_forward_from_hub(*args, **kwargs)
         except Exception:  # noqa: BLE001
@@ -88,6 +92,10 @@ try:
         return decorator
 
     def use_kernelized_func(*args: Any, **kwargs: Any) -> Any:
+        if not torch.cuda.is_available():
+            def noop_decorator(fn: Any) -> Any:
+                return fn
+            return noop_decorator
         try:
             inner = _hf_use_kernelized_func(*args, **kwargs)
         except Exception:  # noqa: BLE001
@@ -235,6 +243,38 @@ except Exception:  # noqa: BLE001
     causal_conv1d_update = None  # type: ignore[misc, assignment]
     torch_chunk_gated_delta_rule = None  # type: ignore[misc, assignment]
     torch_recurrent_gated_delta_rule = None  # type: ignore[misc, assignment]
+
+if not torch.cuda.is_available():
+    if torch_chunk_gated_delta_rule is not None:
+        while hasattr(torch_chunk_gated_delta_rule, "__wrapped__"):
+            torch_chunk_gated_delta_rule = torch_chunk_gated_delta_rule.__wrapped__
+    if torch_recurrent_gated_delta_rule is not None:
+        while hasattr(torch_recurrent_gated_delta_rule, "__wrapped__"):
+            torch_recurrent_gated_delta_rule = (
+                torch_recurrent_gated_delta_rule.__wrapped__
+            )
+    if causal_conv1d_fn is not None:
+        while hasattr(causal_conv1d_fn, "__wrapped__"):
+            causal_conv1d_fn = causal_conv1d_fn.__wrapped__
+    if causal_conv1d_update is not None:
+        while hasattr(causal_conv1d_update, "__wrapped__"):
+            causal_conv1d_update = causal_conv1d_update.__wrapped__
+    try:
+        import transformers.models.qwen3_next.modeling_qwen3_next as _q3n
+
+        for _name in [
+            "torch_chunk_gated_delta_rule",
+            "torch_recurrent_gated_delta_rule",
+            "causal_conv1d_fn",
+            "causal_conv1d_update",
+        ]:
+            if hasattr(_q3n, _name):
+                _fn = getattr(_q3n, _name)
+                while hasattr(_fn, "__wrapped__"):
+                    _fn = _fn.__wrapped__
+                setattr(_q3n, _name, _fn)
+    except (ImportError, AttributeError):
+        pass
 
 try:
     from transformers.models.qwen3_vl.configuration_qwen3_vl import (

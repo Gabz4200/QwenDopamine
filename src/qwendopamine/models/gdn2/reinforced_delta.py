@@ -27,6 +27,7 @@ import math
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
 __all__ = [
@@ -146,19 +147,24 @@ class AdvantageGate(nn.Module):
 
     Args:
         k_stats (int): Dimension of advantage vector A_t.
+        dropout (float, optional): Dropout probability on advantage features.
+            Default: 0.0.
 
     Shape:
         - A_t: (B, k_stats)
         - Returns: ω_t (B, 1)
     """
 
-    def __init__(self, k_stats: int) -> None:
+    def __init__(self, k_stats: int, dropout: float = 0.0) -> None:
         super().__init__()
 
         if k_stats <= 0:
             raise ValueError("k_stats must be positive.")
+        if not (0.0 <= dropout < 1.0):
+            raise ValueError("dropout must be in [0.0, 1.0).")
 
         self.k_stats = k_stats
+        self.dropout = dropout
         self.advantage_proj = nn.Linear(k_stats, 1)
 
         with torch.no_grad():
@@ -180,12 +186,15 @@ class AdvantageGate(nn.Module):
                 f"Expected k_stats={self.k_stats}, got {A_t.size(-1)}."
             )
 
+        if self.training and self.dropout > 0.0:
+            A_t = F.dropout(A_t, p=self.dropout, training=True)
+
         # ω_t = 2 · σ(W_a A_t + b_a)
         omega_t = 2.0 * torch.sigmoid(self.advantage_proj(A_t))  # (B, 1)
         return omega_t
 
     def extra_repr(self) -> str:
-        return f"k_stats={self.k_stats}"
+        return f"k_stats={self.k_stats}, dropout={self.dropout}"
 
 
 class DeltaMemoryCore(nn.Module):
@@ -378,6 +387,8 @@ class ReinforcedDeltaLayer(nn.Module):
         conv_size: int = 4,
         conv_bias: bool = False,
         init_alpha: float = 0.1,
+        reward_dropout: float = 0.0,
+        advantage_dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -387,21 +398,27 @@ class ReinforcedDeltaLayer(nn.Module):
             raise ValueError("k_stats must be positive.")
         if not isinstance(reward_encoder, nn.Module):
             raise TypeError("reward_encoder must be an nn.Module.")
+        if not (0.0 <= reward_dropout < 1.0):
+            raise ValueError("reward_dropout must be in [0.0, 1.0).")
+        if not (0.0 <= advantage_dropout < 1.0):
+            raise ValueError("advantage_dropout must be in [0.0, 1.0).")
 
         self.d_model = d_model
         self.k_stats = k_stats
+        self.reward_dropout = reward_dropout
+        self.advantage_dropout = advantage_dropout
 
         # Statistics extraction and normalization (local import to avoid circular)
         from qwendopamine.models.blocks.reward import (
             LearnableSoftsign,
             RewardStatisticsExtractor,
         )
-        self.stats_extractor = RewardStatisticsExtractor()
+        self.stats_extractor = RewardStatisticsExtractor(reward_dropout=reward_dropout)
         self.stats_normalizer = LearnableSoftsign(per_channel=True, num_channels=k_stats)
 
         # RL components
         self.baseline_tracker = ValueBaselineEMA(d_model, k_stats, init_alpha=init_alpha)
-        self.advantage_gate = AdvantageGate(k_stats)
+        self.advantage_gate = AdvantageGate(k_stats, dropout=advantage_dropout)
 
         # Core memory
         self.memory_core = DeltaMemoryCore(
@@ -487,6 +504,9 @@ class GatedRewardNet(nn.Module):
         expand_v: float = 1.0,
         norm_eps: float = 1e-5,
         chunk_size: int = 64,
+        reward_dropout: float = 0.0,
+        advantage_dropout: float = 0.0,
+        hidden_dropout: float = 0.0,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -508,6 +528,9 @@ class GatedRewardNet(nn.Module):
         self.expand_v = expand_v
         self.norm_eps = norm_eps
         self.chunk_size = chunk_size
+        self.reward_dropout = reward_dropout
+        self.advantage_dropout = advantage_dropout
+        self.hidden_dropout = hidden_dropout
         self.mode = "recurrent"
         self.backend = "torch-recurrent"
         self.compile_backend = False
@@ -531,8 +554,15 @@ class GatedRewardNet(nn.Module):
                     return self.gamma_proj(r), self.beta_proj(r)
             reward_encoder = _DefaultQueryFiLM(k_stats, hidden_size)
         self.delta_layer = ReinforcedDeltaLayer(
-            d_model=hidden_size, k_stats=k_stats, reward_encoder=reward_encoder,
-            use_short_conv=use_short_conv, conv_size=conv_size, conv_bias=conv_bias, init_alpha=init_alpha,
+            d_model=hidden_size,
+            k_stats=k_stats,
+            reward_encoder=reward_encoder,
+            use_short_conv=use_short_conv,
+            conv_size=conv_size,
+            conv_bias=conv_bias,
+            init_alpha=init_alpha,
+            reward_dropout=reward_dropout,
+            advantage_dropout=advantage_dropout,
         )
         self.output_proj = nn.Linear(hidden_size, hidden_size, bias=False)
         torch.nn.init.xavier_uniform_(self.output_proj.weight, gain=2**-2.5)
@@ -608,6 +638,8 @@ class GatedRewardNet(nn.Module):
             V_curr = V_next
         out = torch.stack(outputs, dim=1)
         out = self.output_proj(out)
+        if self.training and self.hidden_dropout > 0.0:
+            out = F.dropout(out, p=self.hidden_dropout, training=True)
         if hidden_states.shape[1] == 1 and seq_len == 1 and out.shape[1] == 1:
             # keep original dim if input was 2D? caller expects 3D anyway
             pass

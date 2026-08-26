@@ -255,6 +255,7 @@ class LearnableFourierFeatures(nn.Module):
         g_dim: int = 1,
         gamma: float = 1.0,
         include_input: bool = True,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -270,6 +271,8 @@ class LearnableFourierFeatures(nn.Module):
             raise ValueError("d_dim must be greater than 0 and divisible by g_dim.")
         if gamma <= 0:
             raise ValueError("gamma must be greater than 0.")
+        if not (0.0 <= dropout < 1.0):
+            raise ValueError("dropout must be in [0.0, 1.0).")
 
         self.pos_dim = pos_dim
         self.f_dim = f_dim
@@ -277,6 +280,7 @@ class LearnableFourierFeatures(nn.Module):
         self.d_dim = d_dim
         self.g_dim = g_dim
         self.include_input = include_input
+        self.dropout = dropout
 
         self.enc_f_dim = int(f_dim // 2)
         self.dg_dim = int(d_dim // g_dim)
@@ -297,11 +301,15 @@ class LearnableFourierFeatures(nn.Module):
         nn.init.xavier_uniform_(linear2.weight, gain=0.5)
         nn.init.zeros_(linear2.bias)
 
-        self.mlp = nn.Sequential(
+        mlp_layers: list[nn.Module] = [
             linear1,
             nn.GELU(approximate="tanh"),
-            linear2,
-        )
+        ]
+        if dropout > 0.0:
+            mlp_layers.append(nn.Dropout(p=dropout))
+        mlp_layers.append(linear2)
+
+        self.mlp = nn.Sequential(*mlp_layers)
 
     def forward(self, pos: torch.Tensor) -> torch.Tensor:
         """
@@ -406,6 +414,7 @@ class TokenWiseFiLM(nn.Module):
         dim: int,
         cond_dim: int | None = None,
         identity_init: bool = True,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -414,9 +423,12 @@ class TokenWiseFiLM(nn.Module):
 
         self.dim = dim
         self.cond_dim = dim if cond_dim is None else cond_dim
+        self.dropout = dropout
 
         if self.cond_dim <= 0:
             raise ValueError("TokenWiseFiLM cond_dim must be greater than 0.")
+        if not (0.0 <= dropout < 1.0):
+            raise ValueError("dropout must be in [0.0, 1.0).")
 
         self.gamma_proj = nn.Linear(self.cond_dim, dim)
         self.beta_proj = nn.Linear(self.cond_dim, dim)
@@ -466,6 +478,9 @@ class TokenWiseFiLM(nn.Module):
                 f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
             )
 
+        if self.training and self.dropout > 0.0:
+            cond = F.dropout(cond, p=self.dropout, training=True)
+
         # Primary contract: conditioning has the expected feature dimension.
         if cond.size(-1) == self.cond_dim:
             gamma = self.gamma_proj(cond)
@@ -487,5 +502,5 @@ class TokenWiseFiLM(nn.Module):
         return x * gamma + beta
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, cond_dim={self.cond_dim}"
+        return f"dim={self.dim}, cond_dim={self.cond_dim}, dropout={self.dropout}"
 

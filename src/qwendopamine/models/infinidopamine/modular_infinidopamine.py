@@ -255,6 +255,38 @@ except Exception:  # noqa: BLE001
     torch_chunk_gated_delta_rule = None  # type: ignore[misc, assignment]
     torch_recurrent_gated_delta_rule = None  # type: ignore[misc, assignment]
 
+if not torch.cuda.is_available():
+    if torch_chunk_gated_delta_rule is not None:
+        while hasattr(torch_chunk_gated_delta_rule, "__wrapped__"):
+            torch_chunk_gated_delta_rule = torch_chunk_gated_delta_rule.__wrapped__
+    if torch_recurrent_gated_delta_rule is not None:
+        while hasattr(torch_recurrent_gated_delta_rule, "__wrapped__"):
+            torch_recurrent_gated_delta_rule = (
+                torch_recurrent_gated_delta_rule.__wrapped__
+            )
+    if causal_conv1d_fn is not None:
+        while hasattr(causal_conv1d_fn, "__wrapped__"):
+            causal_conv1d_fn = causal_conv1d_fn.__wrapped__
+    if causal_conv1d_update is not None:
+        while hasattr(causal_conv1d_update, "__wrapped__"):
+            causal_conv1d_update = causal_conv1d_update.__wrapped__
+    try:
+        import transformers.models.qwen3_next.modeling_qwen3_next as _q3n
+
+        for _name in [
+            "torch_chunk_gated_delta_rule",
+            "torch_recurrent_gated_delta_rule",
+            "causal_conv1d_fn",
+            "causal_conv1d_update",
+        ]:
+            if hasattr(_q3n, _name):
+                _fn = getattr(_q3n, _name)
+                while hasattr(_fn, "__wrapped__"):
+                    _fn = _fn.__wrapped__
+                setattr(_q3n, _name, _fn)
+    except (ImportError, AttributeError):
+        pass
+
 try:
     from transformers.models.qwen3_vl.configuration_qwen3_vl import (
         Qwen3VLConfig,
@@ -407,6 +439,26 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
     num_hidden_layers: int = 32
     num_key_value_heads: int = 4
     sliding_window: int | None = 1024
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    reward_dropout: float = 0.0
+    advantage_dropout: float = 0.0
+
+    @property
+    def attention_dropout_prob(self) -> float:
+        return self.attention_dropout
+
+    @attention_dropout_prob.setter
+    def attention_dropout_prob(self, val: float) -> None:
+        self.attention_dropout = val
+
+    @property
+    def hidden_dropout_prob(self) -> float:
+        return self.hidden_dropout
+
+    @hidden_dropout_prob.setter
+    def hidden_dropout_prob(self, val: float) -> None:
+        self.hidden_dropout = val
 
     @property
     def mlp_only_layers(self) -> list[int]:
@@ -510,6 +562,12 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         del self.in_proj_ba
 
         self.sliding_window = getattr(config, "sliding_window", 1024)
+        self.attention_dropout = getattr(
+            config, "attention_dropout", getattr(config, "attention_dropout_prob", 0.0)
+        )
+        self.hidden_dropout = getattr(
+            config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
+        )
         self.in_proj_qkv = nn.Linear(
             self.hidden_size, self.key_dim * 2 + self.value_dim, bias=False
         )
@@ -715,6 +773,10 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(
             q_heads.dtype
         )
+        if self.training and self.attention_dropout > 0.0:
+            attn_weights = F.dropout(
+                attn_weights, p=self.attention_dropout, training=True
+            )
         swa_attn_out = torch.matmul(attn_weights, v_heads).transpose(1, 2)
 
         # Infini-attention per-head gate deciding between SWA and GDN-2
@@ -722,6 +784,10 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         core_attn_out = (
             attn_gate * swa_attn_out + (1.0 - attn_gate) * gdn2_attn_out
         )
+        if self.training and self.hidden_dropout > 0.0:
+            core_attn_out = F.dropout(
+                core_attn_out, p=self.hidden_dropout, training=True
+            )
 
         core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
         z = z.reshape(-1, self.head_v_dim)
@@ -729,6 +795,8 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1)
 
         output = self.out_proj(core_attn_out)
+        if self.training and self.hidden_dropout > 0.0:
+            output = F.dropout(output, p=self.hidden_dropout, training=True)
         return output
 
 
@@ -740,12 +808,20 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         k_stats: int = 6,
         **kwargs: Any,
     ) -> None:
+        reward_dropout = getattr(config, "reward_dropout", 0.0)
+        advantage_dropout = getattr(config, "advantage_dropout", 0.0)
+        hidden_dropout = getattr(
+            config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
+        )
         super().__init__(
             hidden_size=config.hidden_size,
             k_stats=k_stats,
             layer_idx=layer_idx,
             conv_size=getattr(config, "linear_conv_kernel_dim", 4),
             norm_eps=getattr(config, "rms_norm_eps", 1e-5),
+            reward_dropout=reward_dropout,
+            advantage_dropout=advantage_dropout,
+            hidden_dropout=hidden_dropout,
             **kwargs,
         )
         self.config = config
@@ -842,12 +918,28 @@ class InfiniDopamineAttention(Qwen3NextAttention):
     def __init__(self, config: InfiniDopamineTextConfig, layer_idx: int) -> None:
         super().__init__(config, layer_idx)
         self.sliding_window = getattr(config, "sliding_window", 1024)
+        self.attention_dropout = getattr(
+            config, "attention_dropout", getattr(config, "attention_dropout_prob", 0.0)
+        )
 
 
 class InfiniDopamineMLP(Qwen3NextMLP):
     def __init__(self, config: InfiniDopamineConfig, intermediate_size: int) -> None:
         super().__init__(config, intermediate_size)
         self.intermediate_size = intermediate_size
+        self.hidden_dropout = getattr(
+            config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
+        )
+
+    def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
+        gate = self.act_fn(self.gate_proj(hidden_state))
+        if self.training and self.hidden_dropout > 0.0:
+            gate = F.dropout(gate, p=self.hidden_dropout, training=True)
+        up = self.up_proj(hidden_state)
+        down = self.down_proj(gate * up)
+        if self.training and self.hidden_dropout > 0.0:
+            down = F.dropout(down, p=self.hidden_dropout, training=True)
+        return down
 
 
 class InfiniDopamineRMSNorm(Qwen3NextRMSNorm):
@@ -860,6 +952,9 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
+        self.hidden_dropout = getattr(
+            config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
+        )
         self.block_type = config.layer_types[layer_idx]
         is_pre_attention = (
             layer_idx + 1 < len(config.layer_types)
@@ -931,11 +1026,22 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
                 **kwargs,
             )
 
+        if self.training and self.hidden_dropout > 0.0:
+            hidden_states = F.dropout(
+                hidden_states, p=self.hidden_dropout, training=True
+            )
+
         hidden_states = residual + hidden_states
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
+
+        if self.training and self.hidden_dropout > 0.0:
+            hidden_states = F.dropout(
+                hidden_states, p=self.hidden_dropout, training=True
+            )
+
         hidden_states = residual + hidden_states
 
         return hidden_states

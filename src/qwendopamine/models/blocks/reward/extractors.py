@@ -5,6 +5,7 @@ These modules depend on the general-purpose building blocks in
 """
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from qwendopamine.models.blocks.reward.components import (
@@ -51,15 +52,19 @@ class RewardStatisticsExtractor(nn.Module):
         normalize: bool = True,
         reward_init_scale: float = 0.1,
         shared_alpha: bool = True,
+        reward_dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
         if reward_init_scale <= 0:
             raise ValueError("reward_init_scale must be greater than 0.")
+        if not (0.0 <= reward_dropout < 1.0):
+            raise ValueError("reward_dropout must be in [0.0, 1.0).")
 
         self.normalize = normalize
         self.reward_init_scale = reward_init_scale
         self.shared_alpha = shared_alpha
+        self.reward_dropout = reward_dropout
 
         self.scaler: nn.Module = (
             AsinhScaler(
@@ -177,6 +182,11 @@ class RewardStatisticsExtractor(nn.Module):
         if reward_values.size(-1) == 0:
             raise ValueError("reward_values must contain at least one reward channel.")
 
+        if self.training and self.reward_dropout > 0.0:
+            reward_values = F.dropout(
+                reward_values, p=self.reward_dropout, training=True
+            )
+
         # Compute statistics in float32 for numerical stability.
         reward_values = reward_values.float()
 
@@ -215,7 +225,8 @@ class RewardStatisticsExtractor(nn.Module):
         return (
             f"normalize={self.normalize}, "
             f"reward_init_scale={self.reward_init_scale}, "
-            f"shared_alpha={self.shared_alpha}"
+            f"shared_alpha={self.shared_alpha}, "
+            f"reward_dropout={self.reward_dropout}"
         )
 
 
@@ -238,6 +249,8 @@ class RewardFourierEncoder(nn.Module):
             Default: ``1.0``.
         include_input (bool, optional): If ``True``, concatenates the raw 5-dim
             statistics to the Fourier features before the MLP. Default: ``True``.
+        dropout (float, optional): Dropout probability applied in the MLP.
+            Default: ``0.0``.
 
     Shape:
         - Input: ``(B, L, 5)``
@@ -260,6 +273,7 @@ class RewardFourierEncoder(nn.Module):
         g_dim: int = 1,
         gamma: float = 1.0,
         include_input: bool = True,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -273,12 +287,15 @@ class RewardFourierEncoder(nn.Module):
             raise ValueError("d_dim must be greater than 0 and divisible by g_dim.")
         if gamma <= 0:
             raise ValueError("gamma must be greater than 0.")
+        if not (0.0 <= dropout < 1.0):
+            raise ValueError("dropout must be in [0.0, 1.0).")
 
         self.f_dim = f_dim
         self.h_dim = h_dim
         self.d_dim = d_dim
         self.g_dim = g_dim
         self.include_input = include_input
+        self.dropout = dropout
 
         self.fourier = LearnableFourierFeatures(
             pos_dim=6,
@@ -288,6 +305,7 @@ class RewardFourierEncoder(nn.Module):
             g_dim=g_dim,
             gamma=gamma,
             include_input=include_input,
+            dropout=dropout,
         )
 
     def forward(self, reward_stats: torch.Tensor) -> torch.Tensor:
@@ -319,7 +337,8 @@ class RewardFourierEncoder(nn.Module):
             f"h_dim={self.h_dim}, "
             f"d_dim={self.d_dim}, "
             f"g_dim={self.g_dim}, "
-            f"include_input={self.include_input}"
+            f"include_input={self.include_input}, "
+            f"dropout={self.dropout}"
         )
 
 
@@ -334,6 +353,8 @@ class RewardFiLM(nn.Module):
         hidden_dim (int): Hidden feature dimension after projection and conditioning.
         identity_init (bool, optional): If ``True``, initializes FiLM as approximately
             identity: ``gamma = 1``, ``beta = 0``. Default: ``True``.
+        dropout (float, optional): Dropout probability applied to the conditioning tensor.
+            Default: ``0.0``.
 
     Shape:
         - x: ``(D)``, ``(B, D)``, or ``(B, L, D)``
@@ -355,6 +376,7 @@ class RewardFiLM(nn.Module):
         dim: int,
         hidden_dim: int,
         identity_init: bool = True,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -362,9 +384,12 @@ class RewardFiLM(nn.Module):
             raise ValueError("dim must be greater than 0.")
         if hidden_dim <= 0:
             raise ValueError("hidden_dim must be greater than 0.")
+        if not (0.0 <= dropout < 1.0):
+            raise ValueError("dropout must be in [0.0, 1.0).")
 
         self.dim = dim
         self.hidden_dim = hidden_dim
+        self.dropout = dropout
 
         self.x_proj: nn.Module = (
             nn.Linear(dim, hidden_dim) if dim != hidden_dim else nn.Identity()
@@ -379,6 +404,7 @@ class RewardFiLM(nn.Module):
             dim=hidden_dim,
             cond_dim=hidden_dim,
             identity_init=identity_init,
+            dropout=dropout,
         )
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
@@ -474,4 +500,4 @@ class RewardFiLM(nn.Module):
         return output
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, hidden_dim={self.hidden_dim}"
+        return f"dim={self.dim}, hidden_dim={self.hidden_dim}, dropout={self.dropout}"

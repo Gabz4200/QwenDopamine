@@ -93,8 +93,17 @@ def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
         "delta_memory_core": _lazy_delta_core,
         "reinforced_delta": _lazy_reinforced,
     }
-    if block_type in lazy_map:
-        raise KeyError(f"Block '{block_type}' requires explicit constructor args, not generic build_block(config, layer_idx).")
+    non_layer_blocks = {
+        "reward_stats_extractor",
+        "reward_fourier_encoder",
+        "reward_film",
+        "learnable_softsign",
+    }
+    if block_type in lazy_map or block_type in non_layer_blocks:
+        raise KeyError(
+            f"Block '{block_type}' is a component module requiring explicit constructor args, "
+            f"not generic build_block(config, layer_idx)."
+        )
     if block_type not in BLOCKS:
         # also check lazy keys for error message
         all_keys = list(BLOCKS.keys()) + list(lazy_map.keys())

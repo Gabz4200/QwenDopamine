@@ -557,3 +557,52 @@ def test_when_token_wise_film_dropout_in_train_mode_then_regularizes_conditionin
     eval1 = film(x, cond)
     eval2 = film(x, cond)
     assert torch.allclose(eval1, eval2)
+
+
+def test_when_reward_statistics_extractor_unnormalized_with_float16_then_preserves_dtype() -> None:
+    r"""Verify that RewardStatisticsExtractor preserves float16/bfloat16 dtype even when normalize=False."""
+    extractor = RewardStatisticsExtractor(normalize=False)
+    rewards_fp16 = torch.randn(2, 4, 8, dtype=torch.float16)
+
+    stats = extractor(rewards_fp16, batch_size=2, seq_len=4)
+
+    assert stats.dtype == torch.float16
+    assert stats.shape == (2, 4, 6)
+    assert not torch.isnan(stats).any()
+
+
+def test_when_gated_reward_net_step_by_step_with_conv_cache_then_preserves_temporal_state() -> None:
+    r"""Verify that GatedRewardNet step-by-step decoding tracks conv state across sequence steps."""
+    from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet
+
+    torch.manual_seed(42)
+    grn = GatedRewardNet(
+        hidden_size=32,
+        k_stats=6,
+        use_short_conv=True,
+        conv_size=4,
+    )
+    grn.eval()
+
+    inputs = torch.randn(1, 6, 32)
+    rewards = torch.randn(1, 6, 6)
+
+    # 1. Full sequence forward pass
+    out_full, _, _cache_full = grn(inputs, reward_values=rewards, use_cache=True)
+
+    # 2. Step-by-step forward pass propagating cache
+    step_outputs = []
+    past_cache = None
+    for t in range(6):
+        x_t = inputs[:, t : t + 1, :]
+        r_t = rewards[:, t : t + 1, :]
+        out_t, _, past_cache = grn(
+            x_t, reward_values=r_t, past_key_values=past_cache, use_cache=True
+        )
+        step_outputs.append(out_t)
+
+    out_stepped = torch.cat(step_outputs, dim=1)
+
+    assert out_full.shape == (1, 6, 32)
+    assert out_stepped.shape == (1, 6, 32)
+    assert torch.allclose(out_full, out_stepped, atol=1e-4)

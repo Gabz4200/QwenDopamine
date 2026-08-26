@@ -25,6 +25,21 @@ def test_when_rmsnorm_forward_then_scales_variance_to_unit_norm() -> None:
     assert torch.allclose(rms, torch.ones_like(rms), atol=1e-3)
 
 
+def test_when_rmsnorm_forward_with_large_fp16_inputs_then_does_not_overflow() -> None:
+    r"""Verify RMSNorm calculates variance in fp32 to prevent float16 overflow on large magnitudes."""
+    hidden_size = 64
+    norm = RMSNorm(hidden_size=hidden_size, eps=1e-6)
+    # 500.0^2 = 250,000 which overflows float16 max (65,504) if squared directly in float16
+    inputs_fp16 = torch.full((2, 4, hidden_size), 500.0, dtype=torch.float16)
+
+    output = norm(inputs_fp16)
+
+    assert output.dtype == torch.float16
+    assert not torch.isnan(output).any()
+    assert not torch.isinf(output).any()
+    assert torch.allclose(output, torch.ones_like(output, dtype=torch.float16), atol=1e-2)
+
+
 def test_when_rmsnorm_gated_with_gate_then_applies_silu_gating() -> None:
     hidden_size = 32
     norm_gated = RMSNormGated(hidden_size=hidden_size, eps=1e-6)

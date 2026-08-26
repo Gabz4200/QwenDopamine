@@ -46,9 +46,11 @@ class RMSNorm(nn.Module):
         Returns:
             Tensor: Normalized feature tensor of same shape and dtype as ``hidden_states``.
         """
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
-        return self.weight * hidden_states
+        input_dtype = hidden_states.dtype
+        hidden_states_fp32 = hidden_states.to(torch.float32)
+        variance = hidden_states_fp32.pow(2).mean(-1, keepdim=True)
+        hidden_states_normed = hidden_states_fp32 * torch.rsqrt(variance + self.eps)
+        return self.weight.to(input_dtype) * hidden_states_normed.to(input_dtype)
 
 
 class RMSNormGated(nn.Module):

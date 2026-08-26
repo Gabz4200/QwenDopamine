@@ -93,6 +93,15 @@ def test_when_unknown_block_requested_then_raises_key_error(
         build_block("nonexistent_block_type", mock_config, layer_idx=0)
 
 
+def test_when_non_layer_component_requested_via_build_block_then_raises_key_error(
+    mock_config: types.SimpleNamespace,
+) -> None:
+    with pytest.raises(KeyError, match="requiring explicit constructor args"):
+        build_block("reward_stats_extractor", mock_config, layer_idx=0)
+    with pytest.raises(KeyError, match="requiring explicit constructor args"):
+        build_block("value_baseline_ema", mock_config, layer_idx=0)
+
+
 def test_when_research_decoder_forward_then_returns_correct_logits(
     mock_config: types.SimpleNamespace,
 ) -> None:

@@ -1082,7 +1082,9 @@ class Qwen3_5ForCausalLM(Qwen3ForCausalLM):
         r"^model.visual.*",
     ]
 
-    def __init__(self, config):
+    def __init__(self, config: Any):
+        if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
+            config = config.text_config
         super().__init__(config)
         self.model = Qwen3_5TextModel(config)
 

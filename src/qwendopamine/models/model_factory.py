@@ -49,6 +49,8 @@ class ResearchDecoder(nn.Module):
 
     def __init__(self, config: Any) -> None:
         super().__init__()
+        if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
+            config = config.text_config
         self.config = config
         self.hidden_size = getattr(
             config, "hidden_size", getattr(config, "d_model", 768)
@@ -151,6 +153,8 @@ def build_reference_model(
     Returns:
         nn.Module: Instantiated model instance.
     """
+    if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
+        config = config.text_config
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config
     model_type = getattr(config, "model_type", None)

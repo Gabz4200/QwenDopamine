@@ -441,7 +441,9 @@ class ReinforcedDeltaLayer(nn.Module):
         reward_values: Tensor,
         S_prev: Tensor | None = None,
         V_prev: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+        k_cache: Tensor | None = None,
+        v_cache: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None, Tensor | None]:
         """
         Args:
             x: (B, d_model) - Input features for current token.
@@ -450,11 +452,15 @@ class ReinforcedDeltaLayer(nn.Module):
                 Will be normalized by stats_extractor to (B, k_stats).
             S_prev: (B, d, d) - Previous fast weight matrix.
             V_prev: (B, k_stats) - Previous EMA baseline.
+            k_cache: Optional cached conv state for k.
+            v_cache: Optional cached conv state for v.
 
         Returns:
             o_t: (B, d_model) - Output features (readout).
             S_next: (B, d, d) - Updated fast weight matrix.
             V_t: (B, k_stats) - Updated EMA baseline.
+            k_cache_out: Updated k conv cache.
+            v_cache_out: Updated v conv cache.
         """
         B = x.size(0)
 
@@ -477,13 +483,15 @@ class ReinforcedDeltaLayer(nn.Module):
         q_prime_t = gamma_t * q_t + beta_t  # (B, d)
 
         # 4. Memory Update (DeltaMemoryCore)
-        S_next, _, _ = self.memory_core(x, omega_t, S_prev)
+        S_next, k_cache_out, v_cache_out = self.memory_core(
+            x, omega_t, S_prev, k_cache=k_cache, v_cache=v_cache
+        )
 
         # 5. Readout with FiLM-modulated Query
         q_prime_unsig = q_prime_t.unsqueeze(-1)  # (B, d, 1)
         o_t = torch.bmm(S_next, q_prime_unsig).squeeze(-1)  # (B, d)
 
-        return o_t, S_next, V_t
+        return o_t, S_next, V_t, k_cache_out, v_cache_out
 
     def extra_repr(self) -> str:
         return f"d_model={self.d_model}, k_stats={self.k_stats}"
@@ -602,9 +610,11 @@ class GatedRewardNet(nn.Module):
             seq_len = 1
         else:
             raise ValueError(f"Expected hidden_states dim 2 or 3, got {hidden_states.dim()}.")
-        rec_state, _ = self._get_cache(past_key_values)
+        rec_state, conv_state = self._get_cache(past_key_values)
         S_curr = rec_state
         V_curr = None
+        k_cache = conv_state[0] if conv_state is not None else None
+        v_cache = conv_state[1] if conv_state is not None else None
         if reward_values is None:
             reward_values = torch.zeros(B, seq_len, self.k_stats, device=hidden_states.device, dtype=hidden_states.dtype)
         elif reward_values.dim() == 0:
@@ -632,7 +642,14 @@ class GatedRewardNet(nn.Module):
         for t in range(seq_len):
             x_t = hidden_states[:, t, :]
             r_t = reward_values[:, t, :]
-            o_t, S_next, V_next = self.delta_layer(x=x_t, reward_values=r_t, S_prev=S_curr, V_prev=V_curr)
+            o_t, S_next, V_next, k_cache, v_cache = self.delta_layer(
+                x=x_t,
+                reward_values=r_t,
+                S_prev=S_curr,
+                V_prev=V_curr,
+                k_cache=k_cache,
+                v_cache=v_cache,
+            )
             outputs.append(o_t)
             S_curr = S_next
             V_curr = V_next
@@ -645,7 +662,7 @@ class GatedRewardNet(nn.Module):
             pass
         new_cache = None
         if use_cache:
-            new_cache = {"recurrent_state": S_curr, "conv_state": (None, None)}
+            new_cache = {"recurrent_state": S_curr, "conv_state": (k_cache, v_cache)}
         return out, None, new_cache
     def extra_repr(self) -> str:
         return f"hidden_size={self.hidden_size}, k_stats={self.k_stats}"

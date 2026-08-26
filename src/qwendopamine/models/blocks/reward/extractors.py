@@ -170,9 +170,8 @@ class RewardStatisticsExtractor(nn.Module):
         """
         # Move inputs to module device/dtype when possible.
         param = next(self.parameters(), None)
-        target_dtype = None
+        target_dtype = param.dtype if param is not None else reward_values.dtype
         if param is not None:
-            target_dtype = param.dtype
             reward_values = reward_values.to(device=param.device, dtype=param.dtype)
 
         reward_values = self._normalize_reward_values(

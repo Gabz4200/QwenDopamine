@@ -1494,7 +1494,9 @@ class InfiniDopamineForCausalLM(Qwen3ForCausalLM):
         r"^model.visual.*",
     ]
 
-    def __init__(self, config: InfiniDopamineTextConfig) -> None:
+    def __init__(self, config: Any) -> None:
+        if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
+            config = config.text_config
         super().__init__(config)
         self.model = InfiniDopamineTextModel(config)
 

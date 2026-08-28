@@ -65,6 +65,9 @@ GDN2_BACKENDS = (
     "fla",
 )
 
+_SINGLE_TOKEN_SEQ_LEN = 1
+_RECURRENT_SHORT_SEQ_LEN = 64
+
 
 def resolve_gdn2_backend(
     requested: str,
@@ -88,11 +91,11 @@ def resolve_gdn2_backend(
 
     if torch.cuda.is_available() and _HAS_TRITON_OPS:
         return "triton"
-    if not training and seq_len <= 1:
+    if not training and seq_len <= _SINGLE_TOKEN_SEQ_LEN:
         return "torch-recurrent"
     if training:
         return "torch-chunk"
-    if seq_len <= 64:
+    if seq_len <= _RECURRENT_SHORT_SEQ_LEN:
         return "torch-recurrent"
     return "torch-chunk"
 
@@ -430,12 +433,11 @@ class ShortConvolution(nn.Module):
         return out, new_cache
 
 
-class RMSNormGated(nn.Module):
-    """Pure PyTorch SiLU-gated RMS Normalization.
+class RMSNormGatedNoCast(nn.Module):
+    """Pure PyTorch SiLU-gated RMS Normalization without dtype promotion.
 
-    Intentionally distinct from :class:`qwendopamine.models.normalization.RMSNormGated`:
-    this reference-faithful variant computes entirely in the input dtype on the
-    GDN-2 value-side hot path, whereas the ``models.normalization`` utility
+    This reference-faithful variant computes entirely in the input dtype on the
+    GDN-2 value-side hot path, whereas :class:`qwendopamine.models.normalization.RMSNormGated`
     promotes to float32. The two differ in bf16 (up to ~3e-2) and therefore must
     not be silently merged.
     """
@@ -450,6 +452,15 @@ class RMSNormGated(nn.Module):
         variance = x.pow(2).mean(-1, keepdim=True)
         normed = x * torch.rsqrt(variance + self.eps) * self.weight
         return normed * F.silu(z)
+
+
+class RMSNormGated(RMSNormGatedNoCast):
+    """Deprecated alias for :class:`RMSNormGatedNoCast`.
+
+    .. deprecated::
+        Use ``RMSNormGatedNoCast`` to make the no-cast behavior explicit and
+        avoid confusion with :class:`qwendopamine.models.normalization.RMSNormGated`.
+    """
 
 
 def _get_unpad_data(

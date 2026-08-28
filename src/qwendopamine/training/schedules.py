@@ -67,7 +67,7 @@ class LinearWarmupScheduler(LRScheduler):
         # step_count must exist before super().__init__ because LRScheduler calls self.step().
         self.step_count = 0
         super().__init__(optimizer)
-        # Reset to 0 so that training steps start at step 1.
+        # Ensure training steps start at step 1 (LRScheduler may mutate state during init).
         self.step_count = 0
 
     def step(self, epoch: int | None = None) -> None:

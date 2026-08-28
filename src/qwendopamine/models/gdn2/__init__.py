@@ -5,6 +5,7 @@ from .config import GDN2Config
 from .gdn2 import (
     GatedDeltaNet2,
     RMSNormGated,
+    RMSNormGatedNoCast,
     ShortConvolution,
     torch_chunk_gdn2,
     torch_recurrent_gdn2,
@@ -27,6 +28,7 @@ __all__ = [
     "GatedDeltaNet2",
     "GatedRewardNet",
     "RMSNormGated",
+    "RMSNormGatedNoCast",
     "ReinforcedDeltaLayer",
     "ShortConvolution",
     "ValueBaselineEMA",

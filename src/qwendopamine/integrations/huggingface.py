@@ -599,6 +599,6 @@ class HFIntegration:
         model.save_pretrained(save_directory)
 
 
-# Auto-register all models with Transformers Auto classes upon import
-if AutoConfig is not None:
-    HFIntegration.register_all_hf()
+# Registration is opt-in to avoid import-time side effects.
+# Call ``HFIntegration.register_all_hf()`` explicitly from your entrypoint
+# if you want all QwenDopamine configs available through ``transformers.AutoConfig``.

@@ -2,6 +2,8 @@ r"""Shared PyTorch device resolution and helper utilities."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 from torch import nn
 
@@ -32,4 +34,26 @@ def get_model_device(model: nn.Module) -> torch.device:
         return torch.device("cpu")
 
 
-__all__ = ["get_model_device"]
+def move_to_device(batch: Any, device: torch.device) -> Any:
+    r"""move_to_device(batch, device) -> Any
+
+    Recursively move tensors in a batch to the target device.
+
+    Args:
+        batch (Any): Tensor, dict of tensors, or nested structure.
+        device (torch.device): Target device.
+
+    Returns:
+        Any: Batch with tensors moved to the target device.
+    """
+    if isinstance(batch, torch.Tensor):
+        return batch.to(device)
+    if isinstance(batch, dict):
+        return {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+    return batch
+
+
+__all__ = ["get_model_device", "move_to_device"]

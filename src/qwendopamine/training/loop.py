@@ -8,7 +8,7 @@ from torch import nn
 from torch.amp import GradScaler
 from torch.optim.lr_scheduler import LRScheduler
 
-from qwendopamine.utils import get_model_device
+from qwendopamine.utils import get_model_device, move_to_device
 
 
 @dataclass
@@ -130,12 +130,4 @@ class TrainingLoop:
         Returns:
             Any: batch with tensors moved to the model's device.
         """
-        device = get_model_device(model)
-        if isinstance(batch, torch.Tensor):
-            return batch.to(device)
-        if isinstance(batch, dict):
-            return {
-                k: v.to(device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()
-            }
-        return batch
+        return move_to_device(batch, get_model_device(model))

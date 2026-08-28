@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from qwendopamine.models.blocks import build_block
+from qwendopamine.models.config_adapter import ConfigAdapter
 from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
@@ -49,24 +50,21 @@ class ResearchDecoder(nn.Module):
 
     def __init__(self, config: Any) -> None:
         super().__init__()
-        if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
-            config = config.text_config
-        self.config = config
-        self.hidden_size = getattr(
-            config, "hidden_size", getattr(config, "d_model", 768)
-        )
-        self.vocab_size = getattr(config, "vocab_size", 151936)
-        self.max_position_embeddings = getattr(config, "max_position_embeddings", 32768)
+        config = _unwrap_text_config(config)
+        self.config = ConfigAdapter(config, family="research")
+        self.hidden_size = self.config.hidden_size
+        self.vocab_size = self.config.vocab_size
+        self.max_position_embeddings = self.config.max_position_embeddings
 
         self.tok_embeddings = TokenEmbeddings(self.vocab_size, self.hidden_size)
         self.pos_embeddings = PositionEmbeddings(
             self.max_position_embeddings, self.hidden_size
         )
 
-        block_types = getattr(config, "block_types", None)
+        block_types = getattr(self.config, "block_types", None)
         if block_types is None:
-            num_layers = getattr(config, "num_hidden_layers", 12)
-            default_block = getattr(config, "block_type", "qwen")
+            num_layers = self.config.num_hidden_layers
+            default_block = getattr(self.config, "block_type", "qwen")
             block_types = [default_block] * num_layers
 
         self.layers = nn.ModuleList(
@@ -107,6 +105,45 @@ class ResearchDecoder(nn.Module):
         return self.lm_head(hidden_states)
 
 
+def _unwrap_text_config(config: Any) -> Any:
+    r"""Unwrap composite configs that delegate to a ``text_config`` attribute."""
+    if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
+        return config.text_config
+    return config
+
+
+_MODEL_FAMILIES = (
+    "infinidopamine",
+    "infini_dopamine",
+    "infinidopamine_text",
+    "infinidopamine_reference",
+    "qwen35",
+    "qwen3_5",
+    "qwen35_text",
+    "qwen35_reference",
+)
+
+
+def _resolve_model_family(config: Any) -> tuple[str, Any]:
+    r"""Resolve a config to a model family name and unwrapped config.
+
+    Returns:
+        tuple[str, Any]: ``(family, config)`` where ``family`` is one of
+        ``"infinidopamine"``, ``"qwen35"``, or ``"unknown"``.
+    """
+    config = _unwrap_text_config(config)
+    model_type = getattr(config, "model_type", None)
+    if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or (
+        model_type and model_type in _MODEL_FAMILIES and model_type.startswith("infinidopamine")
+    ):
+        return "infinidopamine", config
+    if isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config)) or (
+        model_type and model_type in _MODEL_FAMILIES and model_type.startswith("qwen35")
+    ):
+        return "qwen35", config
+    return "unknown", config
+
+
 def build_model(config: Any) -> nn.Module:
     r"""build_model(config) -> nn.Module
 
@@ -118,20 +155,10 @@ def build_model(config: Any) -> nn.Module:
     Returns:
         nn.Module: Instantiated model instance.
     """
-    model_type = getattr(config, "model_type", None)
-    if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or model_type in (
-        "infinidopamine",
-        "infini_dopamine",
-        "infinidopamine_text",
-        "infinidopamine_reference",
-    ):
+    family, config = _resolve_model_family(config)
+    if family == "infinidopamine":
         return InfiniDopamineForCausalLM(config)
-    if isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config)) or model_type in (
-        "qwen35",
-        "qwen3_5",
-        "qwen35_text",
-        "qwen35_reference",
-    ):
+    if family == "qwen35":
         return Qwen3_5ForCausalLM(config)
     return ResearchDecoder(config)
 
@@ -153,17 +180,10 @@ def build_reference_model(
     Returns:
         nn.Module: Instantiated model instance.
     """
-    if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
-        config = config.text_config
+    family, config = _resolve_model_family(config)
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config
-    model_type = getattr(config, "model_type", None)
-    if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or model_type in (
-        "infinidopamine",
-        "infini_dopamine",
-        "infinidopamine_text",
-        "infinidopamine_reference",
-    ):
+    if family == "infinidopamine":
         return InfiniDopamineForCausalLM._from_config(
             config, device_map=device_map, torch_dtype=torch.bfloat16, **kwargs
         )

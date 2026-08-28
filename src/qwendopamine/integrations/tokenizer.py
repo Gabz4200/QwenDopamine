@@ -7,6 +7,8 @@ from typing import Any
 
 from transformers import AutoTokenizer
 
+_DEFAULT_QWEN35_REPO = "Qwen/Qwen3.5-0.8B"
+
 
 def load_qwen35_tokenizer(model_name: str, **kwargs: Any) -> Any:
     r"""load_qwen35_tokenizer(model_name, **kwargs) -> AutoTokenizer
@@ -29,9 +31,9 @@ def load_qwen35_tokenizer(model_name: str, **kwargs: Any) -> Any:
     """
     if model_name.endswith(".gguf"):
         dirname = os.path.dirname(model_name)
-        model_name = dirname if dirname else "Qwen/Qwen3.5-0.8B"
+        model_name = dirname if dirname else _DEFAULT_QWEN35_REPO
 
-    repo_candidates = [model_name, "Qwen/Qwen3.5-0.8B"]
+    repo_candidates = [model_name, _DEFAULT_QWEN35_REPO]
 
     last_error: Exception | None = None
     for candidate in repo_candidates:

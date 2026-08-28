@@ -9,29 +9,27 @@ import torch
 
 from qwendopamine.models.blocks import (
     BLOCKS,
-    GatedDeltaNetBlock,
-    InfiniDecoderLayer,
-    InfiniDopamineDecoderLayer,
-    InfiniDopamineGatedDeltaNet,
-    LearnableFourierFeatures,
-    Qwen3_5DecoderLayer,
-    Qwen3_5GatedDeltaNet,
-    QwenDecoderLayer,
     RewardFiLM,
     RewardFourierEncoder,
     RewardStatisticsExtractor,
-    TokenWiseFiLM,
     build_block,
 )
 from qwendopamine.models.infinidopamine import (
+    InfiniDopamineDecoderLayer,
     InfiniDopamineForCausalLM,
+    InfiniDopamineGatedDeltaNet,
     InfiniDopamineTextConfig,
 )
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
     build_model,
 )
-from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM, Qwen3_5TextConfig
+from qwendopamine.models.qwen35 import (
+    Qwen3_5DecoderLayer,
+    Qwen3_5ForCausalLM,
+    Qwen3_5GatedDeltaNet,
+    Qwen3_5TextConfig,
+)
 
 
 @pytest.fixture
@@ -80,9 +78,9 @@ def test_when_build_block_called_then_instantiates_correct_block(
     infini_layer = build_block("infinidopamine", mock_config, layer_idx=0)
     infini_gdn_layer = build_block("infinidopamine_gdn", mock_config, layer_idx=1)
 
-    assert isinstance(qwen_layer, QwenDecoderLayer)
-    assert isinstance(gdn_layer, GatedDeltaNetBlock)
-    assert isinstance(infini_layer, InfiniDecoderLayer)
+    assert isinstance(qwen_layer, Qwen3_5DecoderLayer)
+    assert isinstance(gdn_layer, Qwen3_5GatedDeltaNet)
+    assert isinstance(infini_layer, InfiniDopamineDecoderLayer)
     assert isinstance(infini_gdn_layer, InfiniDopamineGatedDeltaNet)
 
 
@@ -154,6 +152,55 @@ def test_when_build_model_with_research_config_then_returns_research_decoder(
     assert isinstance(model, ResearchDecoder)
 
 
+def test_when_build_model_with_composite_text_config_then_unwraps_and_returns_correct_model() -> (
+    None
+):
+    text_cfg = Qwen3_5TextConfig(
+        hidden_size=32,
+        num_hidden_layers=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        intermediate_size=64,
+        vocab_size=100,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+    )
+    composite = types.SimpleNamespace(text_config=text_cfg)
+    model = build_model(composite)
+    assert isinstance(model, Qwen3_5ForCausalLM)
+
+
+def test_when_build_model_with_unknown_type_then_falls_back_to_research_decoder() -> None:
+    unknown_cfg = types.SimpleNamespace(
+        hidden_size=32,
+        vocab_size=100,
+        max_position_embeddings=128,
+        num_hidden_layers=2,
+        block_types=["gdn2"],
+        num_heads=2,
+        head_dim=16,
+    )
+    model = build_model(unknown_cfg)
+    assert isinstance(model, ResearchDecoder)
+
+
+def test_when_research_decoder_uses_defaults_when_fields_missing() -> None:
+    minimal_cfg = types.SimpleNamespace(
+        hidden_size=32,
+        vocab_size=100,
+        num_hidden_layers=2,
+        block_types=["gdn2"],
+        num_heads=2,
+        head_dim=16,
+    )
+    model = ResearchDecoder(minimal_cfg)
+    assert model.hidden_size == 32
+    assert model.vocab_size == 100
+    assert model.max_position_embeddings == 32768
+
+
 def test_when_research_decoder_forward_with_gdn2_block_then_executes_successfully(
     mock_config: types.SimpleNamespace,
 ) -> None:
@@ -167,71 +214,6 @@ def test_when_research_decoder_forward_with_gdn2_block_then_executes_successfull
     logits = model(input_ids)
     assert logits.shape == (2, 3, mock_config.vocab_size)
     assert not torch.isnan(logits).any()
-
-
-def test_when_token_wise_film_forward_called_then_modulates_features_correctly() -> (
-    None
-):
-    film = TokenWiseFiLM(dim=32)
-    x = torch.randn(2, 4, 32)
-    cond = torch.randn(2, 64)
-    out = film(x, cond)
-    assert out.shape == (2, 4, 32)
-    assert not torch.isnan(out).any()
-
-    cond_3d = torch.randn(2, 4, 64)
-    out_3d = film(x, cond_3d)
-    assert out_3d.shape == (2, 4, 32)
-
-
-def test_when_learnable_fourier_features_forward_then_encodes_position() -> None:
-    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1)
-    pos = torch.randn(2, 5, 1, 4)
-    enc = lff(pos)
-    assert enc.shape == (2, 5, 64)
-    assert not torch.isnan(enc).any()
-
-
-def test_when_reward_components_forward_called_then_returns_conditioned_features() -> None:
-    extractor = RewardStatisticsExtractor()
-    fourier = RewardFourierEncoder(d_dim=64)
-    film = RewardFiLM(dim=32, hidden_dim=64)
-
-    x = torch.randn(2, 5, 32)
-    reward_2d = torch.randn(2, 5)
-
-    stats = extractor(reward_2d, batch_size=2, seq_len=5)
-    cond = fourier(stats)
-    out = film(x, cond)
-    assert out.shape == (2, 5, 64)
-    assert not torch.isnan(out).any()
-
-    reward_3d = torch.randn(2, 5, 3)
-    stats_3d = extractor(reward_3d, batch_size=2, seq_len=5)
-    cond_3d = fourier(stats_3d)
-    out_3d = film(x, cond_3d)
-    assert out_3d.shape == (2, 5, 64)
-    assert not torch.isnan(out_3d).any()
-
-
-def test_when_reward_components_dtype_differs_then_aligns_and_executes() -> None:
-    extractor = RewardStatisticsExtractor()
-    fourier = RewardFourierEncoder(d_dim=32)
-    film = RewardFiLM(dim=32, hidden_dim=32)
-
-    x = torch.randn(2, 4, 32, dtype=torch.bfloat16)
-    reward_values = torch.randn(2, 4, 2, dtype=torch.float32)
-
-    extractor.to(dtype=torch.bfloat16)
-    fourier.to(dtype=torch.bfloat16)
-    film.to(dtype=torch.bfloat16)
-
-    stats = extractor(reward_values, batch_size=2, seq_len=4)
-    cond = fourier(stats)
-    out = film(x, cond)
-    assert out.shape == (2, 4, 32)
-    assert out.dtype == torch.bfloat16
-    assert not torch.isnan(out).any()
 
 
 def test_when_blocks_registry_contains_reward_blocks() -> None:

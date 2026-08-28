@@ -600,6 +600,45 @@ class GatedRewardNet(nn.Module):
                 conv = (conv[0], conv[1])
             return rec, conv
         return None, None
+
+    def _normalize_reward_tensor(
+        self,
+        reward_values: Tensor | None,
+        batch_size: int,
+        seq_len: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> Tensor:
+        """Broadcast ``reward_values`` to ``(B, L, k_stats)``."""
+        if reward_values is None:
+            return torch.zeros(
+                batch_size,
+                seq_len,
+                self.k_stats,
+                device=device,
+                dtype=dtype,
+            )
+        if reward_values.dim() == 0:
+            return reward_values.view(1, 1, 1).expand(batch_size, seq_len, 1)
+        if reward_values.dim() == 1:
+            if reward_values.size(0) == seq_len:
+                return reward_values.view(1, seq_len, 1).expand(batch_size, -1, 1)
+            return reward_values.view(1, 1, -1).expand(batch_size, seq_len, -1)
+        if reward_values.dim() == 2:
+            if reward_values.shape == (batch_size, seq_len):
+                return reward_values.unsqueeze(-1)
+            if reward_values.shape[0] == batch_size:
+                return reward_values.unsqueeze(1).expand(-1, seq_len, -1)
+            if reward_values.shape[0] == seq_len:
+                return reward_values.unsqueeze(0).expand(batch_size, -1, -1)
+            return reward_values.unsqueeze(1).expand(-1, seq_len, -1)
+        if reward_values.dim() == 3:
+            if reward_values.shape[0] == 1 and batch_size > 1:
+                return reward_values.expand(batch_size, -1, -1)
+            if reward_values.shape[1] == 1 and seq_len > 1:
+                return reward_values.expand(-1, seq_len, -1)
+        return reward_values
+
     def forward(self, hidden_states: Tensor, reward_values: Tensor | None = None, past_key_values: Any = None, output_attentions: bool = False, use_cache: bool = True, **kwargs: Any) -> tuple[Tensor, None, Any]:
         if hidden_states.dim() == 3:
             B, L, _ = hidden_states.shape
@@ -615,29 +654,13 @@ class GatedRewardNet(nn.Module):
         V_curr = None
         k_cache = conv_state[0] if conv_state is not None else None
         v_cache = conv_state[1] if conv_state is not None else None
-        if reward_values is None:
-            reward_values = torch.zeros(B, seq_len, self.k_stats, device=hidden_states.device, dtype=hidden_states.dtype)
-        elif reward_values.dim() == 0:
-            reward_values = reward_values.view(1, 1, 1).expand(B, seq_len, 1)
-        elif reward_values.dim() == 1:
-            if reward_values.size(0) == seq_len:
-                reward_values = reward_values.view(1, seq_len, 1).expand(B, -1, 1)
-            else:
-                reward_values = reward_values.view(1, 1, -1).expand(B, seq_len, -1)
-        elif reward_values.dim() == 2:
-            if reward_values.shape == (B, seq_len):
-                reward_values = reward_values.unsqueeze(-1)
-            elif reward_values.shape[0] == B:
-                reward_values = reward_values.unsqueeze(1).expand(-1, seq_len, -1)
-            elif reward_values.shape[0] == seq_len:
-                reward_values = reward_values.unsqueeze(0).expand(B, -1, -1)
-            else:
-                reward_values = reward_values.unsqueeze(1).expand(-1, seq_len, -1)
-        elif reward_values.dim() == 3:
-            if reward_values.shape[0] == 1 and B > 1:
-                reward_values = reward_values.expand(B, -1, -1)
-            elif reward_values.shape[1] == 1 and seq_len > 1:
-                reward_values = reward_values.expand(-1, seq_len, -1)
+        reward_values = self._normalize_reward_tensor(
+            reward_values,
+            batch_size=B,
+            seq_len=seq_len,
+            device=hidden_states.device,
+            dtype=hidden_states.dtype,
+        )
         outputs = []
         for t in range(seq_len):
             x_t = hidden_states[:, t, :]
@@ -657,9 +680,6 @@ class GatedRewardNet(nn.Module):
         out = self.output_proj(out)
         if self.training and self.hidden_dropout > 0.0:
             out = F.dropout(out, p=self.hidden_dropout, training=True)
-        if hidden_states.shape[1] == 1 and seq_len == 1 and out.shape[1] == 1:
-            # keep original dim if input was 2D? caller expects 3D anyway
-            pass
         new_cache = None
         if use_cache:
             new_cache = {"recurrent_state": S_curr, "conv_state": (k_cache, v_cache)}

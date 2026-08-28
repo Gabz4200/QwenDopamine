@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from qwendopamine.utils import get_model_device
+from qwendopamine.utils import get_model_device, move_to_device
 
 
 def layerwise_stats(
@@ -53,10 +53,7 @@ def layerwise_stats(
             for step, batch in enumerate(dataloader):
                 if step >= max_steps:
                     break
-                batch = {
-                    k: v.to(device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items()
-                }
+                batch = move_to_device(batch, device)
                 model(**batch)
     finally:
         for h in hooks:

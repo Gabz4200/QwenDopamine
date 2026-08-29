@@ -85,7 +85,6 @@ class RewardStatisticsExtractor(nn.Module):
         """Normalize reward_values to a tensor broadcastable to (B, L, K)."""
         ndim = reward_values.dim()
         dispatch = {
-            0: lambda: reward_values.view(1, 1, 1),
             1: RewardStatisticsExtractor._normalize_1d,
             2: RewardStatisticsExtractor._normalize_2d,
             3: RewardStatisticsExtractor._normalize_3d,
@@ -95,6 +94,8 @@ class RewardStatisticsExtractor(nn.Module):
                 "reward_values must be a scalar, 1D, 2D, or 3D tensor. "
                 f"Got shape {tuple(reward_values.shape)}."
             )
+        if ndim == 0:
+            return reward_values.view(1, 1, 1)
         return dispatch[ndim](reward_values, batch_size=batch_size, seq_len=seq_len)
 
     @staticmethod

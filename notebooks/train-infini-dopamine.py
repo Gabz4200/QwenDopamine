@@ -45,23 +45,23 @@
 #   "numpy" \
 #   "tqdm"
 
-import unsloth
 
 
 # %% [code.2]
-import gc
-import os
 import datetime
+import gc
 import json
-from typing import Any, Dict, List, Optional, Union
+import os
 from pathlib import Path
+from typing import Any
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
-from datasets import interleave_datasets, load_dataset, IterableDataset
+from datasets import IterableDataset, interleave_datasets, load_dataset
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -69,13 +69,11 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments,
 )
-from peft import LoraConfig, TaskType, get_peft_model
 from trl import SFTTrainer
 
 from qwendopamine.integrations.huggingface import HFIntegration
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
-    InfiniDopamineForCausalLM,
     InfiniDopamineForConditionalGeneration,
     InfiniDopamineTextConfig,
     InfiniDopamineVisionConfig,
@@ -118,7 +116,7 @@ if torch.cuda.is_available():
 # %% [code.4]
 BASE_MODEL_NAME: str = "Qwen/Qwen3.5-0.8B"
 
-CPT_DATASETS: List[str] = [
+CPT_DATASETS: list[str] = [
     "DylanRiden/smb-worldmodel-data",
     "Kalso42/WorldModelForMaze",
     "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg",
@@ -183,17 +181,17 @@ LOGGING_STEPS: int = 10
 SAVE_STEPS: int = 500
 SAVE_TOTAL_LIMIT: int = 2
 
-OUTPUT_DIR: str = f"./infini-dopamine-cpt-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
-RESUME_FROM_CHECKPOINT: Optional[str] = None
+OUTPUT_DIR: str = f"./infini-dopamine-cpt-{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}"
+RESUME_FROM_CHECKPOINT: str | None = None
 HUB_MODEL_ID: str = os.environ.get("HUB_MODEL_ID", "")
 PUSH_TO_HUB: bool = bool(HUB_MODEL_ID)
-HF_TOKEN: Optional[str] = os.environ.get("HF_TOKEN")
+HF_TOKEN: str | None = os.environ.get("HF_TOKEN")
 MERGE_LORA_AFTER_TRAINING: bool = True
 
 SMB_CACHE_DIR: str = "./smb-cache"
 MAZE_CACHE_DIR: str = "./maze-cache"
 
-MAX_ROWS_PER_DATASET: Optional[int] = None
+MAX_ROWS_PER_DATASET: int | None = None
 LICHESS_MAX_ROWS: int = 500_000
 COT_EVAL_MAX_ROWS: int = 100_000
 R0B0TLAB_MAX_ROWS: int = 200_000
@@ -219,7 +217,7 @@ def build_text_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineTextConfig:
     if isinstance(src, dict):
         src = _as_obj(src)
 
-    cfg_kwargs = dict(
+    cfg_kwargs = dict(  # noqa: C408  # noqa: C408
         vocab_size=getattr(src, "vocab_size", 248320),
         hidden_size=getattr(src, "hidden_size", 1024),
         intermediate_size=getattr(src, "intermediate_size", 3584),
@@ -257,7 +255,7 @@ def build_vision_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineVisionConfig:
     if isinstance(src, dict):
         src = _as_obj(src)
 
-    cfg_kwargs = dict(
+    cfg_kwargs = dict(  # noqa: C408  # noqa: C408
         depth=getattr(src, "depth", 12),
         hidden_size=getattr(src, "hidden_size", 768),
         in_channels=getattr(src, "in_channels", 3),
@@ -427,15 +425,15 @@ def _flatten_messages(messages: Any) -> str:
     return "\n".join(parts)
 
 
-def format_smb(example: Dict) -> Dict:
+def format_smb(example: dict) -> dict:
     return {"text": example.get("text", "")}
 
 
-def format_maze(example: Dict) -> Dict:
+def format_maze(example: dict) -> dict:
     return {"text": example.get("text", "")}
 
 
-def format_sokoban(example: Dict) -> Dict:
+def format_sokoban(example: dict) -> dict:
     messages_raw = example.get("messages", "")
     text = _flatten_messages(messages_raw)
     task = example.get("task", "")
@@ -447,7 +445,7 @@ def format_sokoban(example: Dict) -> Dict:
     return {"text": text}
 
 
-def format_bytesized32(example: Dict) -> Dict:
+def format_bytesized32(example: dict) -> dict:
     prompt = example.get("prompt", [])
     reward_model = example.get("reward_model", "")
     extra_info = example.get("extra_info", "")
@@ -469,12 +467,12 @@ def format_bytesized32(example: Dict) -> Dict:
     return {"text": "\n".join(parts)}
 
 
-def format_patronus(example: Dict) -> Dict:
+def format_patronus(example: dict) -> dict:
     text = _flatten_messages(example.get("messages", []))
     return {"text": text}
 
 
-def format_arc(example: Dict) -> Dict:
+def format_arc(example: dict) -> dict:
     task = example.get("task", "")
     status = example.get("status", "")
     win_levels = example.get("win_levels", "")
@@ -490,7 +488,7 @@ def format_arc(example: Dict) -> Dict:
     return {"text": text}
 
 
-def format_chess_laion(example: Dict) -> Dict:
+def format_chess_laion(example: dict) -> dict:
     moves = example.get("Moves", [])
     termination = example.get("Termination", "")
     result = example.get("Result", "*")
@@ -502,7 +500,7 @@ def format_chess_laion(example: Dict) -> Dict:
     return {"text": text}
 
 
-def format_openthoughts(example: Dict) -> Dict:
+def format_openthoughts(example: dict) -> dict:
     system = example.get("system", "")
     convs = example.get("conversations", [])
     parts = []
@@ -515,7 +513,7 @@ def format_openthoughts(example: Dict) -> Dict:
     return {"text": "\n".join(parts)}
 
 
-def format_alfworld(example: Dict) -> Dict:
+def format_alfworld(example: dict) -> dict:
     steps_raw = example.get("steps", "[]")
     if isinstance(steps_raw, str):
         try:
@@ -543,12 +541,12 @@ def format_alfworld(example: Dict) -> Dict:
     return {"text": "\n".join(parts)}
 
 
-def format_kimi_k3(example: Dict) -> Dict:
+def format_kimi_k3(example: dict) -> dict:
     text = _flatten_messages(example.get("messages", []))
     return {"text": text}
 
 
-def format_cot_eval(example: Dict) -> Dict:
+def format_cot_eval(example: dict) -> dict:
     parts = []
     passage = example.get("passage", "")
     if passage:
@@ -569,7 +567,7 @@ def format_cot_eval(example: Dict) -> Dict:
     return {"text": "\n".join(parts)}
 
 
-def format_lichess(example: Dict) -> Dict:
+def format_lichess(example: dict) -> dict:
     movetext = example.get("movetext", "")
     white = str(example.get("White") or "?")
     black = str(example.get("Black") or "?")
@@ -587,7 +585,7 @@ def format_lichess(example: Dict) -> Dict:
     return {"text": text}
 
 
-def format_toolace(example: Dict) -> Dict:
+def format_toolace(example: dict) -> dict:
     system = example.get("system", "")
     convs = example.get("conversations", [])
     parts = []
@@ -600,7 +598,7 @@ def format_toolace(example: Dict) -> Dict:
     return {"text": "\n".join(parts)}
 
 
-def format_qwen3_distill(example: Dict) -> Dict:
+def format_qwen3_distill(example: dict) -> dict:
     text = _flatten_messages(example.get("messages", []))
     domain = example.get("domain", "")
     category = example.get("category", "")
@@ -611,7 +609,7 @@ def format_qwen3_distill(example: Dict) -> Dict:
     return {"text": text}
 
 
-def format_fable5(example: Dict) -> Dict:
+def format_fable5(example: dict) -> dict:
     text = _flatten_messages(example.get("messages", []))
     trace = example.get("trace", "")
     prompt = example.get("prompt", "")
@@ -624,14 +622,14 @@ def format_fable5(example: Dict) -> Dict:
     return {"text": "\n".join(parts)}
 
 
-def format_wikitext(example: Dict) -> Dict:
+def format_wikitext(example: dict) -> dict:
     text = example.get("text", "")
     if not text or not text.strip():
         text = "[EMPTY_WIKITEXT_ROW]"
     return {"text": text}
 
 
-def format_r0b0tlab(example: Dict) -> Dict:
+def format_r0b0tlab(example: dict) -> dict:
     raw = example.get("messages_json", "[]")
     if isinstance(raw, str):
         try:
@@ -670,12 +668,12 @@ DATASET_FORMATTERS = {
 }
 
 
-def format_example(example: Dict, dataset_name: str) -> Dict:
+def format_example(example: dict, dataset_name: str) -> dict:
     formatter = DATASET_FORMATTERS.get(dataset_name)
     if formatter is not None:
         return formatter(example)
     for col in ["text", "content", "prompt", "problem", "solution"]:
-        if col in example and example[col]:
+        if example.get(col):
             return {"text": str(example[col])}
     text = " ".join(
         str(v) for v in example.values()
@@ -688,8 +686,9 @@ def format_example(example: Dict, dataset_name: str) -> Dict:
 
 # %% [code.12]
 def load_smb_dataset() -> IterableDataset:
-    from huggingface_hub import hf_hub_download, HfHubHTTPError
     import zipfile
+
+    from huggingface_hub import HfHubHTTPError, hf_hub_download
     
     repo_id = "DylanRiden/smb-worldmodel-data"
     cache_dir = Path(SMB_CACHE_DIR)
@@ -734,7 +733,7 @@ def load_smb_dataset() -> IterableDataset:
 
 
 def load_maze_dataset() -> IterableDataset:
-    from huggingface_hub import snapshot_download, HfHubHTTPError
+    from huggingface_hub import HfHubHTTPError, snapshot_download
     
     cache_dir = Path(MAZE_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -787,17 +786,15 @@ def _apply_subset(ds, dataset_name: str) -> IterableDataset:
     if max_rows is None:
         return ds
     def _gen():
-        count = 0
-        for ex in ds:
+        for count, ex in enumerate(ds):
             yield ex
-            count += 1
             if count >= max_rows:
                 break
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
 def build_streaming_dataset(
-    dataset_names: List[str],
+    dataset_names: list[str],
     seed: int = 42,
 ) -> IterableDataset:
     streams = []
@@ -812,7 +809,7 @@ def build_streaming_dataset(
             ds = load_dataset(name, config=cfg, split=split, streaming=True)
             formatter = DATASET_FORMATTERS.get(name)
             if formatter is not None:
-                ds = ds.map(lambda ex: format_example(ex, name), batched=False)
+                ds = ds.map(lambda ex, name=name: format_example(ex, name), batched=False)
             ds = _apply_subset(ds, name)
             streams.append(ds)
     
@@ -826,7 +823,7 @@ def build_streaming_dataset(
     )
 
 
-def peek_streaming_dataset(dataset_names: List[str], seed: int = 42) -> Dict:
+def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> dict:
     train_dataset = build_streaming_dataset(dataset_names, seed=seed)
     sample = next(iter(train_dataset))
     print(f"Sample keys  : {list(sample.keys())}")
@@ -840,7 +837,7 @@ def peek_streaming_dataset(dataset_names: List[str], seed: int = 42) -> Dict:
 train_dataset = peek_streaming_dataset(CPT_DATASETS)
 
 # %% [code.13]
-def tokenize_fn(example: Dict) -> dict:
+def tokenize_fn(example: dict) -> dict:
     tok = tokenizer(
         example["text"],
         truncation=True,

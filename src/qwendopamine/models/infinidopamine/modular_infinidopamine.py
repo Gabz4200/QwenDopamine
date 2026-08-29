@@ -20,6 +20,7 @@ from typing import Any, ClassVar
 
 import torch
 from torch import nn
+from torch.nn.modules.module import _IncompatibleKeys
 
 from qwendopamine.models._hf_compat import (
     BaseModelOutputWithPast,
@@ -63,8 +64,7 @@ from qwendopamine.models.infinidopamine.decoder_layer import (
     InfiniDopamineDecoderLayer,
     InfiniDopamineGatedDeltaNet,
     InfiniDopamineGatedRewardNet,  # noqa: F401 — re-exported for package API
-    InfiniDopamineRMSNorm,
-)
+    )
 from qwendopamine.models.infinidopamine.rotary_embeddings import (
     InfiniDopamineTextRotaryEmbedding,
     InfiniDopamineVisionRotaryEmbedding,
@@ -642,24 +642,28 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
             if k == "lm_head.weight":
                 lm_head_state[k] = v
             elif k.startswith("model.visual."):
-                vision_state[k[len("model.") :]] = v
+                vision_state[k[len("model.visual.") :]] = v
             elif k.startswith("model.language_model."):
                 text_state[k[len("model.") :]] = v
             elif k.startswith("language_model."):
                 text_state[k] = v
             elif k.startswith("visual."):
-                vision_state[k] = v
+                vision_state[k[len("visual.") :]] = v
             elif k.startswith("mtp."):
                 continue
             elif strict:
                 text_state[k] = v
 
         load_info: list[str] = []
+        all_missing: list[str] = []
+        all_unexpected: list[str] = []
 
         if vision_state:
             missing_v, unexpected_v = self.model.visual.load_state_dict(
                 vision_state, strict=strict
             )
+            all_missing.extend(missing_v)
+            all_unexpected.extend(unexpected_v)
             load_info.append(
                 f"vision: loaded {len(vision_state) - len(missing_v)} keys "
                 f"({len(missing_v)} missing, {len(unexpected_v)} unexpected)"
@@ -669,6 +673,8 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
             missing_t, unexpected_t = self.model.language_model.load_qwen35_weights(
                 text_state, strict=strict
             )
+            all_missing.extend(missing_t)
+            all_unexpected.extend(unexpected_t)
             load_info.append(
                 f"text: loaded {len(text_state) - len(missing_t)} keys "
                 f"({len(missing_t)} missing, {len(unexpected_t)} unexpected)"
@@ -678,7 +684,7 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
             self.lm_head.weight.data.copy_(lm_head_state["lm_head.weight"])
             load_info.append("lm_head: loaded 1 key")
 
-        return [], []
+        return _IncompatibleKeys(all_missing, all_unexpected)
 
 
 class InfiniDopamineTextForSequenceClassification(

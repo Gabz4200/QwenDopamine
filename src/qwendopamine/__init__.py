@@ -6,7 +6,7 @@ __version__ = "0.2.0"
 
 DEFAULT_QWEN35_REPO: str = "Qwen/Qwen3.5-0.8B"
 
-__all__ = ["__version__", "DEFAULT_QWEN35_REPO"]
+__all__ = ["DEFAULT_QWEN35_REPO", "__version__"]
 
 
 def main() -> None:

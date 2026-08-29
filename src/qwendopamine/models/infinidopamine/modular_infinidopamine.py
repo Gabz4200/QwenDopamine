@@ -561,6 +561,70 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
     ) -> tuple[Any, ...] | BaseModelOutputWithPooling:
         return super().get_image_features(**super_kwargs)
 
+    @can_return_tuple
+    def forward(
+        self,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.IntTensor | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
+        reward_values: torch.Tensor | None = None,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> tuple | InfiniDopamineModelOutputWithPast:
+        outputs = self.model(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            mm_token_type_ids=mm_token_type_ids,
+            reward_values=reward_values,
+            **kwargs,
+        )
+
+        hidden_states = outputs[0]
+
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
+
+        loss = None
+        if labels is not None:
+            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size)
+
+        if (
+            loss is not None
+            and self.training
+            and getattr(self.config, "gate_loss_weight", 0.0) > 0.0
+        ):
+            target = getattr(self.config, "gate_target_balance", 0.5)
+            gate_loss = self.model.get_gate_regularization_loss(target=target)
+            loss = loss + self.config.gate_loss_weight * gate_loss
+
+        return InfiniDopamineModelOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            rope_deltas=outputs.rope_deltas,
+        )
+
+    def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
+        r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
+        return self.model.get_gate_regularization_loss(target=target)
+
     def load_qwen35_weights(
         self,
         weights: dict[str, torch.Tensor] | nn.Module,
@@ -571,7 +635,56 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
             state_dict = weights.state_dict()
         else:
             state_dict = dict(weights)
-        return self.load_state_dict(state_dict, strict=strict)
+
+        vision_state: dict[str, torch.Tensor] = {}
+        text_state: dict[str, torch.Tensor] = {}
+        lm_head_state: dict[str, torch.Tensor] = {}
+
+        for k, v in state_dict.items():
+            if k == "lm_head.weight":
+                lm_head_state[k] = v
+            elif k.startswith("model.visual."):
+                vision_state[k[len("model.") :]] = v
+            elif k.startswith("model.language_model."):
+                text_state[k[len("model.") :]] = v
+            elif k.startswith("language_model."):
+                text_state[k] = v
+            elif k.startswith("visual."):
+                vision_state[k] = v
+            elif k.startswith("mtp."):
+                continue
+            elif strict:
+                # Unexpected top-level key; include it so strict loading can report it.
+                text_state[k] = v
+
+        load_info: list[str] = []
+
+        if vision_state:
+            missing_v, unexpected_v = self.model.visual.load_state_dict(
+                vision_state, strict=strict
+            )
+            load_info.append(
+                f"vision: loaded {len(vision_state) - len(missing_v)} keys "
+                f"({len(missing_v)} missing, {len(unexpected_v)} unexpected)"
+            )
+
+        if text_state:
+            missing_t, unexpected_t = self.model.language_model.load_qwen35_weights(
+                text_state, strict=strict
+            )
+            load_info.append(
+                f"text: loaded {len(text_state) - len(missing_t)} keys "
+                f"({len(missing_t)} missing, {len(unexpected_t)} unexpected)"
+            )
+
+        if lm_head_state:
+            self.lm_head.weight.data.copy_(lm_head_state["lm_head.weight"])
+            load_info.append("lm_head: loaded 1 key")
+
+        if load_info:
+            print(" | ".join(load_info))
+
+        return [], []
 
 
 class InfiniDopamineTextForSequenceClassification(

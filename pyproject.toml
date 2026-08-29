@@ -1,7 +1,7 @@
 [project]
 name = "qwendopamine"
 version = "0.2.0"
-description = "Research framework for Qwen-style LLM architectures with novel PyTorch recurrent blocks, HF/GGUF interoperability, and pure PyTorch training."
+description = "Research framework for Qwen-style LLM architectures with novel PyTorch recurrent blocks, HF/GGUF interoperability, multimodal vision tower, and streaming CPT dataset mixer."
 readme = "README.md"
 authors = [
     { name = "Joao Gabriel Souza Amaral", email = "jgsa75005@gmail.com" }
@@ -50,6 +50,19 @@ hf = [
     "datasets>=2.14.0",
     "huggingface-hub>=0.20.0",
     "tokenizers>=0.15.0",
+]
+cpt = [
+    "datasets>=2.20.0",
+    "huggingface-hub>=0.20.0",
+    "ipykernel>=6.20.0",
+    "jupyterlab>=4.0.0",
+    "notebook>=7.0.0",
+    "Pillow>=10.0.0",
+    "peft>=0.7.0",
+    "tokenizers>=0.15.0",
+    "torchvision>=0.15.0",
+    "trl>=0.12.0",
+    "unsloth>=2024.7",
 ]
 dev = [
     "ipykernel>=6.20.0",

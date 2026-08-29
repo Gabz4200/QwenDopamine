@@ -9,7 +9,9 @@ It provides a pure PyTorch training and evaluation harness paired with Hugging F
 - **InfiniDopamine Architecture**: Hybrid long-context architecture integrating dual-stream Infini-attention (SWA + GDN-2), pre-attention Gated Reward Networks, and Sliding Window Attention.
 - **Dual-Stream Infini-Attention with GDN-2**: Combines local Sliding Window Attention (SWA) and Gated DeltaNet-2 ([arXiv:2605.22791](https://arxiv.org/abs/2605.22791)) via a learnable per-head gate $\beta$ ([arXiv:2404.07143](https://arxiv.org/abs/2404.07143)) over shared QKV projections.
 - **Pre-Attention Gated Reward Networks**: Automatically routes linear layers immediately preceding attention to `GatedRewardNet`, providing advantage-guided memory updates and FiLM query modulation.
+- **Multimodal Vision Tower**: Inherits the Qwen3.5-VL vision encoder (`InfiniDopamineVisionModel`) for image+text CPT. Vision weights load directly from Qwen3.5 checkpoints via `InfiniDopamineForConditionalGeneration.load_qwen35_weights`.
 - **Continued Pre-Training from Qwen3.5**: Full parameter compatibility with pretrained Qwen3.5 checkpoints via automatic state dict pre-hooks with `strict=True` support.
+- **Dataset Mixer**: Streaming multi-dataset CPT with per-dataset schema formatters for 16+ HF datasets (SMB frames, maze traces, sokoban CoT, chess PGN, ALFWorld trajectories, etc.).
 - **CPU-First Local Environment**: Local development resolves against CPU PyTorch wheels via `uv`, isolating GPU dependencies (`flash-linear-attention`, `unsloth`) to remote/Kaggle environments to avoid Triton driver conflicts.
 - **Strict Quality Gates**: Complete behavioral test suite with `pyrefly` type checking and `ruff` linting.
 
@@ -61,10 +63,18 @@ Any linear recurrent layer immediately preceding an attention layer (`... -> GDN
 
 ### 3. Qwen3.5 Weight Compatibility
 
-Pretrained Qwen3.5 weights load directly into `InfiniDopamineForCausalLM` with `strict=True`:
+Pretrained Qwen3.5 weights load directly into `InfiniDopamineForConditionalGeneration` with `strict=True`:
 - Scalar erase gates expand across channel dimensions $d_k$ and $d_v$.
 - Linear projections map into both GDN-2 and GatedRewardNet memory cores.
+- Vision tower weights (`model.visual.*`) load from Qwen3.5-VL checkpoint directly.
 - Gating parameters ($\beta$) and reward conditioning weights initialize to standard neutral defaults ($\text{sigmoid}(\beta)=0.5$, $\omega_t=1.0$).
+
+### 4. Multimodal Vision Tower
+
+`InfiniDopamineForConditionalGeneration` inherits the Qwen3.5-VL vision encoder via `InfiniDopamineVisionConfig`:
+- Vision encoder processes images → spatial feature maps → `merger.linear_fc1` + `merger.linear_fc2` project into language model hidden space.
+- LoRA targets include `merger.linear_fc1` and `merger.linear_fc2` for efficient multimodal fine-tuning.
+- `AutoProcessor` from `Qwen/Qwen3.5-0.8B` handles image preprocessing.
 
 ## Repository Structure
 
@@ -103,27 +113,47 @@ uv run pytest -v
 import torch
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
-    InfiniDopamineForCausalLM,
+    InfiniDopamineForConditionalGeneration,
     InfiniDopamineTextConfig,
+    InfiniDopamineVisionConfig,
 )
-from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM
+from transformers import AutoProcessor, AutoTokenizer
 
-# 1. Instantiate InfiniDopamine with Sliding Window Attention & GDN-2
-config = InfiniDopamineTextConfig(
-    hidden_size=2048,
+# 1. Build multimodal config mirroring Qwen3.5-0.8B
+text_cfg = InfiniDopamineTextConfig(
+    hidden_size=1024,
     num_hidden_layers=24,
     sliding_window=1024,
 )
-model = InfiniDopamineForCausalLM(config)
+vision_cfg = InfiniDopamineVisionConfig(
+    hidden_size=768,
+    out_hidden_size=1024,
+    num_position_embeddings=2304,
+)
+cfg = InfiniDopamineConfig(text_config=text_cfg, vision_config=vision_cfg)
+model = InfiniDopamineForConditionalGeneration(cfg)
 
-# 2. Transfer pretrained Qwen3.5 weights for continued pre-training
-qwen_model = Qwen3_5ForCausalLM.from_pretrained("Qwen/Qwen3.5-0.8B")
-model.load_qwen35_weights(qwen_model, strict=True)
+# 2. Load pretrained Qwen3.5 weights (includes vision tower)
+model.load_qwen35_weights("Qwen/Qwen3.5-0.8B", strict=True)
 
-# 3. Forward pass supporting optional reward values
+# 3. Prepare processor + tokenizer
+processor = AutoProcessor.from_pretrained("Qwen/Qwen3.5-0.8B", trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-0.8B", trust_remote_code=True)
+
+# 4. Forward with optional reward_values for CPT
 input_ids = torch.tensor([[10, 20, 30, 40]])
-output = model(input_ids=input_ids)
+reward_values = torch.zeros_like(input_ids, dtype=torch.float32)
+output = model(input_ids=input_ids, reward_values=reward_values)
 ```
+
+## Multimodal Continued Pretraining
+
+See `notebooks/train-infini-dopamine.ipynb` for the full multimodal CPT pipeline. That notebook:
+
+- Streams **16 datasets** with per-dataset formatters
+- Uses `interleave_datasets` for memory-efficient mixing
+- Trains with LoRA on both text and vision tower projections
+- Saves merged checkpoints and pushes to Hugging Face Hub
 
 ## Development Conventions
 

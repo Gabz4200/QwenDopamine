@@ -56,6 +56,7 @@ cpt = [
     "huggingface-hub>=0.20.0",
     "ipykernel>=6.20.0",
     "jupyterlab>=4.0.0",
+    "jupytext>=1.15.0",
     "notebook>=7.0.0",
     "Pillow>=10.0.0",
     "peft>=0.7.0",

@@ -6,6 +6,7 @@ from typing import Any
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
+from qwendopamine import DEFAULT_QWEN35_REPO
 from qwendopamine.integrations.huggingface import HFIntegration
 
 
@@ -40,7 +41,7 @@ def main(config: DictConfig) -> None:
             )
         )
     base_model = _get_cfg(
-        config, "model.base_model", "train.model.base_model", default="Qwen/Qwen3.5-0.8B"
+        config, "model.base_model", "train.model.base_model", default=DEFAULT_QWEN35_REPO
     )
     device = _get_cfg(config, "train.device", "train.train.device", default="cpu")
     model = HFIntegration.load_model(

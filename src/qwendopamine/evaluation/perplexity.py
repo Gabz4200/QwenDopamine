@@ -13,21 +13,7 @@ from qwendopamine.utils import get_model_device, move_to_device
 def compute_perplexity(
     model: nn.Module, dataloader: Any, max_steps: int = 500
 ) -> float:
-    r"""compute_perplexity(model, dataloader, max_steps=500) -> float
-
-    Estimates perplexity over a dataloader sequence by accumulating token-weighted cross-entropy loss.
-
-    .. math::
-        \text{PPL} = \exp\left( \frac{1}{N} \sum_{i=1}^N \mathcal{L}_i \right)
-
-    Args:
-        model (nn.Module): Causal language model returning scalar loss or loss dict.
-        dataloader (Any): Iterable dataloader yielding batch dictionaries with ``input_ids`` tensors.
-        max_steps (int, optional): Maximum number of evaluation steps to compute over. Default: ``500``.
-
-    Returns:
-        float: Exponentiated average per-token cross-entropy loss value.
-    """
+    r"""Estimate perplexity over a dataloader by accumulating token-weighted cross-entropy loss."""
     model.eval()
     total_loss = 0.0
     total_tokens = 0
@@ -49,7 +35,14 @@ def compute_perplexity(
             total_loss += loss.item() * num_tokens
             total_tokens += num_tokens
 
-    return torch.exp(torch.tensor(total_loss / max(total_tokens, 1))).item()
+    avg_loss = total_loss / max(total_tokens, 1)
+    ppl = torch.exp(torch.tensor(avg_loss)).item()
+    if ppl == float("inf"):
+        import warnings
+        warnings.warn(
+            f"Perplexity overflowed (avg_loss={avg_loss:.2f}); returning float('inf')."
+        )
+    return ppl
 
 
 __all__ = ["compute_perplexity"]

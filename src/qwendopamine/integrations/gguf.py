@@ -13,6 +13,8 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     GGUFReader = None
     dequantize = None
 
+from qwendopamine import DEFAULT_QWEN35_REPO
+
 from .huggingface import HFIntegration
 from .safetensors import save_safetensors
 
@@ -160,7 +162,7 @@ def convert_gguf_to_safetensors(gguf_path: str, output_dir: str) -> str:
 
 
 def load_qwen35_from_gguf(
-    model_name: str = "Qwen/Qwen3.5-0.8B",
+    model_name: str = DEFAULT_QWEN35_REPO,
     config: Any = None,
     device_map: str = "cpu",
     **kwargs: Any,

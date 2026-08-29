@@ -1,25 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION & QwenDopamine Authors.
 # Licensed under the Apache License 2.0 or MIT license.
 
-r"""Reinforced DeltaNet components: RL-augmented Gated Delta Rule 2.
-
-This module implements a System 2 reasoning layer that fuses Gated Delta Rule 2
-with online reinforcement learning. The architecture combines:
-
-1. **ValueBaselineEMA**: Vectorial EMA with data-dependent decay tracking reward
-   expectations (equivalent to minLSTM-style recurrence).
-2. **AdvantageGate**: PPO-inspired gate transforming advantage to scalar ω_t ∈ [0, 2].
-3. **DeltaMemoryCore**: Core Gated Delta Rule 2 memory update with coupled
-   write/erase gates modulated by ω_t.
-4. **ReinforcedDeltaLayer**: Orchestrator integrating FiLM-conditioned Query
-   readout with the RL-augmented memory.
-
-The design supports:
-- Vectorial reward statistics (mean, max, min, std, sum, etc.) instead of scalar.
-- LearnableSoftsign normalization of statistics before EMA processing.
-- FiLM conditioning on Query for adaptive readout (separate from memory update).
-- Coupled write/erase gate modulation for stable Freeze behavior on negative advantage.
-"""
+r"""RL-augmented Gated Delta Rule 2 components: ValueBaselineEMA, AdvantageGate, DeltaMemoryCore, and ReinforcedDeltaLayer."""
 
 from __future__ import annotations
 

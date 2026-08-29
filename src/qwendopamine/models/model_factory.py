@@ -25,28 +25,7 @@ from qwendopamine.models.qwen35 import (
 
 
 class ResearchDecoder(nn.Module):
-    r"""ResearchDecoder(config)
-
-    Configurable research decoder model assembled from token/position embeddings, sequence of registered
-    transformer layer blocks, final RMSNorm, and output language model prediction head.
-
-    Args:
-        config (Any): Architecture configuration instance containing hyperparameters (e.g. ``hidden_size``,
-            ``vocab_size``, ``block_types``, ``num_hidden_layers``).
-
-    Examples::
-
-        >>> import types
-        >>> cfg = types.SimpleNamespace(
-        ...     hidden_size=64, vocab_size=1000, max_position_embeddings=512,
-        ...     num_hidden_layers=2, block_types=["qwen", "gdn2"]
-        ... )
-        >>> model = ResearchDecoder(cfg)
-        >>> input_ids = torch.tensor([[1, 2, 4], [5, 6, 7]])
-        >>> logits = model(input_ids)
-        >>> logits.shape
-        torch.Size([2, 3, 1000])
-    """
+    r"""Configurable research decoder assembled from token/position embeddings, transformer layer blocks, RMSNorm, and LM head."""
 
     def __init__(self, config: Any) -> None:
         super().__init__()
@@ -79,16 +58,7 @@ class ResearchDecoder(nn.Module):
     def forward(
         self, input_ids: torch.Tensor, position_ids: torch.Tensor | None = None
     ) -> torch.Tensor:
-        r"""forward(input_ids, position_ids=None) -> Tensor
-
-        Args:
-            input_ids (Tensor): Input token ID sequence tensor of shape :math:`(B, L)`.
-            position_ids (Tensor, optional): Optional explicit position indices of shape :math:`(B, L)`.
-                Default: ``None``.
-
-        Returns:
-            Tensor: Output logit sequence tensor of shape :math:`(B, L, \text{vocab\_size})`.
-        """
+        r"""Compute logits from token ids with optional explicit position ids."""
         if position_ids is None:
             seq_len = input_ids.shape[1]
             position_ids = torch.arange(
@@ -145,16 +115,7 @@ def _resolve_model_family(config: Any) -> tuple[str, Any]:
 
 
 def build_model(config: Any) -> nn.Module:
-    r"""build_model(config) -> nn.Module
-
-    Instantiates either a standard Qwen3.5/InfiniDopamine causal model or custom ResearchDecoder based on config.
-
-    Args:
-        config (Any): Architecture configuration instance.
-
-    Returns:
-        nn.Module: Instantiated model instance.
-    """
+    r"""Instantiate a Qwen3.5/InfiniDopamine causal model or ResearchDecoder from config."""
     family, config = _resolve_model_family(config)
     if family == "infinidopamine":
         return InfiniDopamineForCausalLM(config)
@@ -166,20 +127,7 @@ def build_model(config: Any) -> nn.Module:
 def build_reference_model(
     config: Any, quantization_config: Any = None, device_map: str = "cpu", **kwargs: Any
 ) -> nn.Module:
-    r"""build_reference_model(config, quantization_config=None, device_map="cpu", **kwargs) -> nn.Module
-
-    Instantiates a reference Hugging Face causal language model with optional quantization setup.
-
-    Args:
-        config (Any): Architecture configuration instance.
-        quantization_config (Any, optional): Hugging Face bitsandbytes or quantization configuration.
-            Default: ``None``.
-        device_map (str, optional): Target device mapping string. Default: ``"cpu"``.
-        **kwargs (Any): Additional keyword arguments passed to model constructor.
-
-    Returns:
-        nn.Module: Instantiated model instance.
-    """
+    r"""Instantiate a reference HF causal language model with optional quantization."""
     family, config = _resolve_model_family(config)
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config

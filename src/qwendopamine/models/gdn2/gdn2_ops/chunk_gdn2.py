@@ -1286,63 +1286,9 @@ def chunk_gdn2(
     transpose_state_layout: bool = False,
     **kwargs,
 ):
-    r"""
-    Chunkwise forward for GDN-2 (Gated DeltaNet 2).
+    r"""Chunkwise forward pass for GDN-2 (Gated DeltaNet 2).
 
-    Args:
-        q (torch.Tensor):
-            queries of shape `[B, T, H, K]`.
-        k (torch.Tensor):
-            keys of shape `[B, T, H, K]`.
-        v (torch.Tensor):
-            values of shape `[B, T, H, V]`.
-        g (torch.Tensor):
-            (forget) gating tensor (in log space!) of shape `[B, T, H, K]`.
-            If `use_gate_in_kernel=True`, this is the raw pre-activation and
-            the kernel computes `-exp(A_log) * softplus(g + dt_bias)`
-            (or the bounded variant if `safe_gate` + `lower_bound` is set).
-        b (torch.Tensor):
-            channel-wise ERASE gate of shape `[B, T, H, K]`. Replaces KDA's
-            scalar beta. Typical range: [0, 2].
-        w (torch.Tensor):
-            channel-wise WRITE gate of shape `[B, T, H, V]`. New for GDN-2.
-            Typical range: [0, 1].
-        scale (Optional[float]):
-            Scale factor. Defaults to `1 / sqrt(K)`.
-        initial_state (Optional[torch.Tensor]):
-            Initial recurrent state, shape `[N, H, K, V]`, dtype float32.
-        output_final_state (bool):
-            Whether to return the final recurrent state.
-        use_qk_l2norm_in_kernel (bool):
-            If True, L2-normalize q and k before attention.
-        use_gate_in_kernel (bool):
-            If True, compute the gate activation from raw g using A_log
-            (required) and dt_bias (optional).
-        cu_seqlens (torch.LongTensor, optional):
-            Packed-sequence cumulative lengths, shape `[N+1]`. When provided
-            the batch dim of q/k/v/... must be 1.
-        cu_seqlens_cpu (torch.LongTensor, optional):
-            CPU mirror of cu_seqlens (forwarded to the state-recurrence kernel).
-        safe_gate (bool):
-            Enable the safe-gate intra kernel variant (exploits M=16 TensorCores;
-            requires gate values in [-5, 0)).
-        lower_bound (Optional[float]):
-            When safe_gate=True and use_gate_in_kernel=True, use the bounded
-            gate activation `lower_bound * sigmoid(exp(A_log) * g)`. Must be
-            in `[-5, 0)`.
-        disable_recompute (bool):
-            If True, retain forward-pass intermediates (qg, kg, v_new, h) for
-            a faster backward at the cost of memory. Default: False.
-        return_intermediate_states (bool):
-            If True, also return the per-chunk pre-states `h` (shape
-            [B, NT, H, K, V]). Must be used within `torch.inference_mode()`.
-        transpose_state_layout (bool):
-            Use the transposed state layout in the recurrence kernel.
-
-    Returns:
-        Normal:  (o, final_state)
-        Intermediate (when return_intermediate_states=True):
-                 (o, final_state, h)
+    Supports channel-wise erase gate ``b`` and write gate ``w`` with WY representation.
     """
     if cu_seqlens is not None:
         if q.shape[0] != 1:
@@ -2039,13 +1985,7 @@ def chunk_gdn2_bwd_wy_dqkg_fused(
     chunk_indices: torch.LongTensor | None = None,
     transpose_state_layout: bool = False,
 ):
-    """Fused backward for WY auxiliaries + dq/dk/dg/db/dw.
-
-    Returns:
-        dq, dk, dv, db, dw, dg, dA
-        with db shape [B, T, H, K]  (channel-wise, GDN-2-specific)
-        and dw shape [B, T, H, V]   (channel-wise write gate, new in GDN-2).
-    """
+    """Fused backward for WY auxiliaries and dq/dk/dv/db/dw/dg/dA gradients."""
     B, T, H, K, V = *k.shape, v.shape[-1]
     BT = chunk_size
 
@@ -2198,12 +2138,7 @@ def chunk_gdn2_bwd(
     h: torch.Tensor | None = None,
     disable_recompute: bool = False,
 ):
-    """End-to-end GDN-2 backward.
-
-    Returns:
-        dq, dk, dv, db, dw, dg, dh0, dA_log, dt_bias_grad
-        where db is [B,T,H,K] and dw is [B,T,H,V] (the new GDN-2 gradients).
-    """
+    """End-to-end GDN-2 chunkwise backward pass."""
     if not disable_recompute:
         if use_gate_in_kernel:
             g = kda_gate_chunk_cumsum(

@@ -16,23 +16,7 @@ def build_scheduler(
     min_lr: float = 1e-5,
     max_steps: int = 100000,
 ) -> LRScheduler:
-    r"""build_scheduler(optimizer, name, warmup_steps=2000, min_lr=1e-5, max_steps=100000) -> LRScheduler
-
-    Constructs a learning-rate scheduler with linear warmup wrapper.
-
-    Args:
-        optimizer (Optimizer): PyTorch optimizer instance to schedule.
-        name (str): Scheduler name string. Supported values: ``"cosine"``.
-        warmup_steps (int, optional): Number of linear warmup steps. Default: ``2000``.
-        min_lr (float, optional): Minimum learning rate floor after decay. Default: ``1e-5``.
-        max_steps (int, optional): Maximum training steps for cosine decay horizon. Default: ``100000``.
-
-    Returns:
-        LRScheduler: Wrapped learning rate scheduler with warmup logic.
-
-    Raises:
-        KeyError: If ``name`` is not a supported scheduler type.
-    """
+    r"""Build a learning-rate scheduler with linear warmup wrapper."""
     if name == "cosine":
         base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max(max_steps - warmup_steps, 1), eta_min=min_lr
@@ -42,17 +26,7 @@ def build_scheduler(
 
 
 class LinearWarmupScheduler(LRScheduler):
-    r"""LinearWarmupScheduler(optimizer, base_scheduler, warmup_steps, min_lr)
-
-    Linearly increases learning rate from zero to initial base learning rate over initial warmup steps
-    before delegating scheduling to a base scheduler.
-
-    Args:
-        optimizer (Optimizer): PyTorch optimizer instance.
-        base_scheduler (LRScheduler): Base scheduler taking over after warmup.
-        warmup_steps (int): Total number of linear warmup steps.
-        min_lr (float): Minimum learning rate floor.
-    """
+    r"""Linearly increase learning rate over warmup steps, then delegate to a base scheduler."""
 
     def __init__(
         self,
@@ -67,17 +41,11 @@ class LinearWarmupScheduler(LRScheduler):
         # step_count must exist before super().__init__ because LRScheduler calls self.step().
         self.step_count = 0
         super().__init__(optimizer)
-        # Ensure training steps start at step 1 (LRScheduler may mutate state during init).
+        # Reset after init: LRScheduler may call self.step() during setup.
         self.step_count = 0
 
     def step(self, epoch: int | None = None) -> None:
-        r"""step(epoch=None) -> None
-
-        Steps the scheduler state forward.
-
-        Args:
-            epoch (int, optional): Epoch index. Default: ``None``.
-        """
+        r"""Step the scheduler state forward."""
         self.step_count += 1
         if self.step_count <= self.warmup_steps:
             scale = self.step_count / max(self.warmup_steps, 1)
@@ -87,13 +55,7 @@ class LinearWarmupScheduler(LRScheduler):
         self.base_scheduler.step(epoch)
 
     def state_dict(self) -> dict[str, Any]:
-        r"""state_dict() -> dict[str, Any]
-
-        Returns state dictionary preserving warmup step progress and base scheduler.
-
-        Returns:
-            dict[str, Any]: Combined scheduler state dict.
-        """
+        r"""Return scheduler state preserving warmup progress and base scheduler."""
         return {
             "base_scheduler": self.base_scheduler.state_dict(),
             "step_count": self.step_count,
@@ -102,13 +64,7 @@ class LinearWarmupScheduler(LRScheduler):
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
-        r"""load_state_dict(state_dict) -> None
-
-        Loads state dictionary into the scheduler.
-
-        Args:
-            state_dict (dict[str, Any]): Target state dictionary.
-        """
+        r"""Load scheduler state from a state dict."""
         if "base_scheduler" in state_dict:
             self.base_scheduler.load_state_dict(state_dict["base_scheduler"])
             self.step_count = state_dict.get("step_count", self.step_count)

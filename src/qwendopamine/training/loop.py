@@ -64,7 +64,10 @@ class TrainingLoop:
         """
         self.model.train()
         accum = 0
-        for accum, batch in enumerate(train_loader, start=1):
+        batches = list(train_loader)
+        if not batches:
+            raise ValueError("train_loader is empty; cannot run training loop.")
+        for accum, batch in enumerate(batches, start=1):
             batch = self._move_to_device(self.model, batch)
             autocast_device = get_model_device(self.model).type
             with torch.autocast(

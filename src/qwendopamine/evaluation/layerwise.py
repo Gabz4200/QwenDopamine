@@ -13,18 +13,7 @@ from qwendopamine.utils import get_model_device, move_to_device
 def layerwise_stats(
     model: nn.Module, dataloader: Any, max_steps: int = 50
 ) -> dict[str, float]:
-    r"""layerwise_stats(model, dataloader, max_steps=50) -> dict[str, float]
-
-    Processes evaluation batches to collect per-layer activation statistics across forward passes.
-
-    Args:
-        model (nn.Module): PyTorch module instance to inspect.
-        dataloader (Any): Iterable dataloader yielding input batch dictionaries.
-        max_steps (int, optional): Maximum evaluation steps to process. Default: ``50``.
-
-    Returns:
-        dict[str, float]: Dictionary mapping layer names to collected activation statistics.
-    """
+    r"""Collect per-layer activation statistics across forward passes."""
     model.eval()
     device = get_model_device(model)
     layer_sums: dict[str, float] = {}

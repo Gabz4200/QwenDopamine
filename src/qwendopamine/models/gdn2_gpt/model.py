@@ -329,11 +329,14 @@ class GDN2GPT(nn.Module):
 
         if use_kv_cache:
             if not self.config.nope and cos is not None and sin is not None:
-                assert input_pos is not None
+                if input_pos is None:
+                    raise ValueError("input_pos is required when using KV cache with RoPE.")
                 cos = cos.index_select(0, input_pos)
                 sin = sin.index_select(0, input_pos)
-            assert self.mask_cache is not None
-            assert input_pos is not None
+            if self.mask_cache is None:
+                raise RuntimeError("mask_cache is required when using KV cache.")
+            if input_pos is None:
+                raise ValueError("input_pos is required when using KV cache.")
             mask = self.mask_cache.index_select(2, input_pos)
             mask = mask[:, :, :, :max_seq_length]
         else:

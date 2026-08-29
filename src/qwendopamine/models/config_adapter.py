@@ -44,7 +44,12 @@ class ConfigAdapter:
 
     def __getattr__(self, name: str) -> Any:
         r"""Forward unknown attributes to the wrapped config."""
-        return getattr(self._config, name)
+        try:
+            return getattr(self._config, name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"{type(self._config).__name__} has no attribute {name!r}"
+            ) from exc
 
     def __repr__(self) -> str:
         return f"ConfigAdapter(family={self.family!r}, config={self._config!r})"

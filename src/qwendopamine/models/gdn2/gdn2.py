@@ -112,22 +112,7 @@ def torch_recurrent_gdn2(
     use_qk_l2norm_in_kernel: bool = True,
     **kwargs: Any,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    r"""Pure PyTorch token-by-token GDN-2 recurrence loop.
-
-    Args:
-        q: Query tensor of shape `[B, T, H, d_k]`.
-        k: Key tensor of shape `[B, T, H, d_k]`.
-        v: Value tensor of shape `[B, T, H, d_v]`.
-        g: Log-decay tensor of shape `[B, T, H, d_k]`.
-        b: Erase gate tensor of shape `[B, T, H, d_k]`.
-        w: Write gate tensor of shape `[B, T, H, d_v]`.
-        initial_state: Optional recurrent state tensor of shape `[B, H, d_k, d_v]`.
-        output_final_state: Whether to return the final state.
-        use_qk_l2norm_in_kernel: Whether to apply L2 normalization to queries and keys.
-
-    Returns:
-        A tuple `(out, final_state)` where `out` has shape `[B, T, H, d_v]`.
-    """
+    r"""Pure PyTorch token-by-token GDN-2 recurrence loop (reference oracle)."""
     batch_size, seq_len, num_heads, d_k = q.shape
     d_v = v.shape[-1]
     dtype = q.dtype
@@ -164,20 +149,11 @@ def torch_recurrent_gdn2(
         b_t = b_f[:, t]
         w_t = w_f[:, t]
 
-        # 1. Decay state along key channels
         state = state * g_t.unsqueeze(-1)
-
-        # 2. Memory read with erase gate
         erase_k = b_t * k_t
         v_read = torch.einsum("bhkv,bhk->bhv", state, erase_k)
-
-        # 3. Delta value with write gate
         v_write = w_t * v_t - v_read
-
-        # 4. Update state: S_t = S_{t-1} + k_t \delta^T
         state = state + k_t.unsqueeze(-1) * v_write.unsqueeze(-2)
-
-        # 5. Output read: o_t = S_t^T q_t
         out_t = torch.einsum("bhkv,bhk->bhv", state, q_t)
         outputs.append(out_t)
 
@@ -221,20 +197,9 @@ def compute_gdn2_intra_chunk_scores(
     gamma: torch.Tensor,
     kbar: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Build the causal intra-chunk output score matrix.
+    r"""Build the causal intra-chunk output score matrix ``Aqk``:
 
-    Args:
-        q: Scaled query of shape ``[B, H, C, K]``.
-        gamma: Absolute cumulative decay of shape ``[B, H, C, K]``.
-        kbar: Decay-normalized key ``gamma^{-1} * k``, shape ``[B, H, C, K]``.
-
-    Returns:
-        The causal score matrix ``Aqk`` of shape ``[B, H, C, C]``:
-
-            (Aqk)_{r,i} = 1_{i<=r} (gamma_r * q_r)^T (gamma_i^{-1} * k_i)
-                        = 1_{i<=r} q_r^T Diag(gamma_r / gamma_i) k_i
-
-    Entries above the diagonal are zeroed (row ``r`` attends only to ``i <= r``).
+        (Aqk)_{r,i} = 1_{i<=r} q_r^T Diag(gamma_r / gamma_i) k_i
     """
     q_gamma = gamma * q  # [B, H, C, K] = Diag(gamma_r) q_r
     scores = torch.matmul(q_gamma, kbar.transpose(-1, -2))  # [B, H, C, C]
@@ -258,13 +223,8 @@ def torch_chunk_gdn2(
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     r"""Pure PyTorch chunkwise GDN-2 recurrence (paper Appendix A).
 
-    Decay-normalized chunkwise/WY formulation, built only on generic torch ops
-    (`matmul`, `solve_triangular`) so it is equivalent to
-    `torch_recurrent_gdn2` but parallel across tokens inside each chunk. It is
-    the pure-PyTorch correctness reference for the accelerated backends and the
-    memory-efficient training path.
-
-    With the absolute cumulative decay ``gamma_r = exp(cumsum(log-decay)_{1..r})``:
+    Decay-normalized chunkwise/WY formulation, built on generic torch ops
+    (`matmul`, `solve_triangular`) as the reference for accelerated backends:
 
         kbar_r = gamma_r^{-1} * k_r        ebar_r = gamma_r * (b_r * k_r)
         z_r = w_r * v_r                    T = tril(ebar @ kbar^T, -1)
@@ -272,21 +232,6 @@ def torch_chunk_gdn2(
         delta = U - Y @ S_start            S_next = S_start + kbar^T @ delta
         Aqk = causal_tril(gamma*q @ kbar^T)
         output = gamma*q @ S_start + Aqk @ delta
-
-    Args:
-        q: Query tensor ``[B, T, H, d_k]``.
-        k: Key tensor ``[B, T, H, d_k]``.
-        v: Value tensor ``[B, T, H, d_v]``.
-        g: Log-decay tensor ``[B, T, H, d_k]``.
-        b: Erase gate tensor ``[B, T, H, d_k]``.
-        w: Write gate tensor ``[B, T, H, d_v]``.
-        initial_state: Optional recurrent state ``[B, H, d_k, d_v]`` (real-space).
-        output_final_state: Whether to return the final state.
-        use_qk_l2norm_in_kernel: Whether to L2-normalize q and k.
-        chunk_size: Number of tokens processed per chunk.
-
-    Returns:
-        ``(out, final_state)`` where ``out`` has shape ``[B, T, H, d_v]``.
     """
     batch_size, seq_len, num_heads, d_k = q.shape
     d_v = v.shape[-1]
@@ -604,11 +549,9 @@ class GatedDeltaNet2(nn.Module):
             nn.Linear(self.head_v_dim, self.key_dim, bias=False),
         )
 
-        # Channel-wise erase gate (`b`) and write gate (`w`)
         self.b_proj = nn.Linear(self.hidden_size, self.key_dim, bias=False)
         self.w_proj = nn.Linear(self.hidden_size, self.value_dim, bias=False)
 
-        # Decay-gate parameters
         self.A_log = nn.Parameter(
             torch.log(torch.empty(self.num_heads, dtype=torch.float32).uniform_(1, 16))
         )
@@ -622,7 +565,6 @@ class GatedDeltaNet2(nn.Module):
         self.dt_bias = nn.Parameter(inv_dt)
         cast(Any, self.dt_bias)._no_weight_decay = True
 
-        # Output normalization and projection
         self.g_proj = nn.Sequential(
             nn.Linear(self.hidden_size, self.head_v_dim, bias=False),
             nn.Linear(self.head_v_dim, self.value_dim, bias=True),
@@ -823,7 +765,6 @@ class GatedDeltaNet2(nn.Module):
             indices, cu_seqlens, _ = _get_unpad_data(attention_mask)
             hidden_states = _index_first_axis(hidden_states, indices).unsqueeze(0)
 
-        # Convolutions
         if self.use_short_conv:
             q, conv_state_q = self.q_conv1d(
                 x=self.q_proj(hidden_states),
@@ -855,11 +796,9 @@ class GatedDeltaNet2(nn.Module):
         # whether it stays fp32 end-to-end or is cast to the model dtype.
         g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
 
-        # Gates
         b = self.b_proj(hidden_states).sigmoid()
         w = self.w_proj(hidden_states).sigmoid()
 
-        # Reshape to head dimensions
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
         k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
         g = rearrange(g, "... (h d) -> ... h d", d=self.head_k_dim)
@@ -1000,11 +939,11 @@ class GatedDeltaNet2(nn.Module):
                 ),
             )
 
-        # Output normalization and projection
         gate = rearrange(
             self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
         )
-        assert o is not None
+        if o is None:
+            raise RuntimeError("GDN-2 backend returned None output.")
         o = self.o_norm(o, gate)
         o = rearrange(o, "... h d -> ... (h d)")
         out = self.o_proj(o)

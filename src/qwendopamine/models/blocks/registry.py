@@ -95,6 +95,9 @@ class _LazyBlockRegistry:
         return self._blocks[key]
 
     def __contains__(self, key: object) -> bool:
+        # NOTE: This triggers _populate(), which imports gdn2, infinidopamine,
+        # and qwen35. Prefer checking against an explicitly populated registry
+        # if you want to avoid the import-time side effect.
         self._populate()
         return key in self._blocks
 
@@ -127,21 +130,7 @@ BLOCKS = _LazyBlockRegistry()
 
 
 def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
-    r"""build_block(block_type, config, layer_idx) -> nn.Module
-
-    Instantiates a registered block module by registry name.
-
-    Args:
-        block_type (str): Key string identifying registered block class in ``BLOCKS``.
-        config (Any): Configuration object containing architecture hyperparameters.
-        layer_idx (int): Zero-indexed layer position integer.
-
-    Returns:
-        nn.Module: Instantiated transformer layer or module.
-
-    Raises:
-        KeyError: If ``block_type`` is not present in ``BLOCKS`` registry.
-    """
+    r"""Instantiate a registered block module by registry name."""
     if block_type in ("gated_reward_net", "grn"):
         grn_cls = _lazy_grn()
         hidden_size = getattr(config, "hidden_size", getattr(config, "n_embd", 2048))

@@ -11,23 +11,7 @@ import torch
 def save_safetensors(
     state_dict: dict[str, torch.Tensor], path: Path | str, **kwargs: Any
 ) -> None:
-    r"""save_safetensors(state_dict, path, **kwargs) -> None
-
-    Saves a PyTorch state dictionary to a safetensors file.
-
-    Parent directories are created automatically if missing.
-
-    Args:
-        state_dict (dict[str, Tensor]): State dictionary mapping parameter names to tensors.
-        path (Path | str): Target output file path.
-        **kwargs (Any): Additional keyword arguments passed to :func:`safetensors.torch.save_file`.
-
-    Examples::
-
-        >>> from pathlib import Path
-        >>> state_dict = {"weight": torch.randn(2, 2)}
-        >>> save_safetensors(state_dict, Path("/tmp/model.safetensors"))
-    """
+    r"""Save a PyTorch state dictionary to a safetensors file."""
     from safetensors.torch import save_file
 
     path = Path(path)
@@ -36,22 +20,7 @@ def save_safetensors(
 
 
 def load_safetensors(path: Path | str, device: str = "cpu") -> dict[str, torch.Tensor]:
-    r"""load_safetensors(path, device="cpu") -> dict[str, Tensor]
-
-    Loads a safetensors file into a PyTorch state dictionary mapped to the target device.
-
-    Args:
-        path (Path | str): Source safetensors file path.
-        device (str, optional): Target device mapping string. Default: ``"cpu"``.
-
-    Returns:
-        dict[str, Tensor]: Loaded state dictionary mapping tensor names to tensors.
-
-    Examples::
-
-        >>> from pathlib import Path
-        >>> state_dict = load_safetensors(Path("/tmp/model.safetensors"), device="cpu")
-    """
+    r"""Load a safetensors file into a PyTorch state dictionary."""
     from safetensors.torch import load_file
 
     return load_file(str(path), device=device)

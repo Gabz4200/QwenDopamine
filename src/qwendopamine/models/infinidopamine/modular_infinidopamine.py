@@ -654,7 +654,6 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
             elif k.startswith("mtp."):
                 continue
             elif strict:
-                # Unexpected top-level key; include it so strict loading can report it.
                 text_state[k] = v
 
         load_info: list[str] = []
@@ -680,9 +679,6 @@ class InfiniDopamineForConditionalGeneration(Qwen3VLForConditionalGeneration):
         if lm_head_state:
             self.lm_head.weight.data.copy_(lm_head_state["lm_head.weight"])
             load_info.append("lm_head: loaded 1 key")
-
-        if load_info:
-            print(" | ".join(load_info))
 
         return [], []
 

@@ -83,78 +83,85 @@ class RewardStatisticsExtractor(nn.Module):
         seq_len: int,
     ) -> torch.Tensor:
         """Normalize reward_values to a tensor broadcastable to (B, L, K)."""
-
-        # Scalar -> (1, 1, 1)
-        if reward_values.dim() == 0:
-            return reward_values.view(1, 1, 1)
-
-        # 1D:
-        #   (L,) -> (1, L, 1)
-        #   (B,) -> (B, 1, 1), when L == 1
-        #   (K,) -> (1, 1, K)
-        if reward_values.dim() == 1:
-            length = reward_values.size(0)
-
-            if length == seq_len:
-                return reward_values.view(1, seq_len, 1)
-
-            if seq_len == 1 and length == batch_size:
-                return reward_values.view(batch_size, 1, 1)
-
-            return reward_values.view(1, 1, -1)
-
-        # 2D:
-        #   (B, L) -> (B, L, 1)
-        #   (B, K) -> (B, 1, K)
-        #   (L, K) -> (1, L, K)
-        #   (1, L) -> (1, L, 1)
-        #   (1, K) -> (1, 1, K)
-        if reward_values.dim() == 2:
-            first, second = reward_values.shape
-
-            if (first, second) == (batch_size, seq_len):
-                return reward_values.unsqueeze(-1)
-
-            if first == batch_size:
-                return reward_values.unsqueeze(1)
-
-            if first == seq_len:
-                return reward_values.unsqueeze(0)
-
-            if first == 1:
-                if second == seq_len:
-                    return reward_values.unsqueeze(-1)
-                return reward_values.unsqueeze(1)
-
+        ndim = reward_values.dim()
+        dispatch = {
+            0: lambda: reward_values.view(1, 1, 1),
+            1: RewardStatisticsExtractor._normalize_1d,
+            2: RewardStatisticsExtractor._normalize_2d,
+            3: RewardStatisticsExtractor._normalize_3d,
+        }
+        if ndim not in dispatch:
             raise ValueError(
-                "Could not normalize 2D reward_values. "
-                f"Got reward_values.shape={tuple(reward_values.shape)}, "
-                f"batch_size={batch_size}, seq_len={seq_len}. "
-                "Expected one of: (B, L), (B, K), (L, K), (1, L), or (1, K)."
+                "reward_values must be a scalar, 1D, 2D, or 3D tensor. "
+                f"Got shape {tuple(reward_values.shape)}."
             )
+        return dispatch[ndim](reward_values, batch_size=batch_size, seq_len=seq_len)
 
-        # Already 3D. Allow broadcastable batch and sequence dimensions.
-        if reward_values.dim() == 3:
-            if reward_values.size(0) not in (1, batch_size):
-                raise ValueError(
-                    "3D reward_values batch dimension must be either 1 or batch_size. "
-                    f"Got reward_values.shape={tuple(reward_values.shape)}, "
-                    f"batch_size={batch_size}."
-                )
+    @staticmethod
+    def _normalize_1d(
+        reward_values: torch.Tensor,
+        batch_size: int,
+        seq_len: int,
+    ) -> torch.Tensor:
+        # (L,) -> (1, L, 1)
+        # (B,) -> (B, 1, 1), when L == 1
+        # (K,) -> (1, 1, K)
+        length = reward_values.size(0)
+        if length == seq_len:
+            return reward_values.view(1, seq_len, 1)
+        if seq_len == 1 and length == batch_size:
+            return reward_values.view(batch_size, 1, 1)
+        return reward_values.view(1, 1, -1)
 
-            if reward_values.size(1) not in (1, seq_len):
-                raise ValueError(
-                    "3D reward_values sequence dimension must be either 1 or seq_len. "
-                    f"Got reward_values.shape={tuple(reward_values.shape)}, "
-                    f"seq_len={seq_len}."
-                )
-
-            return reward_values
-
+    @staticmethod
+    def _normalize_2d(
+        reward_values: torch.Tensor,
+        batch_size: int,
+        seq_len: int,
+    ) -> torch.Tensor:
+        # (B, L) -> (B, L, 1)
+        # (B, K) -> (B, 1, K)
+        # (L, K) -> (1, L, K)
+        # (1, L) -> (1, L, 1)
+        # (1, K) -> (1, 1, K)
+        first, second = reward_values.shape
+        if (first, second) == (batch_size, seq_len):
+            return reward_values.unsqueeze(-1)
+        if first == batch_size:
+            return reward_values.unsqueeze(1)
+        if first == seq_len:
+            return reward_values.unsqueeze(0)
+        if first == 1:
+            if second == seq_len:
+                return reward_values.unsqueeze(-1)
+            return reward_values.unsqueeze(1)
         raise ValueError(
-            "reward_values must be a scalar, 1D, 2D, or 3D tensor. "
-            f"Got shape {tuple(reward_values.shape)}."
+            "Could not normalize 2D reward_values. "
+            f"Got reward_values.shape={tuple(reward_values.shape)}, "
+            f"batch_size={batch_size}, seq_len={seq_len}. "
+            "Expected one of: (B, L), (B, K), (L, K), (1, L), or (1, K)."
         )
+
+    @staticmethod
+    def _normalize_3d(
+        reward_values: torch.Tensor,
+        batch_size: int,
+        seq_len: int,
+    ) -> torch.Tensor:
+        # Already 3D. Allow broadcastable batch and sequence dimensions.
+        if reward_values.size(0) not in (1, batch_size):
+            raise ValueError(
+                "3D reward_values batch dimension must be either 1 or batch_size. "
+                f"Got reward_values.shape={tuple(reward_values.shape)}, "
+                f"batch_size={batch_size}."
+            )
+        if reward_values.size(1) not in (1, seq_len):
+            raise ValueError(
+                "3D reward_values sequence dimension must be either 1 or seq_len. "
+                f"Got reward_values.shape={tuple(reward_values.shape)}, "
+                f"seq_len={seq_len}."
+            )
+        return reward_values
 
     def forward(
         self, reward_values: torch.Tensor, batch_size: int, seq_len: int
@@ -232,7 +239,7 @@ class RewardStatisticsExtractor(nn.Module):
 class RewardFourierEncoder(nn.Module):
     r"""Encodes reward statistics with learnable Fourier features and MLP.
 
-    Takes 5-dimensional reward statistics (median, mean, max, min, std),
+    Takes 6-dimensional reward statistics (median, mean, max, min, std, sum),
     applies learnable Fourier feature mapping followed by an MLP projection
     to produce a conditioning tensor of dimension ``d_dim``.
 
@@ -246,19 +253,19 @@ class RewardFourierEncoder(nn.Module):
             Default: ``1``.
         gamma (float, optional): Standard deviation for Fourier projection init.
             Default: ``1.0``.
-        include_input (bool, optional): If ``True``, concatenates the raw 5-dim
+        include_input (bool, optional): If ``True``, concatenates the raw 6-dim
             statistics to the Fourier features before the MLP. Default: ``True``.
         dropout (float, optional): Dropout probability applied in the MLP.
             Default: ``0.0``.
 
     Shape:
-        - Input: ``(B, L, 5)``
+        - Input: ``(B, L, 6)``
         - Output: ``(B, L, d_dim)``
 
     Examples::
 
         >>> encoder = RewardFourierEncoder(f_dim=32, h_dim=64, d_dim=64)
-        >>> stats = torch.randn(2, 5, 5)
+        >>> stats = torch.randn(2, 5, 6)
         >>> cond = encoder(stats)
         >>> cond.shape
         torch.Size([2, 5, 64])

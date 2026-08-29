@@ -17,21 +17,7 @@ def generate_text(
     include_prompt: bool = True,
     **kwargs: Any,
 ) -> str:
-    r"""generate_text(model, tokenizer, prompt, max_new_tokens=256, include_prompt=True, **kwargs) -> str
-
-    Generates text continuation from a prompt using model generation method and tokenizer decoding.
-
-    Args:
-        model (Any): Causal language model instance with ``generate`` method.
-        tokenizer (Any): Tokenizer instance with encoding and decoding methods.
-        prompt (str): Text prompt string to continue.
-        max_new_tokens (int, optional): Maximum number of new tokens to generate. Default: ``256``.
-        include_prompt (bool, optional): Whether to include prompt in decoded output. Default: ``True``.
-        **kwargs (Any): Additional keyword arguments passed to ``model.generate``.
-
-    Returns:
-        str: Decoded generated output text string without special tokens.
-    """
+    r"""Generate text continuation from a prompt."""
     model.eval()
     device = get_model_device(model)
     inputs = tokenizer(prompt, return_tensors="pt")

@@ -9,25 +9,7 @@ from torch import nn
 
 
 def get_model_device(model: nn.Module) -> torch.device:
-    r"""get_model_device(model) -> torch.device
-
-    Returns the target execution device of the first parameter in a PyTorch module.
-
-    Falls back to ``torch.device("cpu")`` for empty models or modules with no parameters.
-
-    Args:
-        model (nn.Module): PyTorch module instance whose device is queried.
-
-    Returns:
-        torch.device: Device of the first parameter, or CPU device if no parameters exist.
-
-    Examples::
-
-        >>> model = nn.Linear(10, 5)
-        >>> device = get_model_device(model)
-        >>> device.type
-        'cpu'
-    """
+    r"""Return the device of the first parameter, falling back to CPU."""
     try:
         return next(model.parameters()).device
     except StopIteration:
@@ -35,24 +17,16 @@ def get_model_device(model: nn.Module) -> torch.device:
 
 
 def move_to_device(batch: Any, device: torch.device) -> Any:
-    r"""move_to_device(batch, device) -> Any
-
-    Recursively move tensors in a batch to the target device.
-
-    Args:
-        batch (Any): Tensor, dict of tensors, or nested structure.
-        device (torch.device): Target device.
-
-    Returns:
-        Any: Batch with tensors moved to the target device.
-    """
+    r"""Recursively move tensors in a batch to the target device."""
     if isinstance(batch, torch.Tensor):
         return batch.to(device)
     if isinstance(batch, dict):
         return {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
+            k: move_to_device(v, device) for k, v in batch.items()
         }
+    if isinstance(batch, (list, tuple)):
+        moved = [move_to_device(item, device) for item in batch]
+        return type(batch)(moved)
     return batch
 
 

@@ -13,42 +13,7 @@ from torch import nn
 
 
 class AsinhScaler(nn.Module):
-    r"""Asinh scaling for unbounded, heavy-tailed features.
-
-    Applies element-wise inverse hyperbolic sine scaling:
-
-    .. math::
-        y = \operatorname{asinh}(\alpha \cdot x)
-
-    This is useful for unbounded reward signals because:
-
-    - It is approximately linear near zero.
-    - It preserves small reward magnitudes.
-    - It compresses very large rewards logarithmically.
-    - It avoids the "always map the current maximum to 1" behavior of
-      norm-based normalizers.
-
-    Args:
-        dim (int): Expected size of the last dimension.
-        init_scale (float, optional): Initial positive scaling factor.
-            Default: ``0.1``.
-        shared_alpha (bool, optional): If ``True``, uses one shared scaling
-            factor for all features. This preserves proportional relationships
-            between features in the linear regime. If ``False``, learns a
-            separate scaling factor per feature. Default: ``True``.
-
-    Shape:
-        - Input: :math:`(*, \text{dim})`
-        - Output: :math:`(*, \text{dim})`
-
-    Examples::
-
-        >>> scaler = AsinhScaler(dim=5)
-        >>> x = torch.randn(2, 5, 5)
-        >>> out = scaler(x)
-        >>> out.shape
-        torch.Size([2, 5, 5])
-    """
+    r"""Element-wise inverse hyperbolic sine scaling."""
 
     def __init__(
         self,
@@ -81,13 +46,7 @@ class AsinhScaler(nn.Module):
         return math.log(math.expm1(x))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x (Tensor): Input tensor whose last dimension is ``self.dim``.
-
-        Returns:
-            Tensor: Scaled tensor with the same shape and dtype as ``x``.
-        """
+        """Scale input by learned asinh factor."""
         if x.size(-1) != self.dim:
             raise ValueError(
                 f"AsinhScaler expected last dimension {self.dim}, got {x.size(-1)}."
@@ -102,6 +61,33 @@ class AsinhScaler(nn.Module):
         x = torch.asinh(alpha * x)
         return x.to(input_dtype)
 
+
+    def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Align ``cond`` to the same rank as ``x`` for broadcasting."""
+        if cond.dim() == 0:
+            cond = cond.unsqueeze(0)
+
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(0)
+
+        # Align conditioning rank with input rank for broadcasting.
+        if x.dim() == 3 and cond.dim() == 2:
+            cond = cond.unsqueeze(1)
+        elif x.dim() == 2 and cond.dim() == 3:
+            if cond.size(1) != 1:
+                raise ValueError(
+                    "When x has shape (B, D), cond with shape (B, L, C) is only "
+                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
+                )
+            cond = cond.squeeze(1)
+        elif x.dim() != cond.dim():
+            raise ValueError(
+                "Unsupported combination of x and cond shapes: "
+                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
+            )
+
+        return cond
+
     def extra_repr(self) -> str:
         return (
             f"dim={self.dim}, "
@@ -111,45 +97,7 @@ class AsinhScaler(nn.Module):
 
 
 class LearnableSoftsign(nn.Module):
-    r"""Learnable Softsign normalization mapping :math:`(-\infty, \infty) \to (-1, 1)`.
-
-    Applies element-wise Softsign normalization with a learnable scale parameter:
-
-    .. math::
-        y = \frac{x}{\vert x \vert + \alpha + \varepsilon}
-
-    where :math:`\alpha = \exp(\gamma)` is a learnable positive scale parameter
-    (initialized to 1 via :math:`\gamma = 0`), and :math:`\varepsilon` is a
-    small constant for numerical stability in low-precision dtypes.
-
-    Unlike :func:`torch.tanh`, Softsign has **polynomial tail decay** (O(1/x))
-    rather than exponential decay, preserving relative scale between large inputs
-    and maintaining non-zero gradients for extreme outliers. This is critical
-    when the relative ordering of large values must not be destroyed.
-
-    Args:
-        per_channel (bool, optional): If ``True``, learns a separate scale
-            parameter for each channel (last dimension). If ``False``, learns
-            a single shared scale for all features. Default: ``False``.
-        num_channels (int, optional): Number of channels (last dimension size).
-            Required if ``per_channel=True``. Default: ``None``.
-        eps (float, optional): Small constant for numerical stability in
-            bfloat16/fp16. Default: ``1e-6``.
-
-    Shape:
-        - Input: :math:`(*, \text{dim})` or scalar
-        - Output: Same shape as input
-
-    Examples::
-
-        >>> scaler = LearnableSoftsign()
-        >>> out = scaler(100.5)  # Works on scalar
-        >>> out = scaler(torch.randn(2, 5, 6))  # Works on batched tensor
-
-        >>> scaler = LearnableSoftsign(per_channel=True, num_channels=6)
-        >>> out = scaler(torch.randn(2, 5, 6))  # Per-channel scaling
-
-    """
+    r"""Learnable Softsign normalization mapping inputs to (-1, 1)."""
 
     def __init__(
         self,
@@ -199,6 +147,33 @@ class LearnableSoftsign(nn.Module):
         out = x_f / (torch.abs(x_f) + alpha + self.eps)
         return out.to(input_dtype)
 
+
+    def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Align ``cond`` to the same rank as ``x`` for broadcasting."""
+        if cond.dim() == 0:
+            cond = cond.unsqueeze(0)
+
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(0)
+
+        # Align conditioning rank with input rank for broadcasting.
+        if x.dim() == 3 and cond.dim() == 2:
+            cond = cond.unsqueeze(1)
+        elif x.dim() == 2 and cond.dim() == 3:
+            if cond.size(1) != 1:
+                raise ValueError(
+                    "When x has shape (B, D), cond with shape (B, L, C) is only "
+                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
+                )
+            cond = cond.squeeze(1)
+        elif x.dim() != cond.dim():
+            raise ValueError(
+                "Unsupported combination of x and cond shapes: "
+                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
+            )
+
+        return cond
+
     def extra_repr(self) -> str:
         return (
             f"per_channel={self.per_channel}, "
@@ -208,43 +183,7 @@ class LearnableSoftsign(nn.Module):
 
 
 class LearnableFourierFeatures(nn.Module):
-    r"""Learnable Fourier feature mapping followed by an MLP projection.
-
-    The Fourier features are computed as:
-
-    .. math::
-        F = \frac{[\cos(x W_r^T), \sin(x W_r^T)]}{\sqrt{f\_dim}}
-
-    If ``include_input=True``, the raw input is concatenated to ``F`` before
-    the MLP projection. The MLP input dimension is therefore:
-
-    - ``f_dim + pos_dim`` if ``include_input=True``
-    - ``f_dim`` if ``include_input=False``
-
-    Args:
-        pos_dim (int): Dimension of the input coordinate vector.
-        f_dim (int): Number of Fourier feature channels. Must be divisible by 2.
-        h_dim (int): Hidden dimension of the MLP.
-        d_dim (int): Output feature dimension. Must be divisible by ``g_dim``.
-        g_dim (int, optional): Group dimension used in the output rearrangement.
-            Default: ``1``.
-        gamma (float, optional): Standard deviation used to initialize the random
-            projection matrix. Default: ``1.0``.
-        include_input (bool, optional): If ``True``, concatenates the raw input
-            to the Fourier features. Default: ``True``.
-
-    Shape:
-        - Input: :math:`(B, L, G, \text{pos\_dim})`, where ``G == g_dim``.
-        - Output: :math:`(B, L, \text{d\_dim})`.
-
-    Examples::
-
-        >>> lff = LearnableFourierFeatures(pos_dim=5, f_dim=16, h_dim=32, d_dim=64)
-        >>> pos = torch.randn(2, 5, 1, 5)
-        >>> out = lff(pos)
-        >>> out.shape
-        torch.Size([2, 5, 64])
-    """
+    r"""Learnable Fourier feature mapping followed by an MLP projection."""
 
     def __init__(
         self,
@@ -355,6 +294,33 @@ class LearnableFourierFeatures(nn.Module):
         Y = self.mlp(F)
         return rearrange(Y, "b l g d -> b l (g d)")
 
+
+    def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Align ``cond`` to the same rank as ``x`` for broadcasting."""
+        if cond.dim() == 0:
+            cond = cond.unsqueeze(0)
+
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(0)
+
+        # Align conditioning rank with input rank for broadcasting.
+        if x.dim() == 3 and cond.dim() == 2:
+            cond = cond.unsqueeze(1)
+        elif x.dim() == 2 and cond.dim() == 3:
+            if cond.size(1) != 1:
+                raise ValueError(
+                    "When x has shape (B, D), cond with shape (B, L, C) is only "
+                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
+                )
+            cond = cond.squeeze(1)
+        elif x.dim() != cond.dim():
+            raise ValueError(
+                "Unsupported combination of x and cond shapes: "
+                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
+            )
+
+        return cond
+
     def extra_repr(self) -> str:
         return (
             f"pos_dim={self.pos_dim}, "
@@ -369,45 +335,7 @@ class LearnableFourierFeatures(nn.Module):
 
 
 class TokenWiseFiLM(nn.Module):
-    r"""Token-wise Feature-wise Linear Modulation.
-
-    Applies FiLM modulation:
-
-    .. math::
-        y = x \odot \gamma + \beta
-
-    where ``gamma`` and ``beta`` are learned from a conditioning tensor.
-
-    By default, the conditioning tensor has the same feature dimension as ``x``:
-
-    - ``x.shape[-1] == dim``
-    - ``cond.shape[-1] == dim``
-
-    For backward compatibility, if ``cond.shape[-1] == 2 * dim`` and ``cond_dim``
-    is left as ``dim``, the conditioning tensor is split into two ``dim``-sized
-    tensors before projection.
-
-    Args:
-        dim (int): Feature dimension of ``x``.
-        cond_dim (int, optional): Feature dimension of ``cond``. Defaults to ``dim``.
-        identity_init (bool, optional): If ``True``, initializes FiLM as approximately
-            identity: ``gamma = 1``, ``beta = 0``. Default: ``True``.
-
-    Shape:
-        - x: :math:`(B, D)` or :math:`(B, L, D)`
-        - cond: :math:`(D)`, :math:`(B, D)`, :math:`(B, L, D)`, or backward-compatible
-          :math:`(B, L, 2D)`
-        - Output: Same shape as ``x``.
-
-    Examples::
-
-        >>> film = TokenWiseFiLM(dim=32)
-        >>> x = torch.randn(2, 5, 32)
-        >>> cond = torch.randn(2, 5, 32)
-        >>> out = film(x, cond)
-        >>> out.shape
-        torch.Size([2, 5, 32])
-    """
+    r"""Token-wise Feature-wise Linear Modulation."""
 
     def __init__(
         self,
@@ -456,27 +384,7 @@ class TokenWiseFiLM(nn.Module):
                 f"got {tuple(x.shape)}."
             )
 
-        if cond.dim() == 0:
-            cond = cond.unsqueeze(0)
-
-        if cond.dim() == 1:
-            cond = cond.unsqueeze(0)
-
-        # Align conditioning rank with input rank for broadcasting.
-        if x.dim() == 3 and cond.dim() == 2:
-            cond = cond.unsqueeze(1)
-        elif x.dim() == 2 and cond.dim() == 3:
-            if cond.size(1) != 1:
-                raise ValueError(
-                    "When x has shape (B, D), cond with shape (B, L, C) is only "
-                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
-                )
-            cond = cond.squeeze(1)
-        elif x.dim() != cond.dim():
-            raise ValueError(
-                "Unsupported combination of x and cond shapes: "
-                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
-            )
+        cond = self._broadcast_cond(x, cond)
 
         if self.training and self.dropout > 0.0:
             cond = F.dropout(cond, p=self.dropout, training=True)
@@ -500,6 +408,33 @@ class TokenWiseFiLM(nn.Module):
             )
 
         return x * gamma + beta
+
+
+    def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Align ``cond`` to the same rank as ``x`` for broadcasting."""
+        if cond.dim() == 0:
+            cond = cond.unsqueeze(0)
+
+        if cond.dim() == 1:
+            cond = cond.unsqueeze(0)
+
+        # Align conditioning rank with input rank for broadcasting.
+        if x.dim() == 3 and cond.dim() == 2:
+            cond = cond.unsqueeze(1)
+        elif x.dim() == 2 and cond.dim() == 3:
+            if cond.size(1) != 1:
+                raise ValueError(
+                    "When x has shape (B, D), cond with shape (B, L, C) is only "
+                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
+                )
+            cond = cond.squeeze(1)
+        elif x.dim() != cond.dim():
+            raise ValueError(
+                "Unsupported combination of x and cond shapes: "
+                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
+            )
+
+        return cond
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, cond_dim={self.cond_dim}, dropout={self.dropout}"

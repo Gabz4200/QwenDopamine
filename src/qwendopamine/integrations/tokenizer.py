@@ -7,28 +7,13 @@ from typing import Any
 
 from transformers import AutoTokenizer
 
-_DEFAULT_QWEN35_REPO = "Qwen/Qwen3.5-0.8B"
+from qwendopamine import DEFAULT_QWEN35_REPO
+
+_DEFAULT_QWEN35_REPO = DEFAULT_QWEN35_REPO
 
 
 def load_qwen35_tokenizer(model_name: str, **kwargs: Any) -> Any:
-    r"""load_qwen35_tokenizer(model_name, **kwargs) -> AutoTokenizer
-
-    Loads a Qwen3.5 tokenizer with automatic GGUF repo resolution and fallback candidates.
-
-    Args:
-        model_name (str): Hugging Face repository ID or local GGUF file path.
-        **kwargs (Any): Additional keyword arguments passed to :meth:`transformers.AutoTokenizer.from_pretrained`.
-
-    Returns:
-        AutoTokenizer: Loaded tokenizer instance.
-
-    Raises:
-        RuntimeError: If all candidate repositories fail to load a valid tokenizer.
-
-    Examples::
-
-        >>> tokenizer = load_qwen35_tokenizer("Qwen/Qwen3.5-0.8B")
-    """
+    r"""Load a Qwen3.5 tokenizer with automatic GGUF repo resolution and fallback candidates."""
     if model_name.endswith(".gguf"):
         dirname = os.path.dirname(model_name)
         model_name = dirname if dirname else _DEFAULT_QWEN35_REPO

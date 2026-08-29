@@ -99,8 +99,6 @@ class InfiniDopaminePreTrainedModel(Qwen3NextPreTrainedModel):
             )
             init.zeros_(module.betas)
             init.zeros_(module.in_proj_gate.weight)
-        elif isinstance(module, InfiniDopamineRMSNorm):
-            init.zeros_(module.weight)
         elif isinstance(module, InfiniDopamineVisionRotaryEmbedding):
             inv_freq = 1.0 / (
                 module.theta

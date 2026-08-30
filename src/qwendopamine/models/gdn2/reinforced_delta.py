@@ -6,6 +6,7 @@ r"""RL-augmented Gated Delta Rule 2 components: ValueBaselineEMA, AdvantageGate,
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -15,9 +16,32 @@ from torch import Tensor, nn
 __all__ = [
     "AdvantageGate",
     "DeltaMemoryCore",
+    "GatedRewardNetConfig",
     "ReinforcedDeltaLayer",
     "ValueBaselineEMA",
 ]
+
+
+@dataclass
+class GatedRewardNetConfig:
+    r"""Configuration for :class:`GatedRewardNet`."""
+
+    hidden_size: int = 2048
+    k_stats: int = 6
+    reward_encoder: nn.Module | None = None
+    layer_idx: int | None = None
+    use_short_conv: bool = True
+    conv_size: int = 4
+    conv_bias: bool = False
+    init_alpha: float = 0.1
+    num_heads: int = 16
+    head_dim: int = 128
+    expand_v: float = 1.0
+    norm_eps: float = 1e-5
+    chunk_size: int = 64
+    reward_dropout: float = 0.0
+    advantage_dropout: float = 0.0
+    hidden_dropout: float = 0.0
 
 
 class ValueBaselineEMA(nn.Module):
@@ -477,84 +501,72 @@ class ReinforcedDeltaLayer(nn.Module):
 
     def extra_repr(self) -> str:
         return f"d_model={self.d_model}, k_stats={self.k_stats}"
+class _DefaultQueryFiLM(nn.Module):
+    """Default FiLM encoder that maps reward statistics to (gamma, beta)."""
+
+    def __init__(self, k: int, d: int) -> None:
+        super().__init__()
+        self.gamma_proj = nn.Linear(k, d)
+        self.beta_proj = nn.Linear(k, d)
+        nn.init.zeros_(self.gamma_proj.weight)
+        nn.init.ones_(self.gamma_proj.bias)
+        nn.init.zeros_(self.beta_proj.weight)
+        nn.init.zeros_(self.beta_proj.bias)
+
+    def forward(self, r: Tensor) -> tuple[Tensor, Tensor]:
+        # r: (B, k) or (B, L, k) -> handle both
+        if r.dim() == 3:
+            # (B, L, k) -> take last? assume (B,1,k) in layer, but handle generically
+            r = r.squeeze(1) if r.size(1) == 1 else r.mean(dim=1)
+        return self.gamma_proj(r), self.beta_proj(r)
+
+
 class GatedRewardNet(nn.Module):
     r"""Gated Reward Network (GRN): RL-augmented token-mixing layer."""
-    def __init__(
-        self,
-        hidden_size: int,
-        k_stats: int = 6,
-        reward_encoder: nn.Module | None = None,
-        layer_idx: int | None = None,
-        use_short_conv: bool = True,
-        conv_size: int = 4,
-        conv_bias: bool = False,
-        init_alpha: float = 0.1,
-        num_heads: int = 16,
-        head_dim: int = 128,
-        expand_v: float = 1.0,
-        norm_eps: float = 1e-5,
-        chunk_size: int = 64,
-        reward_dropout: float = 0.0,
-        advantage_dropout: float = 0.0,
-        hidden_dropout: float = 0.0,
-        **kwargs: Any,
-    ) -> None:
+
+    def __init__(self, config: GatedRewardNetConfig) -> None:
         super().__init__()
-        if hidden_size <= 0:
+        if config.hidden_size <= 0:
             raise ValueError("hidden_size must be positive.")
-        if k_stats <= 0:
+        if config.k_stats <= 0:
             raise ValueError("k_stats must be positive.")
-        if not 0 < init_alpha < 1:
+        if not 0 < config.init_alpha < 1:
             raise ValueError("init_alpha must be in (0, 1).")
-        self.hidden_size = hidden_size
-        self.k_stats = k_stats
-        self.layer_idx = layer_idx
-        self.use_short_conv = use_short_conv
-        self.conv_size = conv_size
-        self.conv_bias = conv_bias
-        self.init_alpha = init_alpha
-        self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.expand_v = expand_v
-        self.norm_eps = norm_eps
-        self.chunk_size = chunk_size
-        self.reward_dropout = reward_dropout
-        self.advantage_dropout = advantage_dropout
-        self.hidden_dropout = hidden_dropout
+        self.hidden_size = config.hidden_size
+        self.k_stats = config.k_stats
+        self.layer_idx = config.layer_idx
+        self.use_short_conv = config.use_short_conv
+        self.conv_size = config.conv_size
+        self.conv_bias = config.conv_bias
+        self.init_alpha = config.init_alpha
+        self.num_heads = config.num_heads
+        self.head_dim = config.head_dim
+        self.expand_v = config.expand_v
+        self.norm_eps = config.norm_eps
+        self.chunk_size = config.chunk_size
+        self.reward_dropout = config.reward_dropout
+        self.advantage_dropout = config.advantage_dropout
+        self.hidden_dropout = config.hidden_dropout
         self.mode = "recurrent"
         self.backend = "torch-recurrent"
         self.compile_backend = False
         self.fp32_decay = True
         self.allow_neg_eigval = False
+        reward_encoder = config.reward_encoder
         if reward_encoder is None:
-            class _DefaultQueryFiLM(nn.Module):
-                def __init__(self, k: int, d: int) -> None:
-                    super().__init__()
-                    self.gamma_proj = nn.Linear(k, d)
-                    self.beta_proj = nn.Linear(k, d)
-                    nn.init.zeros_(self.gamma_proj.weight)
-                    nn.init.ones_(self.gamma_proj.bias)
-                    nn.init.zeros_(self.beta_proj.weight)
-                    nn.init.zeros_(self.beta_proj.bias)
-                def forward(self, r: Tensor) -> tuple[Tensor, Tensor]:
-                    # r: (B, k) or (B, L, k) -> handle both
-                    if r.dim() == 3:
-                        # (B, L, k) -> take last? assume (B,1,k) in layer, but handle generically
-                        r = r.squeeze(1) if r.size(1)==1 else r.mean(dim=1)
-                    return self.gamma_proj(r), self.beta_proj(r)
-            reward_encoder = _DefaultQueryFiLM(k_stats, hidden_size)
+            reward_encoder = _DefaultQueryFiLM(config.k_stats, config.hidden_size)
         self.delta_layer = ReinforcedDeltaLayer(
-            d_model=hidden_size,
-            k_stats=k_stats,
+            d_model=config.hidden_size,
+            k_stats=config.k_stats,
             reward_encoder=reward_encoder,
-            use_short_conv=use_short_conv,
-            conv_size=conv_size,
-            conv_bias=conv_bias,
-            init_alpha=init_alpha,
-            reward_dropout=reward_dropout,
-            advantage_dropout=advantage_dropout,
+            use_short_conv=config.use_short_conv,
+            conv_size=config.conv_size,
+            conv_bias=config.conv_bias,
+            init_alpha=config.init_alpha,
+            reward_dropout=config.reward_dropout,
+            advantage_dropout=config.advantage_dropout,
         )
-        self.output_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.output_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
         torch.nn.init.xavier_uniform_(self.output_proj.weight, gain=2**-2.5)
     def _get_cache(self, past_key_values: Any) -> tuple[Tensor | None, tuple[Tensor | None, Tensor | None] | None]:
         if past_key_values is None:

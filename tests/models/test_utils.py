@@ -10,7 +10,7 @@ from qwendopamine.distributed.setup import (
     cleanup_distributed,
     init_distributed,
 )
-from qwendopamine.utils import get_model_device
+from qwendopamine.utils import get_model_device, move_to_device
 
 
 def test_when_model_has_parameters_then_returns_parameter_device() -> None:
@@ -41,3 +41,44 @@ def test_when_default_backend_queried_then_returns_valid_string() -> None:
 
 def test_when_cleanup_distributed_called_then_executes_without_error() -> None:
     cleanup_distributed()
+
+
+def test_when_move_to_device_with_tensor_then_moves_tensor() -> None:
+    tensor = torch.randn(2, 3)
+    device = torch.device("cpu")
+    result = move_to_device(tensor, device)
+    assert result.device == device
+
+
+def test_when_move_to_device_with_dict_then_maps_values() -> None:
+    batch = {"a": torch.randn(2, 3), "b": torch.randn(4)}
+    device = torch.device("cpu")
+    result = move_to_device(batch, device)
+    assert isinstance(result, dict)
+    assert result["a"].device == device
+    assert result["b"].device == device
+
+
+def test_when_move_to_device_with_list_then_moves_items() -> None:
+    batch = [torch.randn(2, 3), torch.randn(4)]
+    device = torch.device("cpu")
+    result = move_to_device(batch, device)
+    assert isinstance(result, list)
+    assert result[0].device == device
+    assert result[1].device == device
+
+
+def test_when_move_to_device_with_tuple_then_preserves_type() -> None:
+    batch = (torch.randn(2, 3), torch.randn(4))
+    device = torch.device("cpu")
+    result = move_to_device(batch, device)
+    assert isinstance(result, tuple)
+    assert result[0].device == device
+    assert result[1].device == device
+
+
+def test_when_move_to_device_with_non_tensor_then_passes_through() -> None:
+    batch = {"a": 1, "b": "hello"}
+    device = torch.device("cpu")
+    result = move_to_device(batch, device)
+    assert result == batch

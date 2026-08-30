@@ -2,6 +2,7 @@ r"""Perplexity computation utilities for causal language models."""
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import torch
@@ -38,7 +39,6 @@ def compute_perplexity(
     avg_loss = total_loss / max(total_tokens, 1)
     ppl = torch.exp(torch.tensor(avg_loss)).item()
     if ppl == float("inf"):
-        import warnings
         warnings.warn(
             f"Perplexity overflowed (avg_loss={avg_loss:.2f}); returning float('inf')."
         )

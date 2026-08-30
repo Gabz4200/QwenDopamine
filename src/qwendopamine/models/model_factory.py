@@ -132,12 +132,14 @@ def build_reference_model(
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config
     if family == "infinidopamine":
-        return InfiniDopamineForCausalLM._from_config(
-            config, device_map=device_map, torch_dtype=torch.bfloat16, **kwargs
+        model = InfiniDopamineForCausalLM._from_config(
+            config, dtype=torch.bfloat16, **kwargs
         )
-    return Qwen3_5ForCausalLM._from_config(
-        config, device_map=device_map, torch_dtype=torch.bfloat16, **kwargs
-    )
+    else:
+        model = Qwen3_5ForCausalLM._from_config(
+            config, dtype=torch.bfloat16, **kwargs
+        )
+    return model.to(device_map)
 
 
 __all__ = [

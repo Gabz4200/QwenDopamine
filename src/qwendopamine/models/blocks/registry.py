@@ -16,9 +16,12 @@ from qwendopamine.models.blocks.reward import (
 
 
 # Lazy imports to avoid circular dependency (reinforced_delta <-> blocks)
-def _lazy_grn() -> type:
+def _lazy_grn() -> tuple[type, type]:
     from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet as _GRN
-    return _GRN
+    from qwendopamine.models.gdn2.reinforced_delta import (
+        GatedRewardNetConfig as _GRNConfig,
+    )
+    return _GRN, _GRNConfig
 
 
 def _lazy_value_ema() -> type:
@@ -132,9 +135,14 @@ BLOCKS = _LazyBlockRegistry()
 def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
     r"""Instantiate a registered block module by registry name."""
     if block_type in ("gated_reward_net", "grn"):
-        grn_cls = _lazy_grn()
+        grn_cls, grn_config_cls = _lazy_grn()
         hidden_size = getattr(config, "hidden_size", getattr(config, "n_embd", 2048))
-        return grn_cls(hidden_size=hidden_size, layer_idx=layer_idx)
+        return grn_cls(
+            grn_config_cls(
+                hidden_size=hidden_size,
+                layer_idx=layer_idx,
+            )
+        )
     lazy_map = {
         "value_baseline_ema": _lazy_value_ema,
         "advantage_gate": _lazy_adv_gate,

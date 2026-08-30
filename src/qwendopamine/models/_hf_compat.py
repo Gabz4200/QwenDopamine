@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import torch
 from torch import nn
 
 try:
@@ -19,7 +20,7 @@ try:
     def strict(cls: Any) -> Any:
         try:
             return _hf_strict(cls)
-        except Exception:  # noqa: BLE001
+        except (TypeError, ValueError):
             return cls
 except ImportError:
 
@@ -65,7 +66,7 @@ try:
     def use_kernel_forward_from_hub(*args: Any, **kwargs: Any) -> Any:
         try:
             inner = _hf_use_kernel_forward_from_hub(*args, **kwargs)
-        except Exception:  # noqa: BLE001
+        except (ImportError, RuntimeError, TypeError, ValueError):
 
             def noop_decorator(fn: Any) -> Any:
                 return fn
@@ -75,7 +76,7 @@ try:
         def decorator(fn: Any) -> Any:
             try:
                 return inner(fn)
-            except Exception:  # noqa: BLE001
+            except (RuntimeError, TypeError, ValueError):
                 return fn
 
         return decorator
@@ -83,7 +84,7 @@ try:
     def use_kernelized_func(*args: Any, **kwargs: Any) -> Any:
         try:
             inner = _hf_use_kernelized_func(*args, **kwargs)
-        except Exception:  # noqa: BLE001
+        except (ImportError, RuntimeError, TypeError, ValueError):
 
             def noop_decorator(fn: Any) -> Any:
                 return fn
@@ -93,7 +94,7 @@ try:
         def decorator(fn: Any) -> Any:
             try:
                 return inner(fn)
-            except Exception:  # noqa: BLE001
+            except (RuntimeError, TypeError, ValueError):
                 return fn
 
         return decorator
@@ -186,7 +187,7 @@ except ImportError:
 
 try:
     from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
-except Exception:  # noqa: BLE001
+except (ImportError, ModuleNotFoundError, AttributeError):
 
     class Qwen3ForCausalLM(nn.Module):  # type: ignore[no-redef]
         pass
@@ -194,7 +195,7 @@ except Exception:  # noqa: BLE001
 
 try:
     from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
-except Exception:  # noqa: BLE001
+except (ImportError, ModuleNotFoundError, AttributeError):
 
     class Qwen3NextConfig:  # type: ignore[no-redef]
         pass
@@ -215,7 +216,7 @@ try:
         torch_chunk_gated_delta_rule,
         torch_recurrent_gated_delta_rule,
     )
-except Exception:  # noqa: BLE001
+except (ImportError, ModuleNotFoundError, AttributeError):
 
     class Qwen3NextAttention(nn.Module):  # type: ignore[no-redef]
         pass
@@ -250,7 +251,7 @@ try:
         Qwen3VLConfig,
         Qwen3VLVisionConfig,
     )
-except Exception:  # noqa: BLE001
+except (ImportError, ModuleNotFoundError, AttributeError):
 
     class Qwen3VLConfig:  # type: ignore[no-redef]
         pass
@@ -268,7 +269,7 @@ try:
         Qwen3VLVisionModel,
         Qwen3VLVisionRotaryEmbedding,
     )
-except Exception:  # noqa: BLE001
+except (ImportError, ModuleNotFoundError, AttributeError):
 
     class Qwen3VLForConditionalGeneration(nn.Module):  # type: ignore[no-redef]
         pass
@@ -351,6 +352,39 @@ except ImportError:
 
 
 logger = logging.get_logger(__name__)  # type: ignore[attr-defined]
+
+
+def expand_position_ids_to_multimodal(
+    position_ids: torch.LongTensor | None,
+    batch_size: int,
+    seq_len: int,
+    past_seen_tokens: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    r"""Expand 1D/2D position ids into the 4D multimodal layout.
+
+    When ``position_ids`` is ``None`` a fresh 1D ``torch.arange`` is created
+    and expanded. Explicit 2D inputs are expanded in-place; all other shapes
+    pass through unchanged.
+
+    Returns the expanded position ids and the extracted ``text_position_ids``
+    (the first slice), or ``None`` when the input does not match the expected
+    4D shape.
+    """
+    if position_ids is None:
+        expanded = torch.arange(seq_len, device=device) + past_seen_tokens
+        expanded = expanded.view(1, 1, -1).expand(4, batch_size, -1)
+    elif position_ids.ndim == 2:
+        expanded = position_ids[:, None, :].expand(4, batch_size, -1)
+    else:
+        expanded = position_ids
+
+    if expanded.ndim == 3 and expanded.shape[0] == 4:
+        text_position_ids = expanded[0]
+        expanded = expanded[1:]
+    else:
+        text_position_ids = None
+    return expanded, text_position_ids
 
 
 def unwrap_gated_delta_rule_fns() -> None:
@@ -442,6 +476,7 @@ __all__ = [
     "create_causal_mask",
     "create_recurrent_attention_mask",
     "create_sliding_window_causal_mask",
+    "expand_position_ids_to_multimodal",
     "get_vision_attention_seqlens",
     "get_vision_interpolation_indices_and_weights",
     "get_vision_position_ids",

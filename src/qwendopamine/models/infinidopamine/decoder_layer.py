@@ -26,7 +26,10 @@ from qwendopamine.models._hf_compat import (
     use_kernelized_func,
 )
 from qwendopamine.models.gdn2 import torch_chunk_gdn2, torch_recurrent_gdn2
-from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet
+from qwendopamine.models.gdn2.reinforced_delta import (
+    GatedRewardNet,
+    GatedRewardNetConfig,
+)
 from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,
     InfiniDopamineTextConfig,
@@ -347,22 +350,20 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         k_stats: int = 6,
         **kwargs: Any,
     ) -> None:
-        reward_dropout = getattr(config, "reward_dropout", 0.0)
-        advantage_dropout = getattr(config, "advantage_dropout", 0.0)
-        hidden_dropout = getattr(
-            config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
-        )
-        super().__init__(
+        reward_net_config = GatedRewardNetConfig(
             hidden_size=config.hidden_size,
             k_stats=k_stats,
             layer_idx=layer_idx,
             conv_size=getattr(config, "linear_conv_kernel_dim", 4),
             norm_eps=getattr(config, "rms_norm_eps", 1e-5),
-            reward_dropout=reward_dropout,
-            advantage_dropout=advantage_dropout,
-            hidden_dropout=hidden_dropout,
+            reward_dropout=getattr(config, "reward_dropout", 0.0),
+            advantage_dropout=getattr(config, "advantage_dropout", 0.0),
+            hidden_dropout=getattr(
+                config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
+            ),
             **kwargs,
         )
+        super().__init__(reward_net_config)
         self.config = config
         self.key_dim = getattr(config, "linear_key_head_dim", 128) * getattr(
             config, "linear_num_key_heads", 16

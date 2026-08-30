@@ -68,6 +68,20 @@ GDN2_BACKENDS = (
 _SINGLE_TOKEN_SEQ_LEN = 1
 _RECURRENT_SHORT_SEQ_LEN = 64
 
+_DEFAULT_HIDDEN_SIZE = 2048
+_DEFAULT_NUM_HEADS = 16
+_DEFAULT_HEAD_DIM = 128
+_DEFAULT_MODE = "chunk"
+_DEFAULT_EXPAND_V = 1.0
+_DEFAULT_USE_SHORT_CONV = True
+_DEFAULT_ALLOW_NEG_EIGVAL = False
+_DEFAULT_CONV_SIZE = 4
+_DEFAULT_CONV_BIAS = False
+_DEFAULT_NORM_EPS = 1e-5
+_DEFAULT_CHUNK_SIZE = 64
+_DEFAULT_BACKEND = "auto"
+_DEFAULT_COMPILE_BACKEND = False
+_DEFAULT_FP32_DECAY = True
 
 def resolve_gdn2_backend(
     requested: str,
@@ -446,23 +460,23 @@ class GatedDeltaNet2(nn.Module):
 
     def __init__(
         self,
-        hidden_size_or_config: int | Any = 2048,
+        hidden_size_or_config: int | Any = _DEFAULT_HIDDEN_SIZE,
         hidden_size: int | None = None,
         num_heads: int | None = None,
         head_dim: int | None = None,
         layer_idx: int | None = None,
-        mode: Literal["chunk", "fused_recurrent"] = "chunk",
-        expand_v: float = 1.0,
+        mode: Literal["chunk", "fused_recurrent"] = _DEFAULT_MODE,
+        expand_v: float = _DEFAULT_EXPAND_V,
         num_v_heads: int | None = None,
-        use_short_conv: bool = True,
-        allow_neg_eigval: bool = False,
-        conv_size: int = 4,
-        conv_bias: bool = False,
-        norm_eps: float = 1e-5,
-        chunk_size: int = 64,
-        backend: str = "auto",
-        compile_backend: bool = False,
-        fp32_decay: bool = True,
+        use_short_conv: bool = _DEFAULT_USE_SHORT_CONV,
+        allow_neg_eigval: bool = _DEFAULT_ALLOW_NEG_EIGVAL,
+        conv_size: int = _DEFAULT_CONV_SIZE,
+        conv_bias: bool = _DEFAULT_CONV_BIAS,
+        norm_eps: float = _DEFAULT_NORM_EPS,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        backend: str = _DEFAULT_BACKEND,
+        compile_backend: bool = _DEFAULT_COMPILE_BACKEND,
+        fp32_decay: bool = _DEFAULT_FP32_DECAY,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -472,9 +486,9 @@ class GatedDeltaNet2(nn.Module):
             hidden_size_or_config, "n_embd"
         ):
             cfg = hidden_size_or_config
-            hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", 2048))
-            num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", 16))
-            head_dim = getattr(cfg, "head_dim", getattr(cfg, "head_size", 128))
+            hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", _DEFAULT_HIDDEN_SIZE))
+            num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", _DEFAULT_NUM_HEADS))
+            head_dim = getattr(cfg, "head_dim", getattr(cfg, "head_size", _DEFAULT_HEAD_DIM))
             num_v_heads = getattr(
                 cfg,
                 "num_v_heads",
@@ -501,8 +515,8 @@ class GatedDeltaNet2(nn.Module):
             )
 
         self.hidden_size = hidden_size
-        self.num_heads = num_heads if num_heads is not None else 16
-        self.head_dim = head_dim if head_dim is not None else 128
+        self.num_heads = num_heads if num_heads is not None else _DEFAULT_NUM_HEADS
+        self.head_dim = head_dim if head_dim is not None else _DEFAULT_HEAD_DIM
         self.num_v_heads = num_v_heads if num_v_heads is not None else self.num_heads
         if self.num_v_heads > self.num_heads and self.num_v_heads % self.num_heads != 0:
             raise ValueError(
@@ -730,6 +744,263 @@ class GatedDeltaNet2(nn.Module):
             if conv_state is not None:
                 past_key_values["conv_state"] = conv_state
 
+    def _compute_qkv(
+        self,
+        hidden_states: torch.Tensor,
+        conv_state_q: torch.Tensor | None,
+        conv_state_k: torch.Tensor | None,
+        conv_state_v: torch.Tensor | None,
+        use_cache: bool,
+        cu_seqlens: Any,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
+    ]:
+        r"""Compute q, k, v projections and decay gates from hidden states."""
+        if self.use_short_conv:
+            q, conv_state_q = self.q_conv1d(
+                x=self.q_proj(hidden_states),
+                cache=conv_state_q,
+                output_final_state=use_cache or False,
+                cu_seqlens=cu_seqlens,
+            )
+            k, conv_state_k = self.k_conv1d(
+                x=self.k_proj(hidden_states),
+                cache=conv_state_k,
+                output_final_state=use_cache or False,
+                cu_seqlens=cu_seqlens,
+            )
+            v, conv_state_v = self.v_conv1d(
+                x=self.v_proj(hidden_states),
+                cache=conv_state_v,
+                output_final_state=use_cache or False,
+                cu_seqlens=cu_seqlens,
+            )
+        else:
+            q = F.silu(self.q_proj(hidden_states))
+            k = F.silu(self.k_proj(hidden_states))
+            v = F.silu(self.v_proj(hidden_states))
+
+        g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
+            self.f_proj(hidden_states).float() + self.dt_bias
+        )
+        g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
+
+        b = self.b_proj(hidden_states).sigmoid()
+        w = self.w_proj(hidden_states).sigmoid()
+        return q, k, v, g, b, w, conv_state_q, conv_state_k, conv_state_v
+
+    def _prepare_tokens(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        b: torch.Tensor,
+        w: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        r"""Rearrange projections into per-head layout and apply value-head grouping."""
+        q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
+        k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
+        g = rearrange(g, "... (h d) -> ... h d", d=self.head_k_dim)
+        v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
+        b = rearrange(b, "... (h d) -> ... h d", d=self.head_k_dim)
+        w = rearrange(w, "... (h d) -> ... h d", d=self.head_v_dim)
+
+        if self.num_v_heads > self.num_heads:
+            groups = self.num_v_heads // self.num_heads
+            q, k, g, b = (
+                repeat(x, "... h d -> ... (h g) d", g=groups) for x in (q, k, g, b)
+            )
+
+        if self.allow_neg_eigval:
+            b = b * 2.0
+        return q, k, v, g, b, w
+
+    def _dispatch_backend(
+        self,
+        backend: str,
+        mode: str,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        b: torch.Tensor,
+        w: torch.Tensor,
+        recurrent_state: torch.Tensor | None,
+        use_cache: bool,
+        cu_seqlens: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        r"""Dispatch the forward pass to the selected GDN-2 backend."""
+        if backend in ("triton", "fla"):
+            return self._run_triton_backend(
+                backend, mode, q, k, v, g, b, w, recurrent_state, use_cache, cu_seqlens
+            )
+        return self._run_torch_backend(
+            backend, mode, q, k, v, g, b, w, recurrent_state, use_cache
+        )
+
+    def _run_triton_backend(
+        self,
+        backend: str,
+        mode: str,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        b: torch.Tensor,
+        w: torch.Tensor,
+        recurrent_state: torch.Tensor | None,
+        use_cache: bool,
+        cu_seqlens: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        r"""Run the Triton/FLA backend with automatic fallback to pure PyTorch."""
+        if not _HAS_TRITON_OPS:
+            raise RuntimeError(
+                f"GDN-2 backend '{backend}' was requested but Triton/FLA is not installed. "
+                "Install the optional CUDA dependencies (pip install 'qwendopamine[gpu]') "
+                "or use backend='auto'/'torch'."
+            )
+        try:
+            if mode == "chunk" and _triton_chunk_gdn2 is not None:
+                return _triton_chunk_gdn2(
+                    q=q,
+                    k=k,
+                    v=v,
+                    g=g,
+                    b=b,
+                    w=w,
+                    A_log=self.A_log,
+                    dt_bias=self.dt_bias,
+                    initial_state=recurrent_state,
+                    output_final_state=use_cache or False,
+                    use_qk_l2norm_in_kernel=True,
+                    use_gate_in_kernel=False,
+                    cu_seqlens=cu_seqlens,
+                )
+            if _triton_fused_recurrent_gdn2 is not None:
+                return _triton_fused_recurrent_gdn2(
+                    q=q,
+                    k=k,
+                    v=v,
+                    g=g,
+                    b=b,
+                    w=w,
+                    A_log=self.A_log,
+                    dt_bias=self.dt_bias,
+                    initial_state=recurrent_state,
+                    output_final_state=use_cache or False,
+                    use_qk_l2norm_in_kernel=True,
+                    use_gate_in_kernel=False,
+                    cu_seqlens=cu_seqlens,
+                )
+            raise RuntimeError("Triton ops present but no kernel is callable")
+        except (
+            RuntimeError,
+            TypeError,
+            ValueError,
+            AttributeError,
+            ImportError,
+        ) as e:
+            _warn_fallback_once(
+                f"Triton kernel failed ({e}); falling back to pure PyTorch"
+            )
+            fallback = "torch-chunk" if mode == "chunk" else "torch-recurrent"
+            return self._run_torch_backend(
+                fallback, mode, q, k, v, g, b, w, recurrent_state, use_cache
+            )
+
+    def _run_torch_backend(
+        self,
+        backend: str,
+        mode: str,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        b: torch.Tensor,
+        w: torch.Tensor,
+        recurrent_state: torch.Tensor | None,
+        use_cache: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        r"""Run the pure-PyTorch or compiled backend."""
+        chunk_fn = torch_chunk_gdn2
+        if backend == "compiled" and self._compiled_chunk is not None:
+            chunk_fn = self._compiled_chunk
+
+        def _chunk_call() -> tuple[torch.Tensor, torch.Tensor | None]:
+            return chunk_fn(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                b=b,
+                w=w,
+                initial_state=recurrent_state,
+                output_final_state=use_cache or False,
+                use_qk_l2norm_in_kernel=True,
+                chunk_size=self.chunk_size,
+            )
+
+        if backend in ("torch-chunk", "compiled"):
+            return _chunk_call()
+        if backend == "torch-recurrent":
+            return torch_recurrent_gdn2(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                b=b,
+                w=w,
+                initial_state=recurrent_state,
+                output_final_state=use_cache or False,
+                use_qk_l2norm_in_kernel=True,
+            )
+        # backend == "torch": respect the selected mode
+        if mode == "fused_recurrent":
+            return torch_recurrent_gdn2(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                b=b,
+                w=w,
+                initial_state=recurrent_state,
+                output_final_state=use_cache or False,
+                use_qk_l2norm_in_kernel=True,
+            )
+        return _chunk_call()
+
+    def _compute_output(
+        self,
+        hidden_states: torch.Tensor,
+        o: torch.Tensor,
+        g: torch.Tensor,
+        is_padded: bool,
+        indices: torch.Tensor | None,
+        batch: int,
+        seq_len: int,
+    ) -> torch.Tensor:
+        r"""Apply the output gate, normalization, projection, and optional unpadding."""
+        gate = rearrange(
+            self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
+        )
+        if o is None:
+            raise RuntimeError("GDN-2 backend returned None output.")
+        o = self.o_norm(o, gate)
+        o = rearrange(o, "... h d -> ... (h d)")
+        out = self.o_proj(o)
+        if is_padded and indices is not None:
+            out = _pad_input(out.squeeze(0), indices, batch, seq_len)
+        return out
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -765,168 +1036,19 @@ class GatedDeltaNet2(nn.Module):
             indices, cu_seqlens, _ = _get_unpad_data(attention_mask)
             hidden_states = _index_first_axis(hidden_states, indices).unsqueeze(0)
 
-        if self.use_short_conv:
-            q, conv_state_q = self.q_conv1d(
-                x=self.q_proj(hidden_states),
-                cache=conv_state_q,
-                output_final_state=use_cache or False,
-                cu_seqlens=cu_seqlens,
-            )
-            k, conv_state_k = self.k_conv1d(
-                x=self.k_proj(hidden_states),
-                cache=conv_state_k,
-                output_final_state=use_cache or False,
-                cu_seqlens=cu_seqlens,
-            )
-            v, conv_state_v = self.v_conv1d(
-                x=self.v_proj(hidden_states),
-                cache=conv_state_v,
-                output_final_state=use_cache or False,
-                cu_seqlens=cu_seqlens,
-            )
-        else:
-            q = F.silu(self.q_proj(hidden_states))
-            k = F.silu(self.k_proj(hidden_states))
-            v = F.silu(self.v_proj(hidden_states))
-
-        g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
-            self.f_proj(hidden_states).float() + self.dt_bias
+        q, k, v, g, b, w, conv_state_q, conv_state_k, conv_state_v = self._compute_qkv(
+            hidden_states, conv_state_q, conv_state_k, conv_state_v,
+            use_cache if use_cache is not None else False, cu_seqlens
         )
-        # The decay activation is always computed in fp32 (paper Sec. D.1); toggle
-        # whether it stays fp32 end-to-end or is cast to the model dtype.
-        g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
+        q, k, v, g, b, w = self._prepare_tokens(q, k, v, g, b, w)
 
-        b = self.b_proj(hidden_states).sigmoid()
-        w = self.w_proj(hidden_states).sigmoid()
-
-        q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
-        k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
-        g = rearrange(g, "... (h d) -> ... h d", d=self.head_k_dim)
-        v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
-        b = rearrange(b, "... (h d) -> ... h d", d=self.head_k_dim)
-        w = rearrange(w, "... (h d) -> ... h d", d=self.head_v_dim)
-
-        if self.num_v_heads > self.num_heads:
-            groups = self.num_v_heads // self.num_heads
-            q, k, g, b = (
-                repeat(x, "... h d -> ... (h g) d", g=groups) for x in (q, k, g, b)
-            )
-
-        if self.allow_neg_eigval:
-            b = b * 2.0
-
-        # Resolve and dispatch the concrete backend. The GDN-2 maths below never
-        # branches on device; only this block performs the (auto) selection.
         backend = resolve_gdn2_backend(
             self.backend, training=self.training, seq_len=seq_len
         )
-        o: torch.Tensor | None = None
-
-        if backend in ("triton", "fla"):
-            if not _HAS_TRITON_OPS:
-                raise RuntimeError(
-                    f"GDN-2 backend '{backend}' was requested but Triton/FLA is not installed. "
-                    "Install the optional CUDA dependencies (pip install 'qwendopamine[gpu]') "
-                    "or use backend='auto'/'torch'."
-                )
-            try:
-                if mode == "chunk" and _triton_chunk_gdn2 is not None:
-                    o, recurrent_state = _triton_chunk_gdn2(
-                        q=q,
-                        k=k,
-                        v=v,
-                        g=g,
-                        b=b,
-                        w=w,
-                        A_log=self.A_log,
-                        dt_bias=self.dt_bias,
-                        initial_state=recurrent_state,
-                        output_final_state=use_cache or False,
-                        use_qk_l2norm_in_kernel=True,
-                        use_gate_in_kernel=False,
-                        cu_seqlens=cu_seqlens,
-                    )
-                elif _triton_fused_recurrent_gdn2 is not None:
-                    o, recurrent_state = _triton_fused_recurrent_gdn2(
-                        q=q,
-                        k=k,
-                        v=v,
-                        g=g,
-                        b=b,
-                        w=w,
-                        A_log=self.A_log,
-                        dt_bias=self.dt_bias,
-                        initial_state=recurrent_state,
-                        output_final_state=use_cache or False,
-                        use_qk_l2norm_in_kernel=True,
-                        use_gate_in_kernel=False,
-                        cu_seqlens=cu_seqlens,
-                    )
-                else:
-                    raise RuntimeError("Triton ops present but no kernel is callable")
-            except (
-                RuntimeError,
-                TypeError,
-                ValueError,
-                AttributeError,
-                ImportError,
-            ) as e:
-                _warn_fallback_once(
-                    f"Triton kernel failed ({e}); falling back to pure PyTorch"
-                )
-                backend = "torch-chunk" if mode == "chunk" else "torch-recurrent"
-
-        if o is None:
-            # Pure PyTorch / compiled path. `torch` follows the selected mode;
-            # `torch-chunk` and `compiled` always chunk; `torch-recurrent` always
-            # runs the token loop.
-            chunk_fn = torch_chunk_gdn2
-            if backend == "compiled" and self._compiled_chunk is not None:
-                chunk_fn = self._compiled_chunk
-
-            def _chunk_call() -> tuple[torch.Tensor, torch.Tensor | None]:
-                return chunk_fn(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b,
-                    w=w,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache or False,
-                    use_qk_l2norm_in_kernel=True,
-                    chunk_size=self.chunk_size,
-                )
-
-            if backend in ("torch-chunk", "compiled"):
-                o, recurrent_state = _chunk_call()
-            elif backend == "torch-recurrent":
-                o, recurrent_state = torch_recurrent_gdn2(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b,
-                    w=w,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache or False,
-                    use_qk_l2norm_in_kernel=True,
-                )
-            else:  # backend == "torch": respect the selected mode
-                if mode == "fused_recurrent":
-                    o, recurrent_state = torch_recurrent_gdn2(
-                        q=q,
-                        k=k,
-                        v=v,
-                        g=g,
-                        b=b,
-                        w=w,
-                        initial_state=recurrent_state,
-                        output_final_state=use_cache or False,
-                        use_qk_l2norm_in_kernel=True,
-                    )
-                else:
-                    o, recurrent_state = _chunk_call()
+        o, recurrent_state = self._dispatch_backend(
+            backend, mode, q, k, v, g, b, w, recurrent_state,
+            use_cache if use_cache is not None else False, cu_seqlens
+        )
 
         if use_cache or past_key_values is not None:
             self._update_cache(
@@ -939,16 +1061,4 @@ class GatedDeltaNet2(nn.Module):
                 ),
             )
 
-        gate = rearrange(
-            self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
-        )
-        if o is None:
-            raise RuntimeError("GDN-2 backend returned None output.")
-        o = self.o_norm(o, gate)
-        o = rearrange(o, "... h d -> ... (h d)")
-        out = self.o_proj(o)
-
-        if is_padded and indices is not None:
-            out = _pad_input(out.squeeze(0), indices, batch, seq_len)
-
-        return out, None, past_key_values
+        return self._compute_output(hidden_states, o, g, is_padded, indices, batch, seq_len), None, past_key_values

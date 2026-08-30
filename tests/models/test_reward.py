@@ -573,14 +573,19 @@ def test_when_reward_statistics_extractor_unnormalized_with_float16_then_preserv
 
 def test_when_gated_reward_net_step_by_step_with_conv_cache_then_preserves_temporal_state() -> None:
     r"""Verify that GatedRewardNet step-by-step decoding tracks conv state across sequence steps."""
-    from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet
+    from qwendopamine.models.gdn2.reinforced_delta import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
 
     torch.manual_seed(42)
     grn = GatedRewardNet(
-        hidden_size=32,
-        k_stats=6,
-        use_short_conv=True,
-        conv_size=4,
+        GatedRewardNetConfig(
+            hidden_size=32,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=4,
+        )
     )
     grn.eval()
 

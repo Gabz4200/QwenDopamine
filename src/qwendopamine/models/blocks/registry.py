@@ -58,7 +58,7 @@ class _LazyBlockRegistry:
     def _populate(self) -> None:
         if self._populated:
             return
-        from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+        from qwendopamine.models.gdn2 import GatedDeltaNet2
         from qwendopamine.models.infinidopamine import (
             InfiniDopamineDecoderLayer,
             InfiniDopamineGatedDeltaNet,

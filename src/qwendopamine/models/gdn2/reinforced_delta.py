@@ -258,7 +258,7 @@ class DeltaMemoryCore(nn.Module):
 
         # Short convolutions for causal smoothing
         if use_short_conv:
-            from qwendopamine.models.gdn2.gdn2 import ShortConvolution
+            from qwendopamine.models.gdn2 import ShortConvolution
             self.k_conv1d = ShortConvolution(
                 d_model, kernel_size=conv_size, bias=conv_bias
             )

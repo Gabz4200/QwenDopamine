@@ -165,7 +165,7 @@ class GDN2HFBlock(nn.Module):
         **kwargs: Any,
     ) -> None:
         super().__init__()
-        from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+        from qwendopamine.models.gdn2 import GatedDeltaNet2
 
         if isinstance(config, GDN2HFConfig):
             self.config: GDN2HFConfig = config

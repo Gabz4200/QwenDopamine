@@ -1342,7 +1342,7 @@ def chunk_gdn2(
         scale = k.shape[-1] ** -0.5
 
     if not _HAS_TRITON_FLA or not q.is_cuda:
-        from qwendopamine.models.gdn2.gdn2 import torch_chunk_gdn2
+        from qwendopamine.models.gdn2.chunk import torch_chunk_gdn2
 
         return torch_chunk_gdn2(
             q=q,

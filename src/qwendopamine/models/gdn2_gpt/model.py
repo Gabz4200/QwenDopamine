@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+from qwendopamine.models.gdn2 import GatedDeltaNet2
 from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
 from qwendopamine.models.normalization import RMSNorm
 

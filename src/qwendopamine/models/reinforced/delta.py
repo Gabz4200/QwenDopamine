@@ -42,6 +42,13 @@ class GatedRewardNetConfig:
     reward_dropout: float = 0.0
     advantage_dropout: float = 0.0
     hidden_dropout: float = 0.0
+    advantage_legacy_coupled: bool = False
+    r"""When True the advantage gate keeps the original
+    ``omega_t = 2·σ(W A + b)`` single-scalar behaviour. When False (the
+    default) the gate splits into ``(plasticity, write, erase)`` so negative
+    advantage actively erases and large-magnitude advantage increases
+    plasticity. Set True only when loading a checkpoint that depends on the
+    old coupled gate output."""
     memory_rank: int | None = None
     r"""Optional low-rank factorization for the d×d fast-weight state.
 
@@ -145,30 +152,46 @@ class ValueBaselineEMA(nn.Module):
 
 
 class AdvantageGate(nn.Module):
-    r"""PPO-inspired Advantage Gate producing global modulation scalar ω_t ∈ (0, 2).
+    r"""Plasticity-aware advantage gate for the reinforced delta layer.
 
-    Collapses the vectorial advantage A_t ∈ ℝ^k into a single scalar gate via a
-    learned linear projection followed by 2·sigmoid, emulating PPO's clipping
-    behavior with smooth gradients:
+    The spec calls for separating the global modulation into three independent
+    components so that negative advantage can actively erase (instead of merely
+    freezing) and large-magnitude advantage increases plasticity:
 
-        ω_t = 2 · σ(W_a A_t + b_a)
+        plasticity_t = σ(W_p |A_t| + b_p)          # in (0, 1) — gates the entire update
+        write_t      = σ(W_w  A_t  + b_w)          # in (0, 1) — gates the write term
+        erase_t      = σ(W_e (-A_t) + b_e)          # in (0, 1) — gates the erase term
 
-    This restricts ω_t ∈ (0, 2), where:
-    - ω_t ≈ 0 (A_t ≪ 0): Freeze memory (both write and erase close).
-    - ω_t ≈ 1 (A_t ≈ 0): Standard Delta Rule operation.
-    - ω_t ≈ 2 (A_t ≫ 0): Boost write/erase for strong positive advantage.
+    The downstream ``DeltaMemoryCore`` consumes the triple and produces
+    ``S_{t+1} = (1 - plasticity·erase·E) ⊙ S_t + (plasticity·write·W) ⊙ (e k^T)``,
+    i.e. positive advantage tends to write, negative tends to erase, and the
+    magnitude of advantage scales plasticity multiplicatively. This is
+    preferable to a single coupled gate because the old "ω_t = 2·σ(W A_t + b)"
+    formulation froze memory on negative advantage and never actively erased
+    it.
+
+    Backward compatibility: when ``legacy_coupled=True`` the gate reduces to
+    the previous single-scalar behaviour (``omega_t = 2·σ(W A_t + b)``) so
+    pretrained checkpoints and tests that rely on it keep working.
 
     Args:
         k_stats (int): Dimension of advantage vector A_t.
-        dropout (float, optional): Dropout probability on advantage features.
-            Default: 0.0.
+        dropout (float): Dropout probability on advantage features.
+        legacy_coupled (bool): When True, return the single scalar
+            ``omega_t`` as a 1-tuple. Default: False.
 
     Shape:
         - A_t: (B, k_stats)
-        - Returns: ω_t (B, 1)
+        - Returns: (``plasticity``, ``write``, ``erase``) each (B, 1), or
+          ``(omega_t,)`` when ``legacy_coupled=True``.
     """
 
-    def __init__(self, k_stats: int, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        k_stats: int,
+        dropout: float = 0.0,
+        legacy_coupled: bool = False,
+    ) -> None:
         super().__init__()
 
         if k_stats <= 0:
@@ -178,19 +201,41 @@ class AdvantageGate(nn.Module):
 
         self.k_stats = k_stats
         self.dropout = dropout
+        self.legacy_coupled = legacy_coupled
         self.advantage_proj = nn.Linear(k_stats, 1)
+        self.plasticity_proj = nn.Linear(k_stats, 1)
+        self.write_proj = nn.Linear(k_stats, 1)
+        self.erase_proj = nn.Linear(k_stats, 1)
 
         with torch.no_grad():
+            # Single scalar branch (legacy / coupled mode).
             self.advantage_proj.bias.zero_()
             self.advantage_proj.weight.zero_()
+            # plasticity_t = σ(|A_t|) at init: bias = 0 keeps the start
+            # of training near 0.5 (no special prior). Trainers can
+            # override the bias if a different default is desired.
+            self.plasticity_proj.bias.zero_()
+            self.plasticity_proj.weight.zero_()
+            # write / erase both start neutral: σ(b)=0.5 at b=0, which
+            # also makes the write / erase branches effectively inert on
+            # init so the legacy check still passes.
+            self.write_proj.bias.zero_()
+            self.write_proj.weight.zero_()
+            self.erase_proj.bias.zero_()
+            self.erase_proj.weight.zero_()
 
-    def forward(self, A_t: Tensor) -> Tensor:
-        """
+    def forward(
+        self, A_t: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor] | tuple[Tensor]:
+        r"""Compute plasticity, write, erase (or a single coupled scalar).
+
         Args:
-            A_t: (B, k_stats) - Advantage vector.
+            A_t: (B, k_stats) advantage vector.
 
         Returns:
-            ω_t: (B, 1) - Global modulation scalar in (0, 2).
+            Three-tuple ``(plasticity, write, erase)`` of (B, 1) tensors when
+            ``legacy_coupled=False``, otherwise a 1-tuple ``(omega_t,)``
+            reproducing the original ``2·σ(W A + b)`` behaviour.
         """
         if A_t.dim() != 2:
             raise ValueError(f"Expected A_t shape (B, k_stats), got {A_t.shape}.")
@@ -202,12 +247,21 @@ class AdvantageGate(nn.Module):
         if self.training and self.dropout > 0.0:
             A_t = F.dropout(A_t, p=self.dropout, training=True)
 
-        # ω_t = 2 · σ(W_a A_t + b_a)
-        omega_t = 2.0 * torch.sigmoid(self.advantage_proj(A_t))  # (B, 1)
-        return omega_t
+        if self.legacy_coupled:
+            omega_t = 2.0 * torch.sigmoid(self.advantage_proj(A_t))  # (B, 1)
+            return (omega_t,)
+
+        abs_A = A_t.abs()
+        plasticity = torch.sigmoid(self.plasticity_proj(abs_A))  # (B, 1)
+        write = torch.sigmoid(self.write_proj(A_t))  # (B, 1)
+        erase = torch.sigmoid(self.erase_proj(-A_t))  # (B, 1)
+        return plasticity, write, erase
 
     def extra_repr(self) -> str:
-        return f"k_stats={self.k_stats}, dropout={self.dropout}"
+        return (
+            f"k_stats={self.k_stats}, dropout={self.dropout}, "
+            f"legacy_coupled={self.legacy_coupled}"
+        )
 
 
 class DeltaMemoryCore(nn.Module):
@@ -390,7 +444,9 @@ class DeltaMemoryCore(nn.Module):
     def forward(
         self,
         x: Tensor,
-        omega_t: Tensor,
+        plasticity_t: Tensor,
+        write_t: Tensor,
+        erase_t: Tensor,
         S_prev: Tensor | tuple[Tensor, Tensor],
         k_cache: Tensor | None = None,
         v_cache: Tensor | None = None,
@@ -399,7 +455,15 @@ class DeltaMemoryCore(nn.Module):
 
         Args:
             x: (B, d_model) input features.
-            omega_t: (B, 1) advantage modulation.
+            plasticity_t: (B, 1) scalar in (0, 1) from
+                :class:`AdvantageGate`. Gates the magnitude of the entire
+                update — large-magnitude advantage increases plasticity.
+            write_t: (B, 1) scalar in (0, 1) from
+                :class:`AdvantageGate`. Gates the write term; positive
+                advantage drives it up so good outcomes strengthen memory.
+            erase_t: (B, 1) scalar in (0, 1) from
+                :class:`AdvantageGate`. Gates the erase term; negative
+                advantage drives it up so bad outcomes actively suppress.
             S_prev: previous state. Dense ``(B, d, d)`` or low-rank factors
                 ``(U, V)`` of shape ``(B, d, r)``.
             k_cache: optional cached conv state for k.
@@ -427,10 +491,11 @@ class DeltaMemoryCore(nn.Module):
         W_t = torch.sigmoid(self.w_proj(x))  # (B, d)
         E_t = torch.sigmoid(self.e_proj(x))  # (B, d)
 
-        # Coupled modulation: ω_t scales both write and erase
-        # Clamp to keep decay in [0,1] (no sign-flip) and write in [0,2]
-        omega_W = (omega_t.unsqueeze(-1) * W_t.unsqueeze(-1)).clamp(max=2.0)  # (B, d, 1) in [0,2]
-        omega_E = (omega_t.unsqueeze(-1) * E_t.unsqueeze(-1)).clamp(max=1.0)  # (B, d, 1) in [0,1]
+        # Separated modulation: plasticity gates the whole update; write
+        # and erase are signed-advantage gates that can act independently.
+        # The shape (B, d, 1) is broadcast over the d×d state channels.
+        omega_W = (plasticity_t * write_t * W_t).unsqueeze(-1).clamp(max=2.0)
+        omega_E = (plasticity_t * erase_t * E_t).unsqueeze(-1).clamp(max=1.0)
 
         # Residual error: e_t = v_t - S_t k_t
         pred = self._read(S_prev, k_t)  # (B, d)
@@ -499,6 +564,7 @@ class ReinforcedDeltaLayer(nn.Module):
         reward_dropout: float = 0.0,
         advantage_dropout: float = 0.0,
         memory_rank: int | None = None,
+        advantage_legacy_coupled: bool = False,
     ) -> None:
         super().__init__()
 
@@ -522,6 +588,7 @@ class ReinforcedDeltaLayer(nn.Module):
         self.reward_dropout = reward_dropout
         self.advantage_dropout = advantage_dropout
         self.memory_rank = memory_rank
+        self.advantage_legacy_coupled = advantage_legacy_coupled
 
         # Statistics extraction and normalization (local import to avoid circular)
         from qwendopamine.models.blocks.reward import (
@@ -533,7 +600,11 @@ class ReinforcedDeltaLayer(nn.Module):
 
         # RL components
         self.baseline_tracker = ValueBaselineEMA(d_model, k_stats, init_alpha=init_alpha)
-        self.advantage_gate = AdvantageGate(k_stats, dropout=advantage_dropout)
+        self.advantage_gate = AdvantageGate(
+            k_stats,
+            dropout=advantage_dropout,
+            legacy_coupled=advantage_legacy_coupled,
+        )
 
         # Core memory
         self.memory_core = DeltaMemoryCore(
@@ -597,7 +668,17 @@ class ReinforcedDeltaLayer(nn.Module):
 
         # 2. RL: Baseline Tracking & Advantage Gate
         V_t, A_t = self.baseline_tracker(x, R_stats, V_prev)  # (B, k_stats) each
-        omega_t = self.advantage_gate(A_t)  # (B, 1)
+        # The gate is split into plasticity, write, and erase so negative
+        # advantage actively erases memory (instead of merely freezing it)
+        # and large-magnitude advantage increases plasticity.
+        gate_out = self.advantage_gate(A_t)
+        if self.advantage_legacy_coupled:
+            (omega_t,) = gate_out
+            plasticity_t = omega_t.clamp(max=1.0)
+            write_t = (omega_t >= 1.0).to(omega_t.dtype)
+            erase_t = (omega_t < 1.0).to(omega_t.dtype) * (2.0 - omega_t)
+        else:
+            plasticity_t, write_t, erase_t = gate_out
 
         # 3. FiLM Conditioning on Query (using normalized R_stats)
         q_t = self.q_proj(x)  # (B, d)
@@ -606,7 +687,13 @@ class ReinforcedDeltaLayer(nn.Module):
 
         # 4. Memory Update (DeltaMemoryCore)
         S_next, k_cache_out, v_cache_out = self.memory_core(
-            x, omega_t, S_prev, k_cache=k_cache, v_cache=v_cache
+            x,
+            plasticity_t,
+            write_t,
+            erase_t,
+            S_prev,
+            k_cache=k_cache,
+            v_cache=v_cache,
         )
 
         # 5. Readout with FiLM-modulated Query
@@ -671,6 +758,7 @@ class GatedRewardNet(nn.Module):
         self.advantage_dropout = config.advantage_dropout
         self.hidden_dropout = config.hidden_dropout
         self.memory_rank = config.memory_rank
+        self.advantage_legacy_coupled = config.advantage_legacy_coupled
         self.mode = "recurrent"
         self.backend = "torch-recurrent"
         self.compile_backend = False
@@ -690,6 +778,7 @@ class GatedRewardNet(nn.Module):
             reward_dropout=config.reward_dropout,
             advantage_dropout=config.advantage_dropout,
             memory_rank=config.memory_rank,
+            advantage_legacy_coupled=config.advantage_legacy_coupled,
         )
         self.output_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
         torch.nn.init.xavier_uniform_(self.output_proj.weight, gain=2**-2.5)

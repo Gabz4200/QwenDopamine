@@ -729,3 +729,140 @@ def test_when_gated_reward_net_uses_low_rank_memory_then_step_by_step_matches_fu
         step_outs.append(out_t)
     out_stepped = torch.cat(step_outs, dim=1)
     assert torch.allclose(out_full, out_stepped, atol=1e-4)
+
+
+# --- AdvantageGate: plasticity / write / erase separation ---
+
+
+def test_when_advantage_gate_default_then_returns_separated_triple() -> None:
+    r"""The default ``AdvantageGate`` returns three (B, 1) scalars:
+    plasticity, write, and erase.
+    """
+    from qwendopamine.models.reinforced import AdvantageGate
+
+    torch.manual_seed(0)
+    gate = AdvantageGate(k_stats=4)
+    A = torch.tensor([[1.0, -1.0, 0.5, -0.5]])
+    plasticity, write, erase = gate(A)
+    assert plasticity.shape == (1, 1)
+    assert write.shape == (1, 1)
+    assert erase.shape == (1, 1)
+    # All three live in (0, 1).
+    for s in (plasticity, write, erase):
+        assert (s > 0.0).all() and (s < 1.0).all()
+
+
+def test_when_advantage_gate_legacy_coupled_then_returns_single_omega() -> None:
+    r"""When ``legacy_coupled=True`` the gate returns a single ``omega_t``
+    scalar in (0, 2) to match the previous coupled-gate behaviour.
+    """
+    from qwendopamine.models.reinforced import AdvantageGate
+
+    gate = AdvantageGate(k_stats=4, legacy_coupled=True)
+    A = torch.tensor([[1.0, -1.0, 0.5, -0.5]])
+    out = gate(A)
+    assert isinstance(out, tuple)
+    assert len(out) == 1
+    (omega_t,) = out
+    assert omega_t.shape == (1, 1)
+    assert (omega_t > 0.0).all() and (omega_t < 2.0).all()
+
+
+def test_when_advantage_gate_positive_then_write_high_erase_low() -> None:
+    r"""Positive advantage should drive ``write`` up and ``erase`` down,
+    so good outcomes strengthen memory. The projections start at zero, so
+    we manually set the write/erase projection weights to differentiate
+    the directions.
+    """
+    from qwendopamine.models.reinforced import AdvantageGate
+
+    gate = AdvantageGate(k_stats=1)
+    # Make the projections respond to A (not A^2): identity mapping.
+    with torch.no_grad():
+        gate.write_proj.weight.fill_(1.0)
+        gate.erase_proj.weight.fill_(1.0)
+    A_pos = torch.tensor([[5.0]])
+    A_neg = torch.tensor([[-5.0]])
+    _, write_pos, erase_pos = gate(A_pos)
+    _, write_neg, erase_neg = gate(A_neg)
+    # Positive advantage: write > erase.
+    assert write_pos.item() > erase_pos.item()
+    # Negative advantage: erase > write.
+    assert erase_neg.item() > write_neg.item()
+
+
+def test_when_advantage_gate_plasticity_depends_on_magnitude_only() -> None:
+    r"""Plasticity = f(|A|) so the sign of the advantage does not change
+    it. With the projection weight set to a non-zero value, the
+    plasticity must differ between zero and non-zero magnitude but match
+    across opposite signs of equal magnitude.
+    """
+    from qwendopamine.models.reinforced import AdvantageGate
+
+    gate = AdvantageGate(k_stats=1)
+    with torch.no_grad():
+        gate.plasticity_proj.weight.fill_(1.0)
+    pos = torch.tensor([[3.0]])
+    neg = torch.tensor([[-3.0]])
+    zero = torch.tensor([[0.0]])
+    plast_pos, _, _ = gate(pos)
+    plast_neg, _, _ = gate(neg)
+    plast_zero, _, _ = gate(zero)
+    # Plasticity is a function of |A|, so it should match across signs.
+    assert torch.allclose(plast_pos, plast_neg, atol=1e-6)
+    # Plasticity must differ between zero and non-zero magnitude.
+    assert (plast_pos - plast_zero).abs().item() > 1e-3
+    # Plasticity must be in (0, 1).
+    assert 0.0 < plast_pos.item() < 1.0
+
+
+def test_when_reinforced_delta_layer_uses_separated_gates_then_no_smoke_error() -> None:
+    r"""Smoke test: ``ReinforcedDeltaLayer`` default config accepts the
+    new separated gate and produces finite outputs.
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=16,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=3,
+        )
+    )
+    grn.eval()
+    inputs = torch.randn(1, 4, 16)
+    rewards = torch.randn(1, 4, 6)
+    out, _, _ = grn(inputs, reward_values=rewards, use_cache=True)
+    assert out.shape == (1, 4, 16)
+    assert torch.isfinite(out).all()
+
+
+def test_when_reinforced_delta_layer_legacy_coupled_then_no_smoke_error() -> None:
+    r"""Backward-compat smoke test: ``advantage_legacy_coupled=True``
+    routes the gate back to the original single-scalar behaviour.
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=16,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=3,
+            advantage_legacy_coupled=True,
+        )
+    )
+    grn.eval()
+    inputs = torch.randn(1, 4, 16)
+    rewards = torch.randn(1, 4, 6)
+    out, _, _ = grn(inputs, reward_values=rewards, use_cache=True)
+    assert out.shape == (1, 4, 16)
+    assert torch.isfinite(out).all()
+    assert grn.advantage_legacy_coupled is True

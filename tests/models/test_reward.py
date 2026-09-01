@@ -680,10 +680,12 @@ def test_when_gated_reward_net_cache_is_none_then_value_baseline_initialized_to_
         )
     )
     grn.eval()
-    rec, conv, baseline = grn._get_cache(None)
+    rec, conv, baseline, running_mean, running_std = grn._get_cache(None)
     assert rec is None
     assert conv is None
     assert baseline is None
+    assert running_mean is None
+    assert running_std is None
 
 
 def test_when_gated_reward_net_uses_low_rank_memory_then_step_by_step_matches_full() -> None:
@@ -866,3 +868,190 @@ def test_when_reinforced_delta_layer_legacy_coupled_then_no_smoke_error() -> Non
     assert out.shape == (1, 4, 16)
     assert torch.isfinite(out).all()
     assert grn.advantage_legacy_coupled is True
+
+
+# --- Reward normalization (spec items 6.6 and 8) ---
+
+
+def test_when_normalize_disabled_then_output_equals_input() -> None:
+    r"""The helper always normalises when called. The "disabled" path is
+    the caller's choice (skip the call entirely). When called with
+    ``running_mean=None`` the function initialises mean=0 and std=1 so
+    the output reflects a fixed-point standardisation of the input.
+    """
+    from qwendopamine.models.reinforced import normalize_reward_for_advantage
+
+    r = torch.tensor([[[1.0, -1.0], [2.0, -2.0]]], dtype=torch.float32)
+    out, new_mean, new_std = normalize_reward_for_advantage(
+        r, None, None, alpha=0.0, training=True
+    )
+    # alpha=0 -> running stats unchanged from (mean=0, std=1) init -> the
+    # output is r / (1 + eps). Allow the eps-level tolerance.
+    assert torch.allclose(out, r, atol=1e-4)
+    assert torch.allclose(new_mean, torch.zeros(1, 2))
+    assert torch.allclose(new_std, torch.ones(1, 2))
+
+
+def test_when_normalize_enabled_then_output_zero_mean_unit_var_approximately() -> None:
+    r"""After the first forward the per-channel mean is driven to zero and
+    the std to one (within numerical noise) before clipping.
+    """
+    from qwendopamine.models.reinforced import normalize_reward_for_advantage
+
+    torch.manual_seed(0)
+    r = torch.randn(1, 1024, 3) * 5.0 + 2.0
+    out, mean, std = normalize_reward_for_advantage(
+        r, None, None, alpha=1.0, eps=1e-6, clip_val=float("inf"), training=True
+    )
+    # Per-channel mean of the input was ~2 (because N=1024) — check the
+    # normalised output is near zero.
+    assert torch.allclose(out.mean(dim=1), torch.zeros(1, 3), atol=5e-3)
+    # Std of the normalised input should be ~1 (modulo the eps floor).
+    std_out = out.std(dim=1, unbiased=False)
+    assert torch.allclose(std_out, torch.ones(1, 3), atol=5e-2)
+    # The EMA absorbed the batch mean.
+    batch_mean = r.mean(dim=1)
+    assert torch.allclose(mean, batch_mean, atol=5e-3)
+    assert std is not None and (std > 0.0).all()
+
+
+def test_when_normalize_clip_val_smaller_than_std_then_output_is_clipped() -> None:
+    r"""Setting ``clip_val=1.0`` must clamp the normalised output to
+    ``[-1, +1]`` even when the raw input is far from the running mean.
+    """
+    from qwendopamine.models.reinforced import normalize_reward_for_advantage
+
+    r = torch.zeros(1, 1, 1)
+    mean = torch.zeros(1, 1)
+    std = torch.ones(1, 1)
+    out, _, _ = normalize_reward_for_advantage(
+        r, mean, std, alpha=0.0, clip_val=1.0, training=True
+    )
+    # Raw reward is 0 -> (0 - 0) / 1 = 0 (in range).
+    assert torch.allclose(out, torch.zeros(1, 1, 1))
+    # Force an out-of-range normalised value by setting a non-zero mean.
+    mean2 = torch.tensor([[5.0]])
+    r2 = torch.tensor([[[-100.0]]])
+    out2, _, _ = normalize_reward_for_advantage(
+        r2, mean2, std, alpha=0.0, clip_val=1.0, training=True
+    )
+    assert torch.allclose(out2, torch.tensor([[[-1.0]]]))
+
+
+def test_when_normalize_ema_alpha_zero_then_running_stats_unchanged() -> None:
+    r"""``alpha=0`` must disable the EMA update. The returned running
+    statistics equal the inputs.
+    """
+    from qwendopamine.models.reinforced import normalize_reward_for_advantage
+
+    r = torch.randn(1, 4, 2)
+    mean = torch.tensor([[1.0, -1.0]])
+    std = torch.tensor([[2.0, 3.0]])
+    _, new_mean, new_std = normalize_reward_for_advantage(
+        r, mean, std, alpha=0.0, training=True
+    )
+    assert torch.allclose(new_mean, mean)
+    assert torch.allclose(new_std, std)
+
+
+def test_when_normalize_eval_mode_then_running_stats_frozen() -> None:
+    r"""Setting ``training=False`` must freeze the running statistics so
+    validation / decoding does not silently retune the normaliser.
+    """
+    from qwendopamine.models.reinforced import normalize_reward_for_advantage
+
+    r = torch.randn(1, 4, 2)
+    mean = torch.tensor([[0.0, 0.0]])
+    std = torch.tensor([[1.0, 1.0]])
+    _, new_mean, new_std = normalize_reward_for_advantage(
+        r, mean, std, alpha=0.5, training=False
+    )
+    assert torch.allclose(new_mean, mean)
+    assert torch.allclose(new_std, std)
+
+
+def test_when_gated_reward_net_normalize_enabled_then_running_mean_persists_in_cache() -> (
+    None
+):
+    r"""When ``reward_normalize=True`` the running mean / std survive
+    step-by-step generation via the ``reward_running_mean`` /
+    ``reward_running_std`` cache fields. After two non-overlapping
+    forward passes the second pass inherits the first pass's EMA.
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    torch.manual_seed(0)
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=16,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=3,
+            reward_normalize=True,
+            reward_ema_alpha=1.0,
+            reward_clip_val=2.0,
+        )
+    )
+    grn.train()
+
+    inputs_a = torch.full((1, 4, 16), 0.5)
+    rewards_a = torch.full((1, 4, 6), 3.0)
+    past_cache = None
+    for t in range(4):
+        _, _, past_cache = grn(
+            inputs_a[:, t : t + 1, :],
+            reward_values=rewards_a[:, t : t + 1, :],
+            past_key_values=past_cache,
+            use_cache=True,
+        )
+    assert past_cache is not None
+    mean_a = past_cache["running_mean"].clone()
+    std_a = past_cache["running_std"].clone()
+    # First call observed reward == 3, so mean should be 3.
+    assert torch.allclose(mean_a, torch.full((1, 6), 3.0), atol=1e-5)
+    assert (std_a >= 0.0).all()
+
+    # Second pass with reward == 5 should still rely on the cached mean.
+    inputs_b = torch.full((1, 4, 16), 0.5)
+    rewards_b = torch.full((1, 4, 6), 5.0)
+    for t in range(4):
+        _, _, past_cache = grn(
+            inputs_b[:, t : t + 1, :],
+            reward_values=rewards_b[:, t : t + 1, :],
+            past_key_values=past_cache,
+            use_cache=True,
+        )
+    # With alpha=1.0 the mean is overwritten by the new batch mean.
+    mean_b = past_cache["running_mean"]
+    assert torch.allclose(mean_b, torch.full((1, 6), 5.0), atol=1e-5)
+
+
+def test_when_gated_reward_net_normalize_disabled_then_no_running_stats_in_cache() -> (
+    None
+):
+    r"""When ``reward_normalize=False`` (default) the cache must not
+    carry running_mean / running_std entries.
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=16,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=3,
+        )
+    )
+    grn.eval()
+    inputs = torch.randn(1, 4, 16)
+    rewards = torch.randn(1, 4, 6)
+    out, _, new_cache = grn(inputs, reward_values=rewards, use_cache=True)
+    assert out.shape == (1, 4, 16)
+    assert "running_mean" not in new_cache
+    assert "running_std" not in new_cache

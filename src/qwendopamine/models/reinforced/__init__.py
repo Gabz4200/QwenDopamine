@@ -11,6 +11,7 @@ from qwendopamine.models.reinforced.delta import (
     GatedRewardNetConfig,
     ReinforcedDeltaLayer,
     ValueBaselineEMA,
+    normalize_reward_for_advantage,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "GatedRewardNetConfig",
     "ReinforcedDeltaLayer",
     "ValueBaselineEMA",
+    "normalize_reward_for_advantage",
 ]

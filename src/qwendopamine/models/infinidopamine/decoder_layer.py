@@ -469,6 +469,13 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         layer_cache.reward_recurrent_state = new_cache["recurrent_state"]
         layer_cache.reward_value_baseline = new_cache["value_baseline"]
         layer_cache.reward_conv_states = new_cache["conv_state"]
+        # Reward normalisation EMA statistics persist when present.
+        running_mean = new_cache.get("running_mean")
+        running_std = new_cache.get("running_std")
+        if running_mean is not None:
+            layer_cache.reward_running_mean = running_mean
+        if running_std is not None:
+            layer_cache.reward_running_std = running_std
 
     def forward(
         self,

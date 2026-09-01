@@ -56,6 +56,24 @@ class GatedRewardNetConfig:
     positive integer ``r`` the state is factored as ``U @ V.T`` with
     ``U, V ∈ R^{B × d × r}`` to reduce memory and compute. ``r`` should be
     much smaller than ``d`` (e.g. 16/32/64 for d=4096)."""
+    reward_normalize: bool = False
+    r"""When True, ``GatedRewardNet`` standardises ``reward_values`` to
+    advantage-like scale before they enter the reinforced delta loop. The
+    spec recommends feeding advantage-like signals (TD error, GAE,
+    normalised return-to-go, surprise) rather than raw sparse environment
+    reward. This flag applies the same standardisation inline so raw
+    reward inputs do not destabilise the advantage gate."""
+    reward_normalize_eps: float = 1e-5
+    r"""Numerical epsilon for the running-std division in
+    :func:`normalize_reward_for_advantage`."""
+    reward_clip_val: float = 5.0
+    r"""Symmetric clip value applied to the standardised reward. Keeps
+    out-of-distribution spikes (raw environment reward, accidentally huge
+    TD errors) from blowing up the advantage projections."""
+    reward_ema_alpha: float = 0.1
+    r"""EMA decay for the running mean and std of the reward values. The
+    running statistics persist in the cache so they survive step-by-step
+    generation."""
 
 
 class ValueBaselineEMA(nn.Module):
@@ -565,6 +583,10 @@ class ReinforcedDeltaLayer(nn.Module):
         advantage_dropout: float = 0.0,
         memory_rank: int | None = None,
         advantage_legacy_coupled: bool = False,
+        reward_normalize: bool = False,
+        reward_normalize_eps: float = 1e-5,
+        reward_clip_val: float = 5.0,
+        reward_ema_alpha: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -589,6 +611,10 @@ class ReinforcedDeltaLayer(nn.Module):
         self.advantage_dropout = advantage_dropout
         self.memory_rank = memory_rank
         self.advantage_legacy_coupled = advantage_legacy_coupled
+        self.reward_normalize = reward_normalize
+        self.reward_normalize_eps = reward_normalize_eps
+        self.reward_clip_val = reward_clip_val
+        self.reward_ema_alpha = reward_ema_alpha
 
         # Statistics extraction and normalization (local import to avoid circular)
         from qwendopamine.models.blocks.reward import (
@@ -711,6 +737,92 @@ class ReinforcedDeltaLayer(nn.Module):
     def extra_repr(self) -> str:
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""
         return f"d_model={self.d_model}, k_stats={self.k_stats}{rank}"
+
+
+def normalize_reward_for_advantage(
+    reward_values: Tensor,
+    running_mean: Tensor | None,
+    running_std: Tensor | None,
+    *,
+    alpha: float = 0.1,
+    eps: float = 1e-5,
+    clip_val: float = 5.0,
+    training: bool = True,
+) -> tuple[Tensor, Tensor, Tensor]:
+    r"""Standardise raw reward values to advantage-like scale.
+
+    Implements the spec recipe:
+
+        advantage = (reward - running_mean) / (running_std + eps)
+        advantage = clamp(advantage, -clip_val, +clip_val)
+
+    where ``running_mean`` and ``running_std`` are per-channel EMA
+    statistics updated on every call when ``training=True``. Both statistics
+    are returned so the caller can persist them in the cache and recover
+    them across step-by-step decoding.
+
+    Args:
+        reward_values: (B, L, k) raw reward tensor. Any broadcastable shape
+            that resolves to (B, L, k) is accepted.
+        running_mean: optional (B, k) previous running mean. ``None``
+            initialises to zeros; the first batch starts from zero and the
+            EMA will quickly adapt.
+        running_std: optional (B, k) previous running std (positive). ``None``
+            initialises to ones; the EMA is the absolute deviation, so the
+            first step will dominate the std estimate.
+        alpha: EMA decay in (0, 1]. Larger values weight recent observations
+            more heavily. ``0`` disables the EMA update.
+        eps: numerical floor for the std division.
+        clip_val: symmetric clip bound applied to the standardised reward.
+            ``inf`` disables the clip.
+        training: when True the running statistics are EMA-updated; when
+            False the function is a no-op for the running stats
+            (still applies the standardisation and clip with the
+            supplied running mean / std).
+
+    Returns:
+        ``(normalised, new_mean, new_std)``. ``normalised`` has the same
+        shape as ``reward_values``; ``new_mean`` and ``new_std`` are
+        (B, k) EMA-updated statistics.
+    """
+    if reward_values.dim() == 2:
+        # (B, k) -> (B, 1, k) so the broadcast below matches the (B, L, k)
+        # convention used elsewhere in the layer.
+        reward_values = reward_values.unsqueeze(1)
+    if reward_values.dim() != 3:
+        raise ValueError(
+            f"reward_values must be broadcastable to (B, L, k); got shape "
+            f"{tuple(reward_values.shape)}."
+        )
+    B, _, k = reward_values.shape
+    device = reward_values.device
+    dtype = reward_values.dtype
+    if running_mean is None:
+        running_mean = torch.zeros(B, k, device=device, dtype=dtype)
+    if running_std is None:
+        running_std = torch.ones(B, k, device=device, dtype=dtype)
+
+    if training and alpha > 0.0:
+        batch_mean = reward_values.mean(dim=1)
+        # E[|X - E[X]|^2] - E[X]^2 to keep the EMA of std cheap and
+        # numerically stable under bf16.
+        centered_sq = (reward_values - batch_mean.unsqueeze(1)).pow(2)
+        batch_var = centered_sq.mean(dim=1)
+        batch_std = batch_var.clamp(min=0.0).sqrt()
+
+        new_mean = (1.0 - alpha) * running_mean + alpha * batch_mean
+        new_std = (1.0 - alpha) * running_std + alpha * batch_std
+    else:
+        new_mean = running_mean
+        new_std = running_std
+
+    std_safe = new_std.unsqueeze(1) + eps
+    normalised = (reward_values - new_mean.unsqueeze(1)) / std_safe
+    if clip_val < float("inf"):
+        normalised = normalised.clamp(min=-clip_val, max=clip_val)
+    return normalised, new_mean, new_std
+
+
 class _DefaultQueryFiLM(nn.Module):
     """Default FiLM encoder that maps reward statistics to (gamma, beta)."""
 
@@ -759,6 +871,10 @@ class GatedRewardNet(nn.Module):
         self.hidden_dropout = config.hidden_dropout
         self.memory_rank = config.memory_rank
         self.advantage_legacy_coupled = config.advantage_legacy_coupled
+        self.reward_normalize = config.reward_normalize
+        self.reward_normalize_eps = config.reward_normalize_eps
+        self.reward_clip_val = config.reward_clip_val
+        self.reward_ema_alpha = config.reward_ema_alpha
         self.mode = "recurrent"
         self.backend = "torch-recurrent"
         self.compile_backend = False
@@ -779,6 +895,10 @@ class GatedRewardNet(nn.Module):
             advantage_dropout=config.advantage_dropout,
             memory_rank=config.memory_rank,
             advantage_legacy_coupled=config.advantage_legacy_coupled,
+            reward_normalize=config.reward_normalize,
+            reward_normalize_eps=config.reward_normalize_eps,
+            reward_clip_val=config.reward_clip_val,
+            reward_ema_alpha=config.reward_ema_alpha,
         )
         self.output_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
         torch.nn.init.xavier_uniform_(self.output_proj.weight, gain=2**-2.5)
@@ -789,15 +909,21 @@ class GatedRewardNet(nn.Module):
         Tensor | tuple[Tensor, Tensor] | None,
         tuple[Tensor | None, Tensor | None] | None,
         Tensor | None,
+        Tensor | None,
+        Tensor | None,
     ]:
-        r"""Return ``(recurrent_state, conv_state, value_baseline)`` from cache.
+        r"""Return ``(recurrent_state, conv_state, value_baseline,
+        running_mean, running_std)`` from cache.
 
-        Falls back to ``None`` entries when the cache is missing or has the
-        wrong type. The reward branch keeps a fully separate cache namespace
-        (``reward_*`` fields) from the GDN-2 branch to avoid clobbering.
+        ``running_mean`` and ``running_std`` are per-channel EMA statistics
+        maintained by :func:`normalize_reward_for_advantage`. They live in
+        the same reward-namespaced cache fields as the other state and
+        survive step-by-step generation. ``None`` is returned when the
+        cache is missing or has the wrong type so the caller can fall
+        back to a fresh initialisation.
         """
         if past_key_values is None:
-            return None, None, None
+            return None, None, None, None, None
 
         def _extract_conv(conv: Any) -> tuple[Tensor | None, Tensor | None] | None:
             if conv is None:
@@ -839,14 +965,18 @@ class GatedRewardNet(nn.Module):
                     conv = getattr(lc, "conv_states", None)
                 conv_pair = _extract_conv(conv)
                 baseline = getattr(lc, "reward_value_baseline", None)
-                return rec, conv_pair, baseline
-            return None, None, None
+                running_mean = getattr(lc, "reward_running_mean", None)
+                running_std = getattr(lc, "reward_running_std", None)
+                return rec, conv_pair, baseline, running_mean, running_std
+            return None, None, None, None, None
         if isinstance(past_key_values, dict):
             rec = past_key_values.get("recurrent_state")
             conv_pair = _extract_conv(past_key_values.get("conv_state"))
             baseline = past_key_values.get("value_baseline")
-            return rec, conv_pair, baseline
-        return None, None, None
+            running_mean = past_key_values.get("running_mean")
+            running_std = past_key_values.get("running_std")
+            return rec, conv_pair, baseline, running_mean, running_std
+        return None, None, None, None, None
 
     def _normalize_reward_tensor(
         self,
@@ -896,7 +1026,9 @@ class GatedRewardNet(nn.Module):
             seq_len = 1
         else:
             raise ValueError(f"Expected hidden_states dim 2 or 3, got {hidden_states.dim()}.")
-        rec_state, conv_state, value_baseline = self._get_cache(past_key_values)
+        rec_state, conv_state, value_baseline, running_mean, running_std = self._get_cache(
+            past_key_values
+        )
         S_curr = rec_state
         V_curr = value_baseline
         k_cache = conv_state[0] if conv_state is not None else None
@@ -908,6 +1040,16 @@ class GatedRewardNet(nn.Module):
             device=hidden_states.device,
             dtype=hidden_states.dtype,
         )
+        if self.reward_normalize:
+            reward_values, running_mean, running_std = normalize_reward_for_advantage(
+                reward_values,
+                running_mean,
+                running_std,
+                alpha=self.reward_ema_alpha,
+                eps=self.reward_normalize_eps,
+                clip_val=self.reward_clip_val,
+                training=self.training,
+            )
         outputs = []
         for t in range(seq_len):
             x_t = hidden_states[:, t, :]
@@ -934,6 +1076,9 @@ class GatedRewardNet(nn.Module):
                 "value_baseline": V_curr,
                 "conv_state": (k_cache, v_cache),
             }
+            if self.reward_normalize:
+                new_cache["running_mean"] = running_mean
+                new_cache["running_std"] = running_std
         return out, None, new_cache
     def extra_repr(self) -> str:
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""

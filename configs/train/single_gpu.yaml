@@ -28,3 +28,8 @@ checkpoint:
   dir: logs/train/runs/${now:%Y-%m-%d_%H%M%S}
   save_top_k: 5
   resume_from_checkpoint: null
+
+parallel_reward:
+  enabled: ${model.use_parallel_reward}
+  log_interval: ${train.log_interval}
+  warn_branch_ratio_above: 0.10

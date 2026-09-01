@@ -34,3 +34,11 @@ quantization:
   enabled: true
   method: int8
   compute_dtype: bfloat16
+
+# Parallel GatedRewardNet monitoring. When the parallel branch is attached
+# the trainer logs reward gate norms, branch output norms, omega, baseline,
+# and cache utilisation on a fixed cadence to make the new state observable.
+parallel_reward:
+  enabled: ${model.use_parallel_reward}
+  log_interval: ${train.log_interval}
+  warn_branch_ratio_above: 0.10

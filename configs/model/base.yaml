@@ -22,3 +22,14 @@ advantage_dropout_prob: 0.05
 gate_loss_weight: 0.01
 gate_target_balance: 0.5
 rms_norm_eps: 1.0e-6
+
+# Parallel GatedRewardNet branch.
+# Disabled by default; opt-in to attach a reward-modulated parallel mixer to
+# every attention-only layer or to an explicit allow-list of layer indices.
+# The data-dependent gate is initialised so sigmoid(bias) ≈ 0.0067 so a
+# pretrained backbone is left effectively untouched at the start of training.
+use_parallel_reward: false
+parallel_reward_layers: []
+reward_gate_init_bias: -5.0
+reward_memory_rank: null
+# null = dense d×d fast-weight state. 8/16/32/64 = low-rank factorisation.

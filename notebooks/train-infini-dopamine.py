@@ -163,7 +163,27 @@ LORA_TARGET_MODULES = [
     "delta_layer.memory_core.w_proj", "delta_layer.memory_core.e_proj",
     "advantage_gate.advantage_proj",
     "baseline_tracker.alpha_proj",
+    "reward_gate_proj",
+    "reward_branch_norm",
+    "reward_branch.output_proj",
+    "reward_branch.delta_layer.q_proj",
+    "reward_branch.delta_layer.memory_core.k_proj", "reward_branch.delta_layer.memory_core.v_proj",
+    "reward_branch.delta_layer.memory_core.w_proj", "reward_branch.delta_layer.memory_core.e_proj",
+    "reward_branch.delta_layer.baseline_tracker.alpha_proj",
+    "reward_branch.delta_layer.advantage_gate.advantage_proj",
 ]
+
+# Parallel GatedRewardNet branch configuration.
+# Set USE_PARALLEL_REWARD=True to attach the dopamine branch to every
+# attention-only layer. The branch is gated by sigmoid(W x + b) with
+# REWARD_GATE_INIT_BIAS=-5 so sigmoid(b) ≈ 0.0067 at the start of training.
+USE_PARALLEL_REWARD: bool = False
+PARALLEL_REWARD_LAYERS: tuple[int, ...] = ()
+REWARD_GATE_INIT_BIAS: float = -5.0
+REWARD_MEMORY_RANK: int | None = None
+PARALLEL_REWARD_GATE_LOSS_WEIGHT: float = 0.0
+PARALLEL_REWARD_WARN_RATIO: float = 0.10
+PARALLEL_REWARD_LOG_INTERVAL: int = 50
 
 REWARD_LOSS_TYPE: str = "nll"  # "nll" | "ce" | "ppl"
 REWARD_SCALE: float = 1.0
@@ -199,8 +219,15 @@ WIKITEXT_MAX_ROWS: int = 50_000
 
 # %% [markdown.5]
 # ## Model Initialization & Weight Transfer
-# 
+#
 # Initializes `InfiniDopamineForConditionalGeneration` matching `Qwen/Qwen3.5-0.8B` architecture specifications and transfers overlapping base weights.
+#
+# The main mixer of every decoder layer is selected explicitly by
+# `config.layer_types[layer_idx]`. The `GatedRewardNet` branch is no longer
+# implicitly swapped in for layers that precede attention — it is attached
+# as a **parallel** branch with a data-dependent sigmoid gate. Toggle
+# `USE_PARALLEL_REWARD` to opt in for every attention-only layer, or pass
+# an explicit `PARALLEL_REWARD_LAYERS` tuple to choose specific indices.
 
 # %% [code.6]
 def _as_obj(d: dict) -> Any:
@@ -238,6 +265,12 @@ def build_text_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineTextConfig:
         linear_value_head_dim=getattr(src, "linear_value_head_dim", 128),
         mlp_only_layers=getattr(src, "mlp_only_layers", []),
         mamba_ssm_dtype=getattr(src, "mamba_ssm_dtype", "float32"),
+        # Parallel GatedRewardNet branch opt-in.
+        use_parallel_reward=USE_PARALLEL_REWARD,
+        parallel_reward_layers=PARALLEL_REWARD_LAYERS,
+        reward_gate_init_bias=REWARD_GATE_INIT_BIAS,
+        reward_memory_rank=REWARD_MEMORY_RANK,
+        parallel_reward_gate_loss_weight=PARALLEL_REWARD_GATE_LOSS_WEIGHT,
     )
     layer_types = getattr(src, "layer_types", None)
     if layer_types is not None:
@@ -874,9 +907,17 @@ print(f"Tokenized columns : {train_dataset.column_names}")
 print(f"Max seq length    : {MAX_SEQ_LENGTH}")
 
 # %% [markdown.14]
-# ## Reward Conditioning & Custom Trainer
-# 
-# Computes per-token pseudo-rewards via detached base-model loss and passes `reward_values` into `InfiniDopamine` during training.
+# ## Reward Conditioning, Parallel Branch & Custom Trainer
+#
+# Computes per-token pseudo-rewards via detached base-model loss and passes
+# `reward_values` into `InfiniDopamine` during training.
+#
+# When `USE_PARALLEL_REWARD=True` (or `PARALLEL_REWARD_LAYERS` is non-empty)
+# the trainer also exposes diagnostics for the parallel `GatedRewardNet`
+# branch: gate mean/max, effective branch contribution, EMA value baseline,
+# and fast-weight state norm. These are logged every
+# `PARALLEL_REWARD_LOG_INTERVAL` steps so the dopamine branch stays
+# observable in TensorBoard even before reward signals become meaningful.
 
 # %% [code.15]
 def build_reward_values(
@@ -972,10 +1013,47 @@ class CPTSFTTrainer(SFTTrainer):
             reward_values=reward_values,
         )
         self._global_step += 1
+
+        self._log_parallel_reward_metrics(model, outputs)
+
         loss = outputs.loss
         if return_outputs:
             return loss, outputs
         return loss
+
+    def _log_parallel_reward_metrics(self, model, outputs) -> None:
+        r"""Surface parallel reward branch diagnostics on a fixed cadence.
+
+        Uses :func:`collect_parallel_reward_metrics` so the metrics format
+        matches the one produced by :class:`TrainingLoop` and any other
+        trainer in the package. Warnings are emitted to stdout when the
+        branch starts contributing more than the configured fraction of the
+        main path norm.
+        """
+        if not USE_PARALLEL_REWARD:
+            return
+        if self._global_step % max(1, PARALLEL_REWARD_LOG_INTERVAL) != 0:
+            return
+        from qwendopamine.training import (
+            collect_parallel_reward_metrics,
+            maybe_warn_branch_ratio,
+        )
+
+        cache = getattr(outputs, "past_key_values", None)
+        metrics = collect_parallel_reward_metrics(
+            model,
+            past_key_values=cache,
+        )
+        if not metrics:
+            return
+        formatted = ", ".join(
+            f"{name}={value:.4f}" if isinstance(value, float) else f"{name}={value}"
+            for name, value in metrics.items()
+        )
+        print(f"[parallel_reward step={self._global_step}] {formatted}")
+        warning = maybe_warn_branch_ratio(metrics, PARALLEL_REWARD_WARN_RATIO)
+        if warning is not None:
+            print(f"[parallel_reward WARN] {warning}")
 
 
 dummy_ids = torch.tensor(

@@ -364,6 +364,7 @@ class FamilyModel(Qwen3VLModel):
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(
                 input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
             )

@@ -12,7 +12,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 )
 
 
-@strict
+@strict(accept_kwargs=True)
 class Qwen3_5TextConfig(Qwen3NextConfig):
     r"""Text configuration for Qwen3.5 models."""
     model_type = "qwen3_5_text"
@@ -45,6 +45,14 @@ class Qwen3_5TextConfig(Qwen3NextConfig):
     intermediate_size: int = 12288
     num_hidden_layers: int = 32
     num_key_value_heads: int = 4
+    intermediate_size_linear: int | None = None
+    r"""Optional intermediate size for the linear-mixer MLP head (when the
+    linear block is used as the main mixer). ``None`` falls back to
+    :attr:`intermediate_size`."""
+    attn_implementation: str | None = None
+    r"""Optional attention implementation override (e.g. ``"eager"``,
+    ``"sdpa"``). Mirrors :attr:`transformers.PretrainedConfig._attn_implementation`
+    so callers can use the public name in config kwargs."""
 
     @property
     def mlp_only_layers(self) -> list[int]:

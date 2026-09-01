@@ -12,7 +12,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 )
 
 
-@strict
+@strict(accept_kwargs=True)
 class InfiniDopamineTextConfig(Qwen3NextConfig):
     r"""Text configuration for InfiniDopamine models."""
     model_type = "infinidopamine_text"
@@ -74,6 +74,14 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
     its initialisation (``sigmoid(reward_gate_init_bias)``). ``0`` disables
     it. With weight 1.0 the dopamine branch stays effectively silent until
     the rest of the model has stabilised."""
+    intermediate_size_linear: int | None = None
+    r"""Optional intermediate size for the linear-mixer MLP head (when the
+    linear block is used as the main mixer). ``None`` falls back to
+    :attr:`intermediate_size`."""
+    attn_implementation: str | None = None
+    r"""Optional attention implementation override (e.g. ``"eager"``,
+    ``"sdpa"``). Mirrors :attr:`transformers.PretrainedConfig._attn_implementation`
+    so callers can use the public name in config kwargs."""
 
     @property
     def gate_reg_coef(self) -> float:

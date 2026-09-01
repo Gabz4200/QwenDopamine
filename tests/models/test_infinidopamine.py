@@ -271,7 +271,7 @@ def test_when_sliding_window_configured_then_attention_is_restricted_to_window()
         max_position_embeddings=2048,
         sliding_window=3,
         layer_types=["full_attention"],
-        _attn_implementation="eager",
+        attn_implementation="eager",
     )
     model = InfiniDopamineTextModel(cfg)
     model.eval()

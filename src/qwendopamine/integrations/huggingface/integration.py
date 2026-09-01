@@ -1,202 +1,42 @@
+"""High-level HF integration facade for QwenDopamine models.
+
+:class:`HFIntegration` groups registration helpers (AutoConfig / AutoModel /
+AutoModelForCausalLM) and load / save / quantize entry points. All methods are
+static so callers can pick the ones they need without instantiating.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 from torch import nn
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedConfig as _BaseConfig
-
-    from qwendopamine.models.gdn2.config import GDN2Config
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-        InfiniDopamineTextConfig,
-    )
-else:
-    try:
-        from transformers import PreTrainedConfig as _BaseConfig
-    except ModuleNotFoundError:
-
-        class _BaseConfig:
-            model_type: str = ""
-
-            def __init__(self, **kwargs: Any) -> None:
-                for k, v in kwargs.items():
-                    setattr(self, k, v)
-
-
-try:
-    from transformers import (
-        AutoConfig,
-        AutoModel,
-        AutoModelForCausalLM,
-        AutoTokenizer,
-        BitsAndBytesConfig,
-        PreTrainedModel,
-        PreTrainedTokenizer,
-        PreTrainedTokenizerFast,
-        QuantoConfig,
-    )
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-
-    @dataclass
-    class _FallbackBitsAndBytesConfig:
-        load_in_8bit: bool = False
-        llm_int8_enable_fp32_cpu_offload: bool = False
-        load_in_4bit: bool = False
-        bnb_4bit_quant_type: str = "nf4"
-        bnb_4bit_compute_dtype: Any = None
-
-    @dataclass
-    class _FallbackQuantoConfig:
-        weights: str = "int8"
-
-    AutoConfig = None
-    AutoModel = None
-    AutoModelForCausalLM = None
-    AutoTokenizer = None
-    BitsAndBytesConfig = _FallbackBitsAndBytesConfig
-    PreTrainedModel = Any
-    PreTrainedTokenizer = Any
-    PreTrainedTokenizerFast = Any
-    QuantoConfig = _FallbackQuantoConfig
-
-PreTrainedConfig = _BaseConfig
-
-
-class GDN2HFConfig(_BaseConfig):
-    r"""Hugging Face PreTrainedConfig adapter for GDN-2 module configuration."""
-
-    model_type = "gdn2"
-
-    def __init__(
-        self,
-        hidden_size: int = 2048,
-        num_heads: int = 16,
-        head_dim: int = 128,
-        num_v_heads: int | None = None,
-        expand_v: float = 1.0,
-        conv_size: int = 4,
-        conv_bias: bool = False,
-        allow_neg_eigval: bool = False,
-        norm_eps: float = 1e-5,
-        block_size: int = 4096,
-        vocab_size: int = 32000,
-        **kwargs: Any,
-    ) -> None:
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
-        self.head_dim = head_dim
-        self.num_v_heads = num_v_heads
-        self.expand_v = expand_v
-        self.conv_size = conv_size
-        self.conv_bias = conv_bias
-        self.allow_neg_eigval = allow_neg_eigval
-        self.norm_eps = norm_eps
-        self.block_size = block_size
-        self.vocab_size = vocab_size
-        super().__init__(**kwargs)
-
-    @classmethod
-    def from_gdn2_config(
-        cls, config: GDN2Config | dict[str, Any] | Any, **kwargs: Any
-    ) -> GDN2HFConfig:
-        r"""Build a GDN2HFConfig instance from a GDN2Config or dict."""
-        data: dict[str, Any] = {}
-        if hasattr(config, "hidden_size"):
-            data = {
-                "hidden_size": int(getattr(config, "hidden_size", 2048)),
-                "num_heads": int(getattr(config, "num_heads", 16)),
-                "head_dim": int(getattr(config, "head_dim", 128)),
-                "num_v_heads": getattr(config, "num_v_heads", None),
-                "expand_v": float(getattr(config, "expand_v", 1.0)),
-                "conv_size": int(getattr(config, "conv_size", 4)),
-                "conv_bias": bool(getattr(config, "conv_bias", False)),
-                "allow_neg_eigval": bool(getattr(config, "allow_neg_eigval", False)),
-                "norm_eps": float(getattr(config, "norm_eps", 1e-5)),
-                "block_size": int(getattr(config, "block_size", 4096)),
-                "vocab_size": int(getattr(config, "vocab_size", 32000)),
-            }
-        elif isinstance(config, dict):
-            data = dict(config)
-        data.update(kwargs)
-        return cls(**data)
-
-    def to_gdn2_config(self) -> GDN2Config:
-        r"""Convert back to GDN2Config dataclass."""
-        from qwendopamine.models.gdn2.config import GDN2Config
-
-        return GDN2Config(
-            hidden_size=self.hidden_size,
-            num_heads=self.num_heads,
-            head_dim=self.head_dim,
-            num_v_heads=self.num_v_heads,
-            expand_v=self.expand_v,
-            conv_size=self.conv_size,
-            conv_bias=self.conv_bias,
-            allow_neg_eigval=self.allow_neg_eigval,
-            norm_eps=self.norm_eps,
-            block_size=self.block_size,
-            vocab_size=self.vocab_size,
-        )
-
-
-class Qwen35GDN2HFConfig(GDN2HFConfig):
-    r"""Hugging Face PreTrainedConfig adapter for Qwen3.5 GDN-2 variant."""
-
-    model_type = "qwen35_gdn2"
-
-
-class InfiniDopamineGDN2HFConfig(GDN2HFConfig):
-    r"""Hugging Face PreTrainedConfig adapter for InfiniDopamine GDN-2 variant."""
-
-    model_type = "infinidopamine_gdn2"
-
-
-class GDN2HFBlock(nn.Module):
-    r"""Hugging Face compatible nn.Module block wrapper around GatedDeltaNet2."""
-
-    def __init__(
-        self,
-        config: PreTrainedConfig | GDN2Config | dict[str, Any] | Any,
-        layer_idx: int | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__()
-        from qwendopamine.models.gdn2 import GatedDeltaNet2
-
-        if isinstance(config, GDN2HFConfig):
-            self.config: GDN2HFConfig = config
-        else:
-            self.config = GDN2HFConfig.from_gdn2_config(config, **kwargs)
-        self.layer_idx = layer_idx
-        self.mixer = GatedDeltaNet2(self.config, layer_idx=layer_idx, **kwargs)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        past_key_values: Any = None,
-        use_cache: bool | None = False,
-        output_attentions: bool | None = False,
-        **kwargs: Any,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, Any]:
-        return self.mixer(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            **kwargs,
-        )
+from qwendopamine.integrations.huggingface.block import GDN2HFBlock
+from qwendopamine.integrations.huggingface.configs import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    GDN2HFConfig,
+    PreTrainedConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    QuantoConfig,
+)
 
 
 class HFIntegration:
     @staticmethod
     def register_gdn2_hf() -> None:
         r"""Register GDN2HFConfig, Qwen35GDN2HFConfig, and InfiniDopamineGDN2HFConfig with AutoConfig."""
+        from qwendopamine.integrations.huggingface.configs import (
+            InfiniDopamineGDN2HFConfig,
+            Qwen35GDN2HFConfig,
+        )
+
         if AutoConfig is not None and hasattr(AutoConfig, "register"):
             AutoConfig.register("gdn2", GDN2HFConfig, exist_ok=True)
             AutoConfig.register("qwen35_gdn2", Qwen35GDN2HFConfig, exist_ok=True)
@@ -383,7 +223,7 @@ class HFIntegration:
         num_hidden_layers: int = 24,
         sliding_window: int = 1024,
         **kwargs: Any,
-    ) -> InfiniDopamineTextConfig:
+    ) -> Any:
         r"""Build an InfiniDopamineTextConfig instance with sensible defaults."""
         from qwendopamine.models.infinidopamine import InfiniDopamineTextConfig
 
@@ -396,9 +236,9 @@ class HFIntegration:
 
     @staticmethod
     def build_infinidopamine_model(
-        config: InfiniDopamineTextConfig | dict[str, Any] | None = None,
+        config: Any = None,
         **kwargs: Any,
-    ) -> InfiniDopamineForCausalLM:
+    ) -> Any:
         r"""Build an InfiniDopamineForCausalLM model instance."""
         from qwendopamine.models.infinidopamine import (
             InfiniDopamineForCausalLM,
@@ -455,7 +295,7 @@ class HFIntegration:
 
     @staticmethod
     def build_gdn2_hf_config(
-        config_or_name: str | GDN2Config | dict[str, Any] | Any = "gdn2_1.3B",
+        config_or_name: str | Any = "gdn2_1.3B",
         **kwargs: Any,
     ) -> GDN2HFConfig:
         r"""Build a GDN2HFConfig instance from a name or config object."""
@@ -468,7 +308,7 @@ class HFIntegration:
 
     @staticmethod
     def build_gdn2_hf_block(
-        config: PreTrainedConfig | GDN2Config | dict[str, Any] | Any,
+        config: PreTrainedConfig | Any,
         layer_idx: int | None = None,
         **kwargs: Any,
     ) -> GDN2HFBlock:
@@ -599,6 +439,4 @@ class HFIntegration:
         model.save_pretrained(save_directory)
 
 
-# Registration is opt-in to avoid import-time side effects.
-# Call ``HFIntegration.register_all_hf()`` explicitly from your entrypoint
-# if you want all QwenDopamine configs available through ``transformers.AutoConfig``.
+__all__ = ["HFIntegration"]

@@ -1,5 +1,6 @@
 """GDN-2 GPT Decoder Architecture (lit_gpt-inspired hybrid transformer with GatedDeltaNet2)."""
 
+from qwendopamine.models.core.normalization import RMSNorm
 from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
 from qwendopamine.models.gdn2_gpt.model import (
     GDN2GPT,
@@ -11,7 +12,6 @@ from qwendopamine.models.gdn2_gpt.model import (
     build_rope_cache,
     compute_model_params,
 )
-from qwendopamine.models.normalization import RMSNorm
 
 __all__ = [
     "GDN2GPT",

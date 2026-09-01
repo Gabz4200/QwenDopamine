@@ -19,20 +19,29 @@ from typing import ClassVar
 
 import torch
 from torch import nn
-
-from qwendopamine.models._hf_compat import (
-    BaseModelOutputWithPast,
-    BaseModelOutputWithPooling,
-    Cache,
-    causal_conv1d_fn,
-    causal_conv1d_update,
-    init,
-    logging,
-    torch_chunk_gated_delta_rule,
-    torch_recurrent_gated_delta_rule,
-    unwrap_gated_delta_rule_fns,
+from transformers import initialization as init
+from transformers import logging
+from transformers.cache_utils import Cache
+from transformers.integrations import (
     use_kernel_forward_from_hub,
     use_kernelized_func,
+)
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    BaseModelOutputWithPooling,
+)
+from transformers.models.qwen3_next.modeling_qwen3_next import (
+    causal_conv1d_fn,
+    causal_conv1d_update,
+    torch_chunk_gated_delta_rule,
+    torch_recurrent_gated_delta_rule,
+)
+
+from qwendopamine.models._transformers_utils import unwrap_gated_delta_rule_fns
+from qwendopamine.models.qwen35.configs import (
+    Qwen3_5Config,
+    Qwen3_5TextConfig,
+    Qwen3_5VisionConfig,
 )
 
 unwrap_gated_delta_rule_fns()
@@ -40,11 +49,6 @@ unwrap_gated_delta_rule_fns()
 logger = logging.get_logger(__name__)
 
 
-from qwendopamine.models.qwen35.configs import (
-    Qwen3_5Config,
-    Qwen3_5TextConfig,
-    Qwen3_5VisionConfig,
-)
 from qwendopamine.models.qwen35.decoder_layer import (
     Qwen3_5Attention,
     Qwen3_5DecoderLayer,

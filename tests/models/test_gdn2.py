@@ -7,12 +7,12 @@ import torch
 from transformers.cache_utils import DynamicCache
 
 from qwendopamine.models.blocks.registry import BLOCKS, build_block
-from qwendopamine.models.gdn2.config import GDN2Config
-from qwendopamine.models.gdn2.gdn2 import (
+from qwendopamine.models.gdn2 import (
     GatedDeltaNet2,
     torch_chunk_gdn2,
     torch_recurrent_gdn2,
 )
+from qwendopamine.models.gdn2.config import GDN2Config
 
 
 class DummyConfig:

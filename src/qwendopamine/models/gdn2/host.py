@@ -16,9 +16,9 @@ from typing import Any, cast
 import torch
 from torch import nn
 
+from qwendopamine.models.core.normalization import RMSNorm
 from qwendopamine.models.gdn2 import GatedDeltaNet2
 from qwendopamine.models.gdn2.config import GDN2Config
-from qwendopamine.models.normalization import RMSNorm
 
 
 class Block(nn.Module):

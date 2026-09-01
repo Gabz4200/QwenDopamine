@@ -8,15 +8,15 @@ import torch
 from torch import nn
 
 from qwendopamine.models.blocks import build_block
-from qwendopamine.models.config_adapter import ConfigAdapter
-from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
+from qwendopamine.models.core.config_adapter import ConfigAdapter
+from qwendopamine.models.core.embeddings import PositionEmbeddings, TokenEmbeddings
+from qwendopamine.models.core.normalization import RMSNorm
+from qwendopamine.models.core.output_head import LMHead
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
     InfiniDopamineForCausalLM,
     InfiniDopamineTextConfig,
 )
-from qwendopamine.models.normalization import RMSNorm
-from qwendopamine.models.output_head import LMHead
 from qwendopamine.models.qwen35 import (
     Qwen3_5Config,
     Qwen3_5ForCausalLM,

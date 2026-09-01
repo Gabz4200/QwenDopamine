@@ -6,6 +6,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+# Direct import (was previously from qwendopamine.models.gdn2.gdn2)
+from qwendopamine.models.gdn2 import GatedDeltaNet2
 from qwendopamine.models.gdn2 import (
     GatedDeltaNet2 as LegacyGatedDeltaNet2,
 )
@@ -22,15 +24,17 @@ from qwendopamine.models.gdn2 import (
     torch_chunk_gdn2 as legacy_torch_chunk_gdn2,
 )
 from qwendopamine.models.gdn2.backend import GDN2_BACKENDS, resolve_gdn2_backend
-from qwendopamine.models.gdn2.chunk import (
+from qwendopamine.models.gdn2.ops.conv import ShortConvolution
+from qwendopamine.models.gdn2.ops.norm import RMSNormGated
+from qwendopamine.models.gdn2.recurrence.chunk import (
     compute_gdn2_intra_chunk_scores,
     compute_gdn2_wy_coefficients,
     torch_chunk_gdn2,
 )
-from qwendopamine.models.gdn2.convolution import ShortConvolution
-from qwendopamine.models.gdn2.core import gated_delta_2_step, torch_recurrent_gdn2
-from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
-from qwendopamine.models.gdn2.normalization import RMSNormGated
+from qwendopamine.models.gdn2.recurrence.recurrent import (
+    gated_delta_2_step,
+    torch_recurrent_gdn2,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -356,7 +360,7 @@ def test_when_short_convolution_no_output_state_then_none_returned() -> None:
 
 
 def test_when_pad_input_then_shapes_are_correct() -> None:
-    from qwendopamine.models.gdn2.cache_utils import get_unpad_data, pad_input
+    from qwendopamine.models.gdn2.recurrence.packing import get_unpad_data, pad_input
 
     x = torch.randn(2, 4, 64)
     attention_mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=torch.long)
@@ -368,7 +372,7 @@ def test_when_pad_input_then_shapes_are_correct() -> None:
 
 
 def test_when_index_first_axis_then_selects_correct_elements() -> None:
-    from qwendopamine.models.gdn2.cache_utils import index_first_axis
+    from qwendopamine.models.gdn2.recurrence.packing import index_first_axis
 
     x = torch.randn(2, 2, 64)  # [batch, seq, dim]
     indices = torch.tensor([0, 2, 3])  # select first token of batch 0, first of batch 1, second of batch 1
@@ -380,7 +384,7 @@ def test_when_index_first_axis_then_selects_correct_elements() -> None:
 
 
 def test_when_get_unpad_data_then_returns_correct_indices() -> None:
-    from qwendopamine.models.gdn2.cache_utils import get_unpad_data
+    from qwendopamine.models.gdn2.recurrence.packing import get_unpad_data
 
     attention_mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=torch.long)
     indices, cu_seqlens, max_seqlen = get_unpad_data(attention_mask)

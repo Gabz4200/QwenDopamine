@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-
-from qwendopamine.models._hf_compat import (
+from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionRotaryEmbedding,
 )
+
 from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
 
 

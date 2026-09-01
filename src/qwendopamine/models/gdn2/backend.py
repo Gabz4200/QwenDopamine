@@ -65,10 +65,10 @@ def resolve_gdn2_backend(
     # Safe optional Triton/FLA ops imports
     _HAS_TRITON_OPS = False
     try:
-        from qwendopamine.models.gdn2.gdn2_ops.chunk_gdn2 import (
+        from qwendopamine.models.gdn2.triton.chunk_gdn2 import (
             _HAS_TRITON_FLA as _CHUNK_HAS_TRITON,
         )
-        from qwendopamine.models.gdn2.gdn2_ops.fused_recurrent_gdn2 import (
+        from qwendopamine.models.gdn2.triton.fused_recurrent_gdn2 import (
             _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON,
         )
 

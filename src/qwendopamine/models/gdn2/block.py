@@ -29,15 +29,15 @@ from torch import nn
 from transformers.cache_utils import Cache
 
 from qwendopamine.models.gdn2.backend import resolve_gdn2_backend
-from qwendopamine.models.gdn2.cache_utils import (
+from qwendopamine.models.gdn2.ops.conv import ShortConvolution
+from qwendopamine.models.gdn2.ops.norm import RMSNormGated
+from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
+from qwendopamine.models.gdn2.recurrence.packing import (
     get_unpad_data,
     index_first_axis,
     pad_input,
 )
-from qwendopamine.models.gdn2.chunk import torch_chunk_gdn2
-from qwendopamine.models.gdn2.convolution import ShortConvolution
-from qwendopamine.models.gdn2.core import torch_recurrent_gdn2
-from qwendopamine.models.gdn2.normalization import RMSNormGated
+from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
 
 try:
     from transformers.cache_utils import LinearAttentionCacheLayerMixin
@@ -47,16 +47,16 @@ except ImportError:
 # Safe optional Triton/FLA ops imports
 _HAS_TRITON_OPS = False
 try:
-    from qwendopamine.models.gdn2.gdn2_ops.chunk_gdn2 import (
+    from qwendopamine.models.gdn2.triton.chunk_gdn2 import (
         _HAS_TRITON_FLA as _CHUNK_HAS_TRITON,
     )
-    from qwendopamine.models.gdn2.gdn2_ops.chunk_gdn2 import (
+    from qwendopamine.models.gdn2.triton.chunk_gdn2 import (
         chunk_gdn2 as _triton_chunk_gdn2,
     )
-    from qwendopamine.models.gdn2.gdn2_ops.fused_recurrent_gdn2 import (
+    from qwendopamine.models.gdn2.triton.fused_recurrent_gdn2 import (
         _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON,
     )
-    from qwendopamine.models.gdn2.gdn2_ops.fused_recurrent_gdn2 import (
+    from qwendopamine.models.gdn2.triton.fused_recurrent_gdn2 import (
         fused_recurrent_gdn2 as _triton_fused_recurrent_gdn2,
     )
 

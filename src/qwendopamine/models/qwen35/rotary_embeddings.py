@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import torch
-
-from qwendopamine.models._hf_compat import (
+from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionRotaryEmbedding,
 )
+
 from qwendopamine.models.qwen35.configs import Qwen3_5TextConfig
 
 

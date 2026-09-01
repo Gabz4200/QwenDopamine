@@ -1,6 +1,6 @@
 """InfiniDopamine modular architecture."""
 
-from qwendopamine.models.infinidopamine.modular_infinidopamine import (
+from qwendopamine.models.infinidopamine.model import (
     InfiniDopamineConfig,
     InfiniDopamineDecoderLayer,
     InfiniDopamineForCausalLM,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from qwendopamine.models.normalization import (
+from qwendopamine.models.core.normalization import (
     RMSNorm,
     RMSNormGated,
     apply_mask_to_padding_states,

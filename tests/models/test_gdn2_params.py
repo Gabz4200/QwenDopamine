@@ -36,7 +36,7 @@ def test_when_gdn2_only_model_then_param_counts_match_reality() -> None:
 def test_when_1_3b_gdn2_config_then_gdn2_core_is_31m() -> None:
     # The reference 1.3B GDN-2 head configuration (18 heads, head_dim=128).
     # Exercises the per-head value dim correction in the analytical total.
-    from qwendopamine.models.gdn2.gdn2 import GatedDeltaNet2
+    from qwendopamine.models.gdn2 import GatedDeltaNet2
 
     layer = GatedDeltaNet2(
         hidden_size=2304,

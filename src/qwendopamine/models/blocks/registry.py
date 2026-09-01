@@ -15,32 +15,30 @@ from qwendopamine.models.blocks.reward import (
 )
 
 
-# Lazy imports to avoid circular dependency (reinforced_delta <-> blocks)
+# Lazy imports to avoid circular dependency (reinforced <-> blocks)
 def _lazy_grn() -> tuple[type, type]:
-    from qwendopamine.models.gdn2.reinforced_delta import GatedRewardNet as _GRN
-    from qwendopamine.models.gdn2.reinforced_delta import (
-        GatedRewardNetConfig as _GRNConfig,
-    )
+    from qwendopamine.models.reinforced.delta import GatedRewardNet as _GRN
+    from qwendopamine.models.reinforced.delta import GatedRewardNetConfig as _GRNConfig
     return _GRN, _GRNConfig
 
 
 def _lazy_value_ema() -> type:
-    from qwendopamine.models.gdn2.reinforced_delta import ValueBaselineEMA as _V
+    from qwendopamine.models.reinforced.delta import ValueBaselineEMA as _V
     return _V
 
 
 def _lazy_adv_gate() -> type:
-    from qwendopamine.models.gdn2.reinforced_delta import AdvantageGate as _A
+    from qwendopamine.models.reinforced.delta import AdvantageGate as _A
     return _A
 
 
 def _lazy_delta_core() -> type:
-    from qwendopamine.models.gdn2.reinforced_delta import DeltaMemoryCore as _D
+    from qwendopamine.models.reinforced.delta import DeltaMemoryCore as _D
     return _D
 
 
 def _lazy_reinforced() -> type:
-    from qwendopamine.models.gdn2.reinforced_delta import ReinforcedDeltaLayer as _R
+    from qwendopamine.models.reinforced.delta import ReinforcedDeltaLayer as _R
     return _R
 
 

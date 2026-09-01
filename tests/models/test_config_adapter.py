@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from qwendopamine.models.config_adapter import (
+from qwendopamine.models.core.config_adapter import (
     _DEFAULT_HIDDEN_SIZE,
     _DEFAULT_MAX_POSITION_EMBEDDINGS,
     _DEFAULT_NUM_HIDDEN_LAYERS,

@@ -11,7 +11,7 @@ from typing import Any, cast
 import torch
 from torch import nn
 
-from qwendopamine.models.gdn2.gdn2 import (
+from qwendopamine.models.gdn2 import (
     GatedDeltaNet2,
     compute_gdn2_intra_chunk_scores,
     compute_gdn2_wy_coefficients,
@@ -95,7 +95,7 @@ def test_when_all_gdn2_model_then_overfits_small_batch() -> None:
 
 def test_when_l2norm_disabled_then_chunk_and_recurrent_still_agree() -> None:
     """Non-destructive check that the chunk path honours the L2 toggle."""
-    from qwendopamine.models.gdn2.gdn2 import torch_chunk_gdn2, torch_recurrent_gdn2
+    from qwendopamine.models.gdn2 import torch_chunk_gdn2, torch_recurrent_gdn2
 
     torch.manual_seed(1)
     b, t, h, dk, dv = 1, 9, 2, 16, 16

@@ -2,27 +2,30 @@
 
 from __future__ import annotations
 
+from typing import Unpack
+
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-from qwendopamine.models._hf_compat import (
-    Cache,
-    GradientCheckpointingLayer,
+from transformers.cache_utils import Cache
+from transformers.integrations import (
+    use_kernel_forward_from_hub,
+    use_kernelized_func,
+)
+from transformers.modeling_layers import GradientCheckpointingLayer
+from transformers.models.qwen3_next.modeling_qwen3_next import (
     Qwen3NextAttention,
     Qwen3NextGatedDeltaNet,
     Qwen3NextMLP,
     Qwen3NextRMSNorm,
-    TransformersKwargs,
-    Unpack,
-    apply_mask_to_padding_states,
     causal_conv1d_fn,
     causal_conv1d_update,
     torch_chunk_gated_delta_rule,
     torch_recurrent_gated_delta_rule,
-    use_kernel_forward_from_hub,
-    use_kernelized_func,
 )
+from transformers.utils.generic import TransformersKwargs
+
+from qwendopamine.models.core.normalization import apply_mask_to_padding_states
 from qwendopamine.models.qwen35.configs import Qwen3_5Config, Qwen3_5TextConfig
 
 

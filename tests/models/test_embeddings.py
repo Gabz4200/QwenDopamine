@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import torch
 
-from qwendopamine.models.embeddings import PositionEmbeddings, TokenEmbeddings
-from qwendopamine.models.output_head import LMHead
+from qwendopamine.models.core.embeddings import PositionEmbeddings, TokenEmbeddings
+from qwendopamine.models.core.output_head import LMHead
 
 
 def test_when_token_embeddings_forward_then_preserves_batch_seq_and_embeds() -> None:

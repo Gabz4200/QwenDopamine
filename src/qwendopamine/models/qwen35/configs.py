@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from qwendopamine.models._hf_compat import (
-    Qwen3NextConfig,
+from huggingface_hub.dataclasses import strict
+from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
+from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLConfig,
     Qwen3VLVisionConfig,
-    strict,
 )
 
 

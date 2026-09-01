@@ -27,41 +27,49 @@ layer types, and initialization hooks.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Unpack
 
 import torch
 from torch import nn
-
-from qwendopamine.models._hf_compat import (
-    BaseModelOutputWithPast,
-    BaseModelOutputWithPooling,
-    Cache,
-    CausalLMOutputWithPast,
-    DynamicCache,
+from transformers.cache_utils import Cache, DynamicCache
+from transformers.masking_utils import (
+    create_causal_mask,
+    create_recurrent_attention_mask,
+    create_sliding_window_causal_mask,
+)
+from transformers.modeling_layers import (
     GenericForSequenceClassification,
     GenericForTokenClassification,
-    PreTrainedModel,
-    Qwen3ForCausalLM,
+)
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    BaseModelOutputWithPooling,
+    CausalLMOutputWithPast,
+    SequenceClassifierOutputWithPast,
+)
+from transformers.modeling_utils import PreTrainedModel
+from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
+from transformers.models.qwen3_next.modeling_qwen3_next import (
     Qwen3NextModel,
     Qwen3NextPreTrainedModel,
+)
+from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLForConditionalGeneration,
     Qwen3VLModel,
     Qwen3VLModelOutputWithPast,
     Qwen3VLVisionModel,
-    SequenceClassifierOutputWithPast,
-    TransformersKwargs,
-    Unpack,
-    can_return_tuple,
-    capture_outputs,
-    create_causal_mask,
-    create_recurrent_attention_mask,
-    create_sliding_window_causal_mask,
-    expand_position_ids_to_multimodal,
     get_vision_attention_seqlens,
     get_vision_interpolation_indices_and_weights,
     get_vision_position_ids,
+)
+from transformers.utils import can_return_tuple
+from transformers.utils.generic import (
+    TransformersKwargs,
     merge_with_config_defaults,
 )
+from transformers.utils.output_capturing import capture_outputs
+
+from qwendopamine.models._transformers_utils import expand_position_ids_to_multimodal
 
 
 class FamilyPreTrainedModel(Qwen3NextPreTrainedModel):

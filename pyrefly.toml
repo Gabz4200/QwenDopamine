@@ -61,7 +61,63 @@ bad-specialization = false
 unexpected-keyword = false
 
 [[sub-config]]
-matches = "src/qwendopamine/models/gdn2/gdn2_ops/**"
+matches = "src/qwendopamine/models/gdn2/triton/**"
+[sub-config.errors]
+implicit-import = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false
+bad-override = false
+bad-override-mutable-attribute = false
+bad-argument-type = false
+bad-assignment = false
+bad-unpacking = false
+bad-specialization = false
+not-iterable = false
+missing-attribute = false
+unsupported-operation = false
+bad-function-definition = false
+bad-return = false
+implicit-any-type-argument = false
+implicit-any-lambda = false
+implicit-any-empty-container = false
+bad-argument-count = false
+missing-import = false
+unbound-name = false
+not-callable = false
+unexpected-keyword = false
+missing-module-attribute = false
+no-matching-overload = false
+
+[[sub-config]]
+matches = "src/qwendopamine/models/shared/**"
+[sub-config.errors]
+implicit-import = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false
+bad-override = false
+bad-override-mutable-attribute = false
+bad-argument-type = false
+bad-assignment = false
+bad-unpacking = false
+missing-attribute = false
+unsupported-operation = false
+bad-function-definition = false
+bad-return = false
+implicit-any-type-argument = false
+implicit-any-lambda = false
+implicit-any-empty-container = false
+bad-argument-count = false
+missing-import = false
+unbound-name = false
+not-callable = false
+invalid-inheritance = false
+bad-specialization = false
+unexpected-keyword = false
+
+[[sub-config]]
+matches = "src/qwendopamine/models/reinforced/**"
 [sub-config.errors]
 implicit-import = false
 implicit-any = false

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from qwendopamine.models._hf_compat import (
-    Qwen3NextConfig,
+from huggingface_hub.dataclasses import strict
+from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
+from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLConfig,
     Qwen3VLVisionConfig,
-    strict,
 )
 
 
@@ -53,6 +53,27 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
     advantage_dropout: float = 0.05
     gate_loss_weight: float = 0.01
     gate_target_balance: float = 0.5
+    use_parallel_reward: bool = False
+    r"""When True, attach the GatedRewardNet parallel branch to every
+    attention-only layer (``full_attention``/``sliding_attention``). When
+    False, only the explicit ``parallel_reward_layers`` allow-list is used."""
+    parallel_reward_layers: tuple[int, ...] = ()
+    r"""Layer indices that opt-in to the parallel GatedRewardNet branch.
+    When non-empty this overrides the ``use_parallel_reward`` heuristic."""
+    reward_gate_init_bias: float = -5.0
+    r"""Initial bias of the data-dependent reward gate ``sigmoid(W x + b)``.
+    ``sigmoid(-5) ≈ 0.0067`` so the dopamine branch starts near silent and
+    cannot destabilize a pretrained main mixer."""
+    reward_memory_rank: int | None = None
+    r"""Optional low-rank factorization of the parallel reward branch's
+    ``d × d`` fast-weight state. ``None`` keeps the dense matrix. With
+    ``r=64`` and ``d=4096`` the per-layer recurrent state drops from
+    ``B·d·d`` to ``2·B·d·r`` parameters."""
+    parallel_reward_gate_loss_weight: float = 0.0
+    r"""Optional MSE penalty that keeps the parallel reward gate close to
+    its initialisation (``sigmoid(reward_gate_init_bias)``). ``0`` disables
+    it. With weight 1.0 the dopamine branch stays effectively silent until
+    the rest of the model has stabilised."""
 
     @property
     def gate_reg_coef(self) -> float:

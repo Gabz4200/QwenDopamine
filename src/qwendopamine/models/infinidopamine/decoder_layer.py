@@ -2,37 +2,38 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar, Unpack
 
 import torch
 import torch.nn.functional as F
 from einops import repeat
 from torch import nn
-
-from qwendopamine.models._hf_compat import (
-    Cache,
-    GradientCheckpointingLayer,
+from transformers.cache_utils import Cache
+from transformers.integrations import (
+    use_kernel_forward_from_hub,
+    use_kernelized_func,
+)
+from transformers.modeling_layers import GradientCheckpointingLayer
+from transformers.models.qwen3_next.modeling_qwen3_next import (
     Qwen3NextAttention,
     Qwen3NextGatedDeltaNet,
     Qwen3NextMLP,
     Qwen3NextRMSNorm,
     Qwen3NextSparseMoeBlock,
-    TransformersKwargs,
-    Unpack,
-    apply_mask_to_padding_states,
     causal_conv1d_fn,
     causal_conv1d_update,
-    use_kernel_forward_from_hub,
-    use_kernelized_func,
 )
+from transformers.utils.generic import TransformersKwargs
+
+from qwendopamine.models.core.normalization import apply_mask_to_padding_states
 from qwendopamine.models.gdn2 import torch_chunk_gdn2, torch_recurrent_gdn2
-from qwendopamine.models.gdn2.reinforced_delta import (
-    GatedRewardNet,
-    GatedRewardNetConfig,
-)
 from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,
     InfiniDopamineTextConfig,
+)
+from qwendopamine.models.reinforced import (
+    GatedRewardNet,
+    GatedRewardNetConfig,
 )
 
 
@@ -361,6 +362,7 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
             hidden_dropout=getattr(
                 config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
             ),
+            memory_rank=getattr(config, "reward_memory_rank", None),
             **kwargs,
         )
         super().__init__(reward_net_config)
@@ -445,6 +447,29 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
             if full_key not in state_dict:
                 state_dict[full_key] = param.data.clone()
 
+    def _update_reward_cache(
+        self,
+        cache_params: Cache,
+        new_cache: dict[str, Any],
+    ) -> None:
+        r"""Write the freshly computed reward state back into ``cache_params``.
+
+        Uses reward-specific cache fields so the GDN-2 branch state is never
+        clobbered. Falls back to the generic field names when the cache
+        layer does not yet expose the dedicated reward fields (e.g. dict
+        caches returned by a non-HF caller).
+        """
+        layer_idx = self.layer_idx
+        if layer_idx is None:
+            return
+        try:
+            layer_cache = cache_params.layers[layer_idx]
+        except (AttributeError, IndexError):
+            return
+        layer_cache.reward_recurrent_state = new_cache["recurrent_state"]
+        layer_cache.reward_value_baseline = new_cache["value_baseline"]
+        layer_cache.reward_conv_states = new_cache["conv_state"]
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -454,13 +479,15 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         **kwargs: Any,
     ) -> torch.Tensor:
         use_cache = kwargs.pop("use_cache", cache_params is not None)
-        out, _, _ = super().forward(
+        out, _, new_cache = super().forward(
             hidden_states=hidden_states,
             reward_values=reward_values,
             past_key_values=cache_params,
             use_cache=use_cache,
             **kwargs,
         )
+        if use_cache and cache_params is not None and new_cache is not None:
+            self._update_reward_cache(cache_params, new_cache)
         return out
 
 
@@ -497,6 +524,40 @@ class InfiniDopamineRMSNorm(Qwen3NextRMSNorm):
 
 
 class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
+    r"""InfiniDopamine decoder block.
+
+    The main mixer is selected explicitly by ``config.layer_types[layer_idx]``.
+    No implicit replacement of GDN-2 with GatedRewardNet happens based on the
+    next layer's type: GatedRewardNet is opt-in via
+    ``config.parallel_reward_layers`` and runs as a parallel branch on top of
+    whichever main mixer was chosen.
+
+    Layer configuration table:
+
+    =====================  ==========================================
+    block_type             main mixer
+    =====================  ==========================================
+    linear_attention/gdn2  :class:`InfiniDopamineGatedDeltaNet`
+    gated_reward_net/reinforced_delta  :class:`InfiniDopamineGatedRewardNet`
+    full_attention/sliding_attention  :class:`InfiniDopamineAttention`
+    =====================  ==========================================
+    """
+
+    _LINEAR_BLOCK_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"linear_attention", "gdn2", "gdn"}
+    )
+    _ATTENTION_BLOCK_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"full_attention", "sliding_attention"}
+    )
+    _REWARD_BLOCK_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "gated_reward_net",
+            "reinforced_delta",
+            "reward_net",
+            "reward_linear_attention",
+        }
+    )
+
     def __init__(
         self, config: InfiniDopamineTextConfig, layer_idx: int
     ) -> None:
@@ -506,29 +567,23 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
             config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
         )
         self.block_type = config.layer_types[layer_idx]
-        is_pre_attention = (
-            layer_idx + 1 < len(config.layer_types)
-            and config.layer_types[layer_idx + 1]
-            in ("full_attention", "sliding_attention")
-        )
-        if self.block_type in ("linear_attention", "gdn2", "gdn"):
-            if is_pre_attention:
-                self.linear_attn = InfiniDopamineGatedRewardNet(
-                    config, layer_idx
-                )
-            else:
-                self.linear_attn = InfiniDopamineGatedDeltaNet(
-                    config, layer_idx
-                )
-        elif self.block_type in (
-            "gated_reward_net",
-            "reinforced_delta",
-            "reward_net",
-            "reward_linear_attention",
-        ):
-            self.linear_attn = InfiniDopamineGatedRewardNet(config, layer_idx)
-        elif self.block_type in ("full_attention", "sliding_attention"):
+
+        if self.block_type in self._LINEAR_BLOCK_TYPES:
+            self.linear_attn = InfiniDopamineGatedDeltaNet(config, layer_idx)
+        elif self.block_type in self._ATTENTION_BLOCK_TYPES:
             self.self_attn = InfiniDopamineAttention(config, layer_idx)
+        elif self.block_type in self._REWARD_BLOCK_TYPES:
+            self.linear_attn = InfiniDopamineGatedRewardNet(config, layer_idx)
+        else:
+            raise ValueError(
+                f"Unsupported InfiniDopamine block_type '{self.block_type}' at "
+                f"layer_idx={layer_idx}. Expected one of "
+                f"{sorted(self._LINEAR_BLOCK_TYPES | self._ATTENTION_BLOCK_TYPES | self._REWARD_BLOCK_TYPES)}."
+            )
+
+        if self._has_parallel_reward(config, layer_idx):
+            self._init_parallel_reward_branch(config, layer_idx)
+
         if (
             (getattr(config, "num_experts", None) or 0) > 0
             and layer_idx not in getattr(config, "mlp_only_layers", [])
@@ -544,6 +599,49 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
+    @classmethod
+    def _has_parallel_reward(
+        cls, config: InfiniDopamineTextConfig, layer_idx: int
+    ) -> bool:
+        r"""Whether the parallel reward branch is enabled for this layer.
+
+        Resolution order:
+
+        1. ``config.parallel_reward_layers`` is the explicit allow-list.
+        2. ``config.use_parallel_reward`` opts in to the implicit rule of
+           attaching the branch to attention-only layers
+           (``full_attention`` / ``sliding_attention``).
+        """
+        explicit_layers = tuple(getattr(config, "parallel_reward_layers", ()) or ())
+        if explicit_layers:
+            return layer_idx in explicit_layers
+        if not getattr(config, "use_parallel_reward", False):
+            return False
+        return config.layer_types[layer_idx] in cls._ATTENTION_BLOCK_TYPES
+
+    def _init_parallel_reward_branch(
+        self, config: InfiniDopamineTextConfig, layer_idx: int
+    ) -> None:
+        r"""Build the parallel reward branch + data-dependent gate.
+
+        The branch shares the same normalized input as the main mixer. The
+        gate starts near zero (``sigmoid(-5) ≈ 0.0067``) so the dopamine
+        contribution does not perturb a pretrained main mixer before the
+        gating parameters learn a useful scale.
+        """
+        self.reward_branch = InfiniDopamineGatedRewardNet(config, layer_idx)
+        self.reward_branch_norm = InfiniDopamineRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.reward_gate_proj = nn.Linear(
+            config.hidden_size, 1, bias=True
+        )
+        nn.init.zeros_(self.reward_gate_proj.weight)
+        nn.init.constant_(
+            self.reward_gate_proj.bias,
+            getattr(config, "reward_gate_init_bias", -5.0),
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -555,20 +653,19 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.FloatTensor:
         residual = hidden_states
-
-        hidden_states = self.input_layernorm(hidden_states)
+        x_norm = self.input_layernorm(hidden_states)
 
         if hasattr(self, "linear_attn"):
-            hidden_states = self.linear_attn(
-                hidden_states=hidden_states,
+            main_out = self.linear_attn(
+                hidden_states=x_norm,
                 cache_params=past_key_values,
                 attention_mask=attention_mask,
                 reward_values=reward_values,
                 **kwargs,
             )
-        elif hasattr(self, "self_attn"):
-            hidden_states, _ = self.self_attn(
-                hidden_states=hidden_states,
+        else:
+            main_out, _ = self.self_attn(
+                hidden_states=x_norm,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
@@ -576,12 +673,26 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
                 **kwargs,
             )
 
+        mixed = main_out
+
+        if hasattr(self, "reward_branch"):
+            reward_out = self.reward_branch(
+                hidden_states=x_norm,
+                cache_params=past_key_values,
+                attention_mask=attention_mask,
+                reward_values=reward_values,
+                **kwargs,
+            )
+            reward_out = self.reward_branch_norm(reward_out)
+            gate = torch.sigmoid(self.reward_gate_proj(x_norm))
+            mixed = mixed + gate * reward_out
+
         if self.training and self.hidden_dropout > 0.0:
-            hidden_states = F.dropout(
-                hidden_states, p=self.hidden_dropout, training=True
+            mixed = F.dropout(
+                mixed, p=self.hidden_dropout, training=True
             )
 
-        hidden_states = residual + hidden_states
+        hidden_states = residual + mixed
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)

@@ -6,9 +6,9 @@ It provides a pure PyTorch training and evaluation harness paired with Hugging F
 
 ## Key Features
 
-- **InfiniDopamine Architecture**: Hybrid long-context architecture integrating dual-stream Infini-attention (SWA + GDN-2), pre-attention Gated Reward Networks, and Sliding Window Attention.
+- **InfiniDopamine Architecture**: Hybrid long-context architecture integrating dual-stream Infini-attention (SWA + GDN-2), parallel Gated Reward Networks, and Sliding Window Attention.
 - **Dual-Stream Infini-Attention with GDN-2**: Combines local Sliding Window Attention (SWA) and Gated DeltaNet-2 ([arXiv:2605.22791](https://arxiv.org/abs/2605.22791)) via a learnable per-head gate $\beta$ ([arXiv:2404.07143](https://arxiv.org/abs/2404.07143)) over shared QKV projections.
-- **Pre-Attention Gated Reward Networks**: Automatically routes linear layers immediately preceding attention to `GatedRewardNet`, providing advantage-guided memory updates and FiLM query modulation.
+- **Parallel Gated Reward Networks**: A `GatedRewardNet` fast-weight branch can be added in parallel to the main mixer with a data-dependent sigmoid gate initialized near zero (`sigmoid(-5) ≈ 0.0067`), preserving the pretrained main pathway while injecting reward-modulated plasticity.
 - **Multimodal Vision Tower**: Inherits the Qwen3.5-VL vision encoder (`InfiniDopamineVisionModel`) for image+text CPT. Vision weights load directly from Qwen3.5 checkpoints via `InfiniDopamineForConditionalGeneration.load_qwen35_weights`.
 - **Continued Pre-Training from Qwen3.5**: Full parameter compatibility with pretrained Qwen3.5 checkpoints via automatic state dict pre-hooks with `strict=True` support.
 - **Dataset Mixer**: Streaming multi-dataset CPT with per-dataset schema formatters for 16+ HF datasets (SMB frames, maze traces, sokoban CoT, chess PGN, ALFWorld trajectories, etc.).
@@ -17,25 +17,34 @@ It provides a pure PyTorch training and evaluation harness paired with Hugging F
 
 ## InfiniDopamine Architecture
 
-`InfiniDopamine` implements a three-tier sequence mixing strategy:
+`InfiniDopamine` is a tiered sequence mixing strategy. The main mixer of every
+layer is selected explicitly by `config.layer_types[layer_idx]`; no implicit
+replacement happens based on neighbouring layers. An optional reward branch
+can run in parallel to that main mixer:
 
 ```
                        ┌─────────────────────────────────────────────────────────────┐
-                       │                   InfiniDopamine Layer Stack                │
+                       │                   InfiniDopamine Decoder Layer              │
                        └─────────────────────────────────────────────────────────────┘
                                                       │
-               ┌──────────────────────────────────────┴──────────────────────────────────────┐
-               ▼                                      ▼                                      ▼
-    ┌──────────────────────┐               ┌──────────────────────┐               ┌──────────────────────┐
-    │     GDN-2 Layer      │               │   GatedRewardNet     │               │     SWA Attention    │
-    │ (Infini-Attention)   │               │ (Pre-Attention Layer)│               │   (Standalone SWA)   │
-    ├──────────────────────┤               ├──────────────────────┤               ├──────────────────────┤
-    │ Shared QKV Proj      │               │ Reinforced Delta     │               │ Standard QKV Proj    │
-    │  ├─ SWA Stream       │               │  ├─ Memory Core      │               │ Rotary Pos Embed     │
-    │  └─ GDN-2 Stream     │               │  ├─ Advantage Gate   │               │ Local Window Mask    │
-    │ Per-Head Gate β      │               │  ├─ Value Baseline   │               │ Softmax Attention    │
-    │ Gated RMSNorm + Out  │               │  └─ FiLM Modulator   │               │ Out Projection       │
-    └──────────────────────┘               └──────────────────────┘               └──────────────────────┘
+            ┌─────────────────────────────────────────┴──────────────────────────────────────────┐
+            ▼                                                                                    ▼
+   ┌────────────────────┐                                                              ┌────────────────────┐
+   │     Main Mixer     │                                                              │   Parallel Branch  │
+   │ (block_type based) │                                                              │ (opt-in reward)    │
+   ├────────────────────┤                                                              ├────────────────────┤
+   │ linear_attention / │                                                              │ InfiniDopamine     │
+   │ gdn2 → GDN-2+SWA   │                                                              │ GatedRewardNet     │
+   │ full/sliding → SWA │                                                              │  ├─ Memory Core    │
+   │ gated_reward_net → │                                                              │  ├─ Advantage Gate │
+   │ GatedRewardNet     │                                                              │  ├─ Value Baseline │
+   └─────────┬──────────┘                                                              │  └─ FiLM Modulator │
+             │                                                                         └─────────┬──────────┘
+             ▼                                                                                   ▼
+   shared input RMSNorm                                                       RMSNorm → sigmoid(W x + b) gate
+             │                                                                  (init near 0, learned)
+             │                                                                         │
+             └───────────────────────  +  gate * reward_out  ───────────────────────────┘
 ```
 
 ### 1. Dual-Stream Infini-Attention (`InfiniDopamineGatedDeltaNet`)
@@ -52,14 +61,42 @@ $$A_t = \text{gate}_t \odot A_{\text{swa}, t} + (1 - \text{gate}_t) \odot A_{\te
 
 Initialized with $W_{\text{gate}} = 0$ and $\beta = 0$, training begins at an exact 50/50 balance ($\text{gate}_t = 0.5$) regularized toward balance early on before dynamically routing per token as representations mature.
 
-### 2. Pre-Attention Gated Reward Net (`InfiniDopamineGatedRewardNet`)
+### 2. Parallel Gated Reward Net (`InfiniDopamineGatedRewardNet`)
 
-Any linear recurrent layer immediately preceding an attention layer (`... -> GDN-2 -> GatedRewardNet -> Attention -> ...`) is instantiated as `InfiniDopamineGatedRewardNet`:
+The reward branch is **never** implicitly swapped in for the main mixer. It is
+attached as a parallel branch to a layer only when the layer is explicitly
+selected via `config.parallel_reward_layers` or when
+`config.use_parallel_reward=True` and the layer is an attention-only layer
+(`full_attention` / `sliding_attention`). The forward path is:
 
-- Evaluates baseline expectations via an EMA value tracker.
-- Computes advantage-guided update weights $\omega_t = 1.0 + \text{softsign}(W_{\text{adv}} [x_t, r_t, v_t])$.
-- Conditions queries through FiLM modulation: $q_t \leftarrow \gamma(r_t) \odot q_t + \beta(r_t)$.
-- Supports explicit `reward_values` injection during RL/fine-tuning while defaulting to neutral baseline behavior during pre-training.
+$$h_L = h_{L-1} + \text{RMSNorm}(f_{\text{main}}(\text{RMSNorm}(h_{L-1})))
+        + \alpha \cdot \text{RMSNorm}(f_{\text{dopamine}}(\text{RMSNorm}(h_{L-1}), r))$$
+
+with $\alpha = \sigma(W x + b)$, $W$ zero-initialized and $b$ defaulting to
+$-5$ so $\sigma(b) \approx 0.0067$ at start. The main mixer is preserved
+exactly; the dopamine branch is a small additive correction.
+
+The branch itself contains:
+
+- `RewardStatisticsExtractor` + `LearnableSoftsign` to turn raw reward signals
+  into normalized statistics.
+- A vectorial `ValueBaselineEMA` that tracks the running expectation of the
+  reward vector.
+- An `AdvantageGate` that collapses the advantage vector into a global
+  modulation scalar $\omega_t \in (0, 2)$.
+- A `DeltaMemoryCore` performing the gated delta-rule update
+  $S_{t+1} = (1 - \omega E) \odot S_t + (\omega W) \odot (e_t k_t^T)$. The
+  $\mathbf{d} \times \mathbf{d}$ state is optional and can be replaced by a
+  low-rank `memory_rank=r` factorization (`U, V ∈ R^{B × d × r}`) to reduce
+  memory and compute.
+- FiLM-conditioned query readout: $q_t \leftarrow \gamma(r_t) \odot q_t + \beta(r_t)$.
+
+State persistence is explicit: `GatedRewardNet` returns
+`{"recurrent_state", "value_baseline", "conv_state"}` from every forward, and
+`InfiniDopamineGatedRewardNet.forward` writes them into the Hugging Face
+`DynamicCache` under reward-specific fields (`reward_recurrent_state`,
+`reward_value_baseline`, `reward_conv_states`) so the GDN-2 branch state is
+never clobbered.
 
 ### 3. Qwen3.5 Weight Compatibility
 

@@ -5,9 +5,13 @@ __pycache__
 logs/
 data/
 checkpoints/
+outputs/
 notebooks/.ipynb_checkpoints
 *.safetensors
 *.bin
+*.tmp
+*.bak
+*.orig
 *.pt
 *.pkl
 *.log

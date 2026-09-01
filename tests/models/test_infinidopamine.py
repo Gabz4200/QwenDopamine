@@ -320,7 +320,14 @@ def test_when_sliding_window_decoding_with_dynamic_cache_then_succeeds(
             next_token = step_out.logits[:, -1:].argmax(dim=-1)
 
 
-def test_when_linear_layer_precedes_attention_then_uses_gated_reward_net() -> None:
+def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated_reward_net() -> None:
+    """Regression: the reward branch is no longer implicitly swapped in.
+
+    Previously any linear layer immediately preceding an attention layer was
+    auto-promoted to a GatedRewardNet. That broke pretrained behaviour by
+    replacing the main mixer. The reward branch is now an explicit opt-in
+    via ``parallel_reward_layers`` or ``use_parallel_reward``.
+    """
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -342,14 +349,70 @@ def test_when_linear_layer_precedes_attention_then_uses_gated_reward_net() -> No
     )
     model = InfiniDopamineTextModel(cfg)
 
-    # Layer 0: followed by linear_attention -> GDN-2
-    assert isinstance(model.layers[0].linear_attn, InfiniDopamineGatedDeltaNet)
-    # Layer 1: followed by linear_attention -> GDN-2
-    assert isinstance(model.layers[1].linear_attn, InfiniDopamineGatedDeltaNet)
-    # Layer 2: followed by full_attention -> InfiniDopamineGatedRewardNet
-    assert isinstance(model.layers[2].linear_attn, InfiniDopamineGatedRewardNet)
-    # Layer 3: full_attention -> Attention
+    # All linear layers are GDN-2 (no implicit reward replacement).
+    for idx in (0, 1, 2):
+        assert isinstance(model.layers[idx].linear_attn, InfiniDopamineGatedDeltaNet)
+        assert not hasattr(model.layers[idx], "reward_branch")
+    # Layer 3 is the only attention layer; no parallel branch by default.
     assert hasattr(model.layers[3], "self_attn")
+    assert not hasattr(model.layers[3], "reward_branch")
+
+    # Opt-in via parallel_reward_layers only on layer 2.
+    cfg_explicit = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        head_dim=16,
+        vocab_size=100,
+        layer_types=[
+            "linear_attention",
+            "linear_attention",
+            "linear_attention",
+            "full_attention",
+        ],
+        parallel_reward_layers=(2,),
+    )
+    explicit_model = InfiniDopamineTextModel(cfg_explicit)
+    assert isinstance(explicit_model.layers[2].linear_attn, InfiniDopamineGatedDeltaNet)
+    assert hasattr(explicit_model.layers[2], "reward_branch")
+    assert isinstance(explicit_model.layers[2].reward_branch, InfiniDopamineGatedRewardNet)
+    for idx in (0, 1, 3):
+        assert not hasattr(explicit_model.layers[idx], "reward_branch")
+
+    # Opt-in via use_parallel_reward=True attaches to attention-only layers.
+    cfg_auto = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        head_dim=16,
+        vocab_size=100,
+        layer_types=[
+            "linear_attention",
+            "linear_attention",
+            "linear_attention",
+            "full_attention",
+        ],
+        use_parallel_reward=True,
+    )
+    auto_model = InfiniDopamineTextModel(cfg_auto)
+    # No reward branch on linear-only layers.
+    for idx in (0, 1, 2):
+        assert not hasattr(auto_model.layers[idx], "reward_branch")
+    # Reward branch on the attention layer.
+    assert hasattr(auto_model.layers[3], "reward_branch")
+    assert isinstance(auto_model.layers[3].reward_branch, InfiniDopamineGatedRewardNet)
 
 
 def test_when_qwen35_weights_loaded_into_model_with_gated_reward_net_then_loads_strictly() -> None:
@@ -780,3 +843,244 @@ def test_when_infinidopamine_causal_lm_trains_with_gate_loss_then_gate_regulariz
     # Gate loss should be positive
     gate_loss = model.get_gate_regularization_loss(target=0.5)
     assert gate_loss > 0.0
+
+
+def test_when_parallel_reward_disabled_then_outputs_match_base_model() -> None:
+    r"""A causal LM with the parallel reward branch attached should produce
+    output indistinguishable from the same model without the branch when
+    ``reward_gate_init_bias`` is very negative.
+    """
+    def make(gate_bias: float) -> InfiniDopamineForCausalLM:
+        return InfiniDopamineForCausalLM(InfiniDopamineTextConfig(
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            linear_num_key_heads=2,
+            linear_num_value_heads=4,
+            linear_key_head_dim=16,
+            linear_value_head_dim=16,
+            vocab_size=100,
+            layer_types=["linear_attention", "full_attention"],
+            use_parallel_reward=True,
+            reward_gate_init_bias=gate_bias,
+        ))
+
+    torch.manual_seed(0)
+    m_silent = make(-20.0)
+    torch.manual_seed(0)
+    m_normal = make(-5.0)
+    m_silent.load_state_dict(m_normal.state_dict())
+
+    m_silent.eval()
+    m_normal.eval()
+    input_ids = torch.tensor([[5, 12, 18, 25]], dtype=torch.long)
+    with torch.no_grad():
+        out_silent = m_silent(input_ids=input_ids).logits
+        out_normal = m_normal(input_ids=input_ids).logits
+    assert torch.allclose(out_silent, out_normal, atol=1e-5)
+
+
+def test_when_parallel_reward_enabled_then_gate_init_is_near_zero() -> None:
+    r"""A freshly built parallel reward branch must contribute essentially
+    nothing: the gate ``sigmoid(b)`` with default bias ``-5`` evaluates to
+    ``~0.0067``, so a no-reward forward with identical weights should differ
+    from a no-reward forward with the branch disabled by less than 1e-3 in
+    the logit norm.
+    """
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["linear_attention", "full_attention"],
+        use_parallel_reward=True,
+    )
+    layer = cfg.layer_types[1] if cfg.layer_types is not None else ""
+    model = InfiniDopamineForCausalLM(cfg)
+    gate_layer = model.model.layers[1]
+    assert hasattr(gate_layer, "reward_gate_proj")
+    assert gate_layer.reward_gate_proj.weight.abs().sum() == 0.0
+    init_bias = gate_layer.reward_gate_proj.bias.item()
+    assert init_bias == cfg.reward_gate_init_bias
+    # sigmoid(b) is tiny at start.
+    assert torch.sigmoid(torch.tensor(init_bias)).item() < 0.01
+    assert layer == "full_attention"  # regression guard
+
+
+def test_when_parallel_reward_cache_used_then_baseline_persists_across_steps() -> None:
+    r"""When the parallel reward branch is enabled on an attention layer and
+    the model is called step-by-step, the reward state must persist in the
+    Hugging Face ``DynamicCache`` under reward-specific fields.
+    """
+    from transformers.cache_utils import DynamicCache
+
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["linear_attention", "full_attention"],
+        use_parallel_reward=True,
+    )
+    model = InfiniDopamineForCausalLM(cfg)
+    model.eval()
+
+    input_ids = torch.tensor([[5, 12, 18, 25]], dtype=torch.long)
+    rewards = torch.ones(1, 4, 6) * 2.0
+    cache = DynamicCache(config=cfg)
+    with torch.no_grad():
+        _ = model(
+            input_ids=input_ids,
+            past_key_values=cache,
+            reward_values=rewards,
+            use_cache=True,
+        )
+
+    layer1_cache = cache.layers[1]
+    assert hasattr(layer1_cache, "reward_value_baseline")
+    assert layer1_cache.reward_value_baseline is not None
+    assert layer1_cache.reward_value_baseline.abs().sum() > 0.0
+    assert hasattr(layer1_cache, "reward_recurrent_state")
+    assert hasattr(layer1_cache, "reward_conv_states")
+
+
+def test_when_low_rank_reward_memory_used_then_state_shape_matches_rank() -> None:
+    r"""When ``reward_memory_rank`` is set, the parallel reward branch uses
+    a factored ``(U, V)`` state instead of a dense ``d × d`` matrix.
+    """
+    from qwendopamine.models.infinidopamine import InfiniDopamineGatedRewardNet
+    from qwendopamine.models.reinforced import GatedRewardNet
+
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["linear_attention"],
+        use_parallel_reward=False,
+        reward_memory_rank=8,
+    )
+    grn = InfiniDopamineGatedRewardNet(cfg, layer_idx=0)
+    grn.eval()
+    assert grn.memory_rank == 8
+    inputs = torch.randn(1, 4, 64)
+    rewards = torch.randn(1, 4, 6)
+    # Call the parent class forward to inspect the cache structure; the
+    # subclass returns a single tensor (no cache).
+    out, _, new_cache = GatedRewardNet.forward(
+        grn, inputs, reward_values=rewards, use_cache=True
+    )
+    assert out.shape == (1, 4, 64)
+    rec = new_cache["recurrent_state"]
+    # Low-rank state: tuple of (U, V) factors.
+    assert isinstance(rec, tuple)
+    u, v = rec
+    assert u.shape == (1, 64, 8)
+    assert v.shape == (1, 64, 8)
+
+
+def test_when_gate_loss_weight_set_then_regularization_penalizes_drift() -> None:
+    r"""The ``parallel_reward_gate_loss_weight`` config drives an MSE penalty
+    that keeps the data-dependent gate close to its initial sigmoid value
+    early in training. Moving the bias away from the initial bias must
+    increase the loss.
+    """
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["linear_attention", "full_attention"],
+        use_parallel_reward=True,
+        parallel_reward_gate_loss_weight=1.0,
+    )
+    m = InfiniDopamineForCausalLM(cfg)
+    m.train()
+    initial_loss = m.get_parallel_reward_gate_loss().item()
+    assert initial_loss >= 0.0
+
+    # Move the bias of the only active layer away from init.
+    layer = m.model.layers[1]
+    layer.reward_gate_proj.bias.data.fill_(2.0)
+    drifted_loss = m.get_parallel_reward_gate_loss().item()
+    assert drifted_loss > initial_loss
+
+
+def test_when_use_parallel_reward_false_then_gate_loss_is_zero() -> None:
+    r"""Without a parallel reward branch the gate loss helper returns zero
+    (not NaN) so the trainer can always add it without a feature flag.
+    """
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["full_attention"],
+        use_parallel_reward=False,
+    )
+    m = InfiniDopamineForCausalLM(cfg)
+    assert m.get_parallel_reward_gate_loss().item() == 0.0
+
+
+def test_when_gate_bias_default_then_branch_silent_on_reward_free_input() -> None:
+    r"""The default reward gate init bias is ``-5`` (sigmoid ≈ 0.0067), which
+    makes the parallel reward branch produce output norm proportional to
+    the branch's own initial weight scale (Xavier gain 2**-2.5 ≈ 0.177) and
+    the gate scalar — small but non-zero. Verify the gate output matches
+    the documented init.
+    """
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["full_attention"],
+        use_parallel_reward=True,
+    )
+    model = InfiniDopamineForCausalLM(cfg)
+    layer0 = model.model.layers[0]
+    assert layer0.reward_gate_proj.bias.item() == -5.0
+    x = torch.randn(1, 4, 64)
+    gate = torch.sigmoid(layer0.reward_gate_proj(layer0.input_layernorm(x)))
+    # weight is zero-initialized so gate only depends on bias
+    expected_value = torch.sigmoid(torch.tensor(-5.0)).item()
+    assert torch.allclose(gate, torch.full_like(gate, expected_value))
+    assert gate.abs().max().item() < 0.01

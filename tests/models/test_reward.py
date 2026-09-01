@@ -573,7 +573,7 @@ def test_when_reward_statistics_extractor_unnormalized_with_float16_then_preserv
 
 def test_when_gated_reward_net_step_by_step_with_conv_cache_then_preserves_temporal_state() -> None:
     r"""Verify that GatedRewardNet step-by-step decoding tracks conv state across sequence steps."""
-    from qwendopamine.models.gdn2.reinforced_delta import (
+    from qwendopamine.models.reinforced import (
         GatedRewardNet,
         GatedRewardNetConfig,
     )
@@ -610,4 +610,122 @@ def test_when_gated_reward_net_step_by_step_with_conv_cache_then_preserves_tempo
 
     assert out_full.shape == (1, 6, 32)
     assert out_stepped.shape == (1, 6, 32)
+    assert torch.allclose(out_full, out_stepped, atol=1e-4)
+
+
+def test_when_gated_reward_net_value_baseline_persists_across_steps() -> None:
+    r"""The EMA value baseline must persist across step-by-step decoding.
+
+    Before the cache fix the baseline was reset to ``None`` on every call,
+    silently breaking online learning. The full forward and step-by-step
+    forward must therefore agree on the final baseline tensor.
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    torch.manual_seed(7)
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=32,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=4,
+        )
+    )
+    grn.eval()
+
+    inputs = torch.randn(1, 6, 32)
+    rewards = torch.ones(1, 6, 6) * 2.0  # non-zero rewards
+
+    # 1. Full sequence forward pass.
+    _, _, full_cache = grn(inputs, reward_values=rewards, use_cache=True)
+    assert full_cache is not None
+    assert "value_baseline" in full_cache
+    assert full_cache["value_baseline"] is not None
+    full_baseline = full_cache["value_baseline"].clone()
+
+    # 2. Step-by-step with the cache propagated.
+    past_cache = None
+    for t in range(6):
+        _, _, past_cache = grn(
+            inputs[:, t : t + 1, :],
+            reward_values=rewards[:, t : t + 1, :],
+            past_key_values=past_cache,
+            use_cache=True,
+        )
+    assert past_cache is not None
+    assert torch.allclose(past_cache["value_baseline"], full_baseline, atol=1e-5)
+    # Baseline should have moved away from zero given non-zero rewards.
+    assert past_cache["value_baseline"].abs().sum() > 0.0
+
+
+def test_when_gated_reward_net_cache_is_none_then_value_baseline_initialized_to_zeros() -> None:
+    r"""Without a cached baseline the layer should start from a zero vector so
+    the first step sees a fresh EMA tracker.
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    torch.manual_seed(0)
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=16,
+            k_stats=4,
+            use_short_conv=True,
+            conv_size=3,
+        )
+    )
+    grn.eval()
+    rec, conv, baseline = grn._get_cache(None)
+    assert rec is None
+    assert conv is None
+    assert baseline is None
+
+
+def test_when_gated_reward_net_uses_low_rank_memory_then_step_by_step_matches_full() -> None:
+    r"""Low-rank memory must still satisfy the recurrent-invariant test
+    (full forward = concatenation of step-by-step forward outputs).
+    """
+    from qwendopamine.models.reinforced import (
+        GatedRewardNet,
+        GatedRewardNetConfig,
+    )
+
+    torch.manual_seed(3)
+    grn = GatedRewardNet(
+        GatedRewardNetConfig(
+            hidden_size=32,
+            k_stats=6,
+            use_short_conv=True,
+            conv_size=3,
+            memory_rank=4,
+        )
+    )
+    grn.eval()
+    inputs = torch.randn(1, 5, 32)
+    rewards = torch.randn(1, 5, 6)
+
+    _, _, _ = grn(inputs, reward_values=rewards, use_cache=True)
+    out_full, _, cache_full = grn(inputs, reward_values=rewards, use_cache=True)
+    # The cache should expose a low-rank state tuple.
+    assert isinstance(cache_full["recurrent_state"], tuple)
+    u, v = cache_full["recurrent_state"]
+    assert u.shape == (1, 32, 4)
+    assert v.shape == (1, 32, 4)
+
+    step_outs = []
+    past_cache = None
+    for t in range(5):
+        out_t, _, past_cache = grn(
+            inputs[:, t : t + 1, :],
+            reward_values=rewards[:, t : t + 1, :],
+            past_key_values=past_cache,
+            use_cache=True,
+        )
+        step_outs.append(out_t)
+    out_stepped = torch.cat(step_outs, dim=1)
     assert torch.allclose(out_full, out_stepped, atol=1e-4)

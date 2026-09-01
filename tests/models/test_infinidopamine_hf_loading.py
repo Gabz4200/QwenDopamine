@@ -130,10 +130,14 @@ def test_when_infinidopamine_loaded_with_qwen35_weights_then_extra_infinidopamin
     assert hasattr(layer0_linear, "in_proj_w")
     assert hasattr(layer0_linear, "in_proj_gate")
 
-    # Verify that pre-attention layer 2 has GatedRewardNet components
-    layer2_reward = model.model.layers[2].linear_attn
-    assert hasattr(layer2_reward, "delta_layer")
-    assert hasattr(layer2_reward.delta_layer, "advantage_gate")
+    # GatedRewardNet is opt-in via parallel_reward_layers or use_parallel_reward.
+    # The default config does not implicitly promote any layer.
+    for layer in model.model.layers:
+        if hasattr(layer, "reward_branch"):
+            raise AssertionError(
+                "GatedRewardNet branch should not exist without "
+                "parallel_reward_layers or use_parallel_reward"
+            )
 
 
 @pytest.mark.slow

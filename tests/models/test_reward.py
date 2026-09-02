@@ -877,7 +877,7 @@ def test_when_normalize_disabled_then_output_equals_input() -> None:
     r"""The helper always normalises when called. The "disabled" path is
     the caller's choice (skip the call entirely). When called with
     ``running_mean=None`` the function initialises mean=0 and std=1 so
-    the output reflects a fixed-point standardisation of the input.
+    the output is the input divided by 1 (modulo the eps floor).
     """
     from qwendopamine.models.reinforced import normalize_reward_for_advantage
 
@@ -885,8 +885,8 @@ def test_when_normalize_disabled_then_output_equals_input() -> None:
     out, new_mean, new_std = normalize_reward_for_advantage(
         r, None, None, alpha=0.0, training=True
     )
-    # alpha=0 -> running stats unchanged from (mean=0, std=1) init -> the
-    # output is r / (1 + eps). Allow the eps-level tolerance.
+    # alpha=0 -> running stats stay at (mean=0, std=1) -> output is
+    # approximately r / (1 + eps). Allow the eps-level tolerance.
     assert torch.allclose(out, r, atol=1e-4)
     assert torch.allclose(new_mean, torch.zeros(1, 2))
     assert torch.allclose(new_std, torch.ones(1, 2))
@@ -901,7 +901,7 @@ def test_when_normalize_enabled_then_output_zero_mean_unit_var_approximately() -
     torch.manual_seed(0)
     r = torch.randn(1, 1024, 3) * 5.0 + 2.0
     out, mean, std = normalize_reward_for_advantage(
-        r, None, None, alpha=1.0, eps=1e-6, clip_val=float("inf"), training=True
+        r, None, None, alpha=1.0, eps=1e-6, training=True
     )
     # Per-channel mean of the input was ~2 (because N=1024) — check the
     # normalised output is near zero.
@@ -913,29 +913,6 @@ def test_when_normalize_enabled_then_output_zero_mean_unit_var_approximately() -
     batch_mean = r.mean(dim=1)
     assert torch.allclose(mean, batch_mean, atol=5e-3)
     assert std is not None and (std > 0.0).all()
-
-
-def test_when_normalize_clip_val_smaller_than_std_then_output_is_clipped() -> None:
-    r"""Setting ``clip_val=1.0`` must clamp the normalised output to
-    ``[-1, +1]`` even when the raw input is far from the running mean.
-    """
-    from qwendopamine.models.reinforced import normalize_reward_for_advantage
-
-    r = torch.zeros(1, 1, 1)
-    mean = torch.zeros(1, 1)
-    std = torch.ones(1, 1)
-    out, _, _ = normalize_reward_for_advantage(
-        r, mean, std, alpha=0.0, clip_val=1.0, training=True
-    )
-    # Raw reward is 0 -> (0 - 0) / 1 = 0 (in range).
-    assert torch.allclose(out, torch.zeros(1, 1, 1))
-    # Force an out-of-range normalised value by setting a non-zero mean.
-    mean2 = torch.tensor([[5.0]])
-    r2 = torch.tensor([[[-100.0]]])
-    out2, _, _ = normalize_reward_for_advantage(
-        r2, mean2, std, alpha=0.0, clip_val=1.0, training=True
-    )
-    assert torch.allclose(out2, torch.tensor([[[-1.0]]]))
 
 
 def test_when_normalize_ema_alpha_zero_then_running_stats_unchanged() -> None:
@@ -952,6 +929,29 @@ def test_when_normalize_ema_alpha_zero_then_running_stats_unchanged() -> None:
     )
     assert torch.allclose(new_mean, mean)
     assert torch.allclose(new_std, std)
+
+
+def test_when_normalize_does_not_clip_outliers() -> None:
+    r"""Spec items 6.6 and 8 originally prescribed a clip on the
+    standardised signal. We removed the clip because (a) downstream
+    ``RewardStatisticsExtractor`` computes ``max``/``min`` from the
+    post-normalised signal — clipping would silently saturate those
+    stats; (b) the standardisation by ``running_std`` already bounds
+    most outliers; (c) the gradient through ``clamp`` is zero on the
+    values the clip is meant to protect. This test pins the new
+    contract: outliers pass through unchanged.
+    """
+    from qwendopamine.models.reinforced import normalize_reward_for_advantage
+
+    mean = torch.zeros(1, 1)
+    std = torch.ones(1, 1)
+    # A value that would have been clipped at ±5 (had we kept a clip).
+    r = torch.tensor([[[1000.0]]])
+    out, _, _ = normalize_reward_for_advantage(
+        r, mean, std, alpha=0.0, training=True
+    )
+    # No clip: the output equals (r - 0) / (1 + eps) ≈ 1000.
+    assert out.abs().item() > 100.0
 
 
 def test_when_normalize_eval_mode_then_running_stats_frozen() -> None:
@@ -992,7 +992,6 @@ def test_when_gated_reward_net_normalize_enabled_then_running_mean_persists_in_c
             conv_size=3,
             reward_normalize=True,
             reward_ema_alpha=1.0,
-            reward_clip_val=2.0,
         )
     )
     grn.train()

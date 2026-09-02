@@ -66,10 +66,6 @@ class GatedRewardNetConfig:
     reward_normalize_eps: float = 1e-5
     r"""Numerical epsilon for the running-std division in
     :func:`normalize_reward_for_advantage`."""
-    reward_clip_val: float = 5.0
-    r"""Symmetric clip value applied to the standardised reward. Keeps
-    out-of-distribution spikes (raw environment reward, accidentally huge
-    TD errors) from blowing up the advantage projections."""
     reward_ema_alpha: float = 0.1
     r"""EMA decay for the running mean and std of the reward values. The
     running statistics persist in the cache so they survive step-by-step
@@ -585,7 +581,6 @@ class ReinforcedDeltaLayer(nn.Module):
         advantage_legacy_coupled: bool = False,
         reward_normalize: bool = False,
         reward_normalize_eps: float = 1e-5,
-        reward_clip_val: float = 5.0,
         reward_ema_alpha: float = 0.1,
     ) -> None:
         super().__init__()
@@ -613,7 +608,6 @@ class ReinforcedDeltaLayer(nn.Module):
         self.advantage_legacy_coupled = advantage_legacy_coupled
         self.reward_normalize = reward_normalize
         self.reward_normalize_eps = reward_normalize_eps
-        self.reward_clip_val = reward_clip_val
         self.reward_ema_alpha = reward_ema_alpha
 
         # Statistics extraction and normalization (local import to avoid circular)
@@ -746,20 +740,28 @@ def normalize_reward_for_advantage(
     *,
     alpha: float = 0.1,
     eps: float = 1e-5,
-    clip_val: float = 5.0,
     training: bool = True,
 ) -> tuple[Tensor, Tensor, Tensor]:
     r"""Standardise raw reward values to advantage-like scale.
 
-    Implements the spec recipe:
+    Implements:
 
         advantage = (reward - running_mean) / (running_std + eps)
-        advantage = clamp(advantage, -clip_val, +clip_val)
 
     where ``running_mean`` and ``running_std`` are per-channel EMA
     statistics updated on every call when ``training=True``. Both statistics
     are returned so the caller can persist them in the cache and recover
     them across step-by-step decoding.
+
+    No clip is applied. The standardisation already bounds the signal
+    (any outlier is divided by ``running_std``) and the downstream
+    ``AdvantageGate`` is itself a ``sigmoid`` so it cannot be driven out
+    of bounds by a large advantage. Clipping on top of the standardisation
+    silently saturates ``RewardStatisticsExtractor``'s ``max``/``min``
+    outputs and kills the gradient on the very values the clip is meant
+    to protect. If raw-reward spikes are a concern, feed the layer with
+    pre-normalised advantage-like signals (TD error, GAE, surprise) — see
+    spec items 6.6 and 8.
 
     Args:
         reward_values: (B, L, k) raw reward tensor. Any broadcastable shape
@@ -773,12 +775,10 @@ def normalize_reward_for_advantage(
         alpha: EMA decay in (0, 1]. Larger values weight recent observations
             more heavily. ``0`` disables the EMA update.
         eps: numerical floor for the std division.
-        clip_val: symmetric clip bound applied to the standardised reward.
-            ``inf`` disables the clip.
         training: when True the running statistics are EMA-updated; when
             False the function is a no-op for the running stats
-            (still applies the standardisation and clip with the
-            supplied running mean / std).
+            (still applies the standardisation with the supplied running
+            mean / std).
 
     Returns:
         ``(normalised, new_mean, new_std)``. ``normalised`` has the same
@@ -804,11 +804,12 @@ def normalize_reward_for_advantage(
 
     if training and alpha > 0.0:
         batch_mean = reward_values.mean(dim=1)
-        # E[|X - E[X]|^2] - E[X]^2 to keep the EMA of std cheap and
-        # numerically stable under bf16.
+        # E[|X - E[X]|^2] to keep the EMA of std cheap and numerically
+        # stable under bf16 (a small numerical-floor clamp guards against
+        # bf16 producing a slightly negative variance from the subtraction).
         centered_sq = (reward_values - batch_mean.unsqueeze(1)).pow(2)
-        batch_var = centered_sq.mean(dim=1)
-        batch_std = batch_var.clamp(min=0.0).sqrt()
+        batch_var = centered_sq.mean(dim=1).clamp(min=0.0)
+        batch_std = batch_var.sqrt()
 
         new_mean = (1.0 - alpha) * running_mean + alpha * batch_mean
         new_std = (1.0 - alpha) * running_std + alpha * batch_std
@@ -818,8 +819,6 @@ def normalize_reward_for_advantage(
 
     std_safe = new_std.unsqueeze(1) + eps
     normalised = (reward_values - new_mean.unsqueeze(1)) / std_safe
-    if clip_val < float("inf"):
-        normalised = normalised.clamp(min=-clip_val, max=clip_val)
     return normalised, new_mean, new_std
 
 
@@ -873,7 +872,6 @@ class GatedRewardNet(nn.Module):
         self.advantage_legacy_coupled = config.advantage_legacy_coupled
         self.reward_normalize = config.reward_normalize
         self.reward_normalize_eps = config.reward_normalize_eps
-        self.reward_clip_val = config.reward_clip_val
         self.reward_ema_alpha = config.reward_ema_alpha
         self.mode = "recurrent"
         self.backend = "torch-recurrent"
@@ -897,7 +895,6 @@ class GatedRewardNet(nn.Module):
             advantage_legacy_coupled=config.advantage_legacy_coupled,
             reward_normalize=config.reward_normalize,
             reward_normalize_eps=config.reward_normalize_eps,
-            reward_clip_val=config.reward_clip_val,
             reward_ema_alpha=config.reward_ema_alpha,
         )
         self.output_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
@@ -1047,7 +1044,6 @@ class GatedRewardNet(nn.Module):
                 running_std,
                 alpha=self.reward_ema_alpha,
                 eps=self.reward_normalize_eps,
-                clip_val=self.reward_clip_val,
                 training=self.training,
             )
         outputs = []

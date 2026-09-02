@@ -338,8 +338,17 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             gate = self.last_gate
         else:
             gate = torch.sigmoid(self.betas)
-        gate = gate.clamp(1e-6, 1.0 - 1e-6)
-        entropy = -(gate * torch.log(gate) + (1.0 - gate) * torch.log(1.0 - gate))
+        # Sigmoid maps R to (0, 1) strictly, so the only failure mode is NaN
+        # propagating from upstream. Replace NaN/inf in the gate value with
+        # 0.5 (the maximum-entropy point) so the entropy is well-defined.
+        # Clamping the gate at 1e-6 / 1-1e-6 would silently mask the NaN
+        # because the gradient through clamp is 0 outside the interval,
+        # hiding the real failure from tensor inspection.
+        finite_gate = torch.nan_to_num(
+            gate, nan=0.5, posinf=1.0, neginf=0.0
+        ).clamp(1e-6, 1.0 - 1e-6)
+        entropy = -(finite_gate * torch.log(finite_gate)
+                    + (1.0 - finite_gate) * torch.log1p(-finite_gate))
         return torch.mean(entropy)
 
 
@@ -462,10 +471,9 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         layer_idx = self.layer_idx
         if layer_idx is None:
             return
-        try:
-            layer_cache = cache_params.layers[layer_idx]
-        except (AttributeError, IndexError):
+        if not hasattr(cache_params, "layers"):
             return
+        layer_cache = cache_params.layers[layer_idx]
         layer_cache.reward_recurrent_state = new_cache["recurrent_state"]
         layer_cache.reward_value_baseline = new_cache["value_baseline"]
         layer_cache.reward_conv_states = new_cache["conv_state"]

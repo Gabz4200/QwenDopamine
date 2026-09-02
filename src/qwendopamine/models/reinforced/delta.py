@@ -507,9 +507,12 @@ class DeltaMemoryCore(nn.Module):
 
         # Separated modulation: plasticity gates the whole update; write
         # and erase are signed-advantage gates that can act independently.
+        # Each factor lives in (0, 1), so the products are also in (0, 1)
+        # and no upper-bound clamp is needed (the previous coupled
+        # ``clamp(max=2.0)`` belonged to the legacy single-omega form).
         # The shape (B, d, 1) is broadcast over the d×d state channels.
-        omega_W = (plasticity_t * write_t * W_t).unsqueeze(-1).clamp(max=2.0)
-        omega_E = (plasticity_t * erase_t * E_t).unsqueeze(-1).clamp(max=1.0)
+        omega_W = (plasticity_t * write_t * W_t).unsqueeze(-1)
+        omega_E = (plasticity_t * erase_t * E_t).unsqueeze(-1)
 
         # Residual error: e_t = v_t - S_t k_t
         pred = self._read(S_prev, k_t)  # (B, d)

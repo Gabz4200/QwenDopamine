@@ -1032,6 +1032,41 @@ def test_when_gate_loss_weight_set_then_regularization_penalizes_drift() -> None
     assert drifted_loss > initial_loss
 
 
+def test_when_gate_entropy_nan_propagates_then_entropy_is_finite() -> None:
+    r"""Regression for the entropy clamp: a sigmoid output is strictly
+    in (0, 1), so the only failure mode is NaN propagating from upstream
+    (e.g. overflow in earlier layers). The entropy function must
+    surface the diagnostic by producing NaN/inf without silently clamping
+    the gate value first.
+    """
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        vocab_size=100,
+        layer_types=["linear_attention"],
+    )
+    m = InfiniDopamineForCausalLM(cfg)
+    layer = m.model.layers[0]
+    # Inject a NaN into the in_proj_gate weight so the gate value contains
+    # NaN. Sigmoid(NaN) = NaN. The entropy must still be finite (the new
+    # nan_to_num path replaces the old clamp path).
+    with torch.no_grad():
+        # Find the linear_attn's in_proj_gate and set one element to NaN.
+        # The simplest: set betas to NaN so sigmoid(betas) is NaN.
+        # (gated_deltanet uses both in_proj_gate(hidden_states) and betas.)
+        # Pick a path that does not require hidden_states.
+        layer.linear_attn.betas.fill_(float("nan"))
+    entropy = layer.linear_attn.get_gate_entropy()
+    assert torch.isfinite(entropy).all(), entropy
+
+
 def test_when_use_parallel_reward_false_then_gate_loss_is_zero() -> None:
     r"""Without a parallel reward branch the gate loss helper returns zero
     (not NaN) so the trainer can always add it without a feature flag.

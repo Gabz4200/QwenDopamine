@@ -22,7 +22,20 @@ from qwendopamine.models.gdn2.config import GDN2Config
 
 
 class Block(nn.Module):
-    """Transformer block with GatedDeltaNet2 token mixer."""
+    r"""Transformer block with GatedDeltaNet2 token mixer.
+
+    Performs the standard decoder operation: norm -> attention (GDN-2 token
+    mixer) -> residual connection. The GDN-2 attention replaces standard
+    scaled-dot-product attention with a channel-wise gated recurrent state
+    mixer.
+
+    Attributes:
+        config: The :class:`GDN2Config` controlling hidden size, number of
+            heads, convolution kernel size, and backend selection.
+        layer_idx: Index of this block in the overall model.
+        norm: ``RMSNorm`` applied to the input before the attention.
+        attn: The :class:`GatedDeltaNet2` token-mixing layer.
+    """
 
     def __init__(self, config: GDN2Config, layer_idx: int) -> None:
         super().__init__()
@@ -37,6 +50,16 @@ class Block(nn.Module):
         past_key_values: Any | None = None,
         use_cache: bool = False,
     ) -> tuple[torch.Tensor, Any | None]:
+        r"""Forward pass of the GDN-2 block.
+
+        Args:
+            x: Hidden-state tensor ``[B, T, D]``.
+            past_key_values: Optional ``Cache`` or dict with past state.
+            use_cache: If ``True``, return past_key_values.
+
+        Returns:
+            A tuple ``(x + attn(x), past_key_values)``.
+        """
         residual = x
         x = self.norm(x)
         out, _, past_key_values = self.attn(
@@ -46,7 +69,20 @@ class Block(nn.Module):
 
 
 class GDN2Host(nn.Module):
-    """GPT-style decoder using only GDN-2 blocks."""
+    r"""GPT-style decoder using only GDN-2 blocks.
+
+    A minimal decoder (embedding -> GDN-2 blocks -> final norm -> LM head) used
+    by the model initialization tests. Each ``Block`` replaces standard
+    attention with the GDN-2 token mixer.
+
+    The host handles token embedding, stacking ``Block`` s according to
+    ``config.num_layers``, final ``RMSNorm`` and ``lm_head`` projection to
+    vocabulary logits.
+
+    Shapes:
+        input_ids : ``[B, T]`` — token indices.
+        output : ``[B, T, hidden_size]`` — logits over the vocabulary.
+    """
 
     def __init__(self, config: GDN2Config) -> None:
         super().__init__()
@@ -76,6 +112,15 @@ class GDN2Host(nn.Module):
     def forward(
         self, input_ids: torch.Tensor, past_key_values: Any | None = None
     ) -> tuple[torch.Tensor, Any | None]:
+        r"""Forward pass of the GDN-2 decoder host.
+
+        Args:
+            input_ids: Token indices ``[B, T]``.
+            past_key_values: Optional ``Cache`` for autoregressive decoding.
+
+        Returns:
+            ``(logits, past_key_values)`` where logits are ``[B, T, vocab_size]``.
+        """
         x = self.embed(input_ids)
         for layer in self.layers:
             x, past_key_values = layer(x, past_key_values=past_key_values)

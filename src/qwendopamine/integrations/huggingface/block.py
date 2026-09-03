@@ -19,7 +19,15 @@ from qwendopamine.integrations.huggingface.configs import (
 
 
 class GDN2HFBlock(nn.Module):
-    r"""Hugging Face compatible nn.Module block wrapper around GatedDeltaNet2."""
+    r"""GDN2HFBlock(config: PreTrainedConfig | Any, layer_idx: int | None = None, **kwargs: Any) -> None
+
+    Hugging Face compatible nn.Module block wrapper around GatedDeltaNet2.
+
+    Args:
+        config (PreTrainedConfig | Any): HF config or GDN2Config/dict.
+        layer_idx (int | None): Layer index for cache naming. Default: ``None``.
+        **kwargs: Extra kwargs forwarded to GatedDeltaNet2.
+    """
 
     def __init__(
         self,
@@ -46,6 +54,20 @@ class GDN2HFBlock(nn.Module):
         output_attentions: bool | None = False,
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None, Any]:
+        r"""Forward pass delegating to the underlying GatedDeltaNet2 mixer.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            attention_mask (torch.Tensor | None): Padding mask ``[B, T]``.
+            past_key_values (Any): Cache for decoding.
+            use_cache (bool | None): Return updated cache. Default: ``False``.
+            output_attentions (bool | None): Whether to return attentions.
+            **kwargs: Extra kwargs forwarded to the mixer.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor | None, Any]:
+            ``(hidden_states, attentions, past_key_values)``.
+        """
         return self.mixer(
             hidden_states=hidden_states,
             attention_mask=attention_mask,

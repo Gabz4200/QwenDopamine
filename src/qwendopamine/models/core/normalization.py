@@ -7,7 +7,21 @@ from torch import nn
 
 
 class RMSNorm(nn.Module):
-    r"""Root Mean Square Layer Normalization without mean centering."""
+    r"""RMSNorm(hidden_size: int, eps: float = 1e-6) -> None
+
+    Root Mean Square Layer Normalization without mean centering.
+
+    Computes ``x / sqrt(mean(x^2) + eps) * weight``.
+
+    Args:
+        hidden_size (int): Dimension of the input to normalize.
+        eps (float): Epsilon added to the variance denominator for
+            numerical stability. Default: ``1e-6``.
+
+    Examples::
+        >>> norm = RMSNorm(hidden_size=512)
+        >>> out = norm(torch.randn(2, 4, 512))
+    """
 
     def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
         super().__init__()
@@ -15,11 +29,24 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def reset_parameters(self) -> None:
-        r"""Reset the learned scale weight back to a vector of ones."""
+        r"""reset_parameters() -> None
+
+        Reset the learned scale weight to a vector of ones.
+
+        Returns:
+            None
+        """
         nn.init.ones_(self.weight)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        r"""Apply RMSNorm to hidden states."""
+        r"""Apply RMSNorm to hidden states.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor ``[..., hidden_size]``.
+
+        Returns:
+            torch.Tensor: Normalized tensor of the same shape.
+        """
         input_dtype = hidden_states.dtype
         hidden_states_fp32 = hidden_states.to(torch.float32)
         variance = hidden_states_fp32.pow(2).mean(-1, keepdim=True)
@@ -28,7 +55,21 @@ class RMSNorm(nn.Module):
 
 
 class RMSNormGated(nn.Module):
-    r"""RMSNorm with optional element-wise activation gating."""
+    r"""RMSNormGated(hidden_size: int, eps: float = 1e-6, *, activation: str = "silu") -> None
+
+    RMSNorm with element-wise activation gating.
+
+    Computes ``x / sqrt(mean(x^2) + eps) * weight * silu(gate)``.
+
+    Args:
+        hidden_size (int): Dimension of the input to normalize.
+        eps (float): Epsilon added to the variance denominator. Default: ``1e-6``.
+        activation (str): Activation for the gate. Default: ``"silu"``.
+
+    Examples::
+        >>> norm = RMSNormGated(hidden_size=512)
+        >>> out = norm(torch.randn(2, 4, 512), gate=torch.randn(2, 4, 512))
+    """
 
     def __init__(
         self, hidden_size: int, eps: float = 1e-6, *, activation: str = "silu"
@@ -41,7 +82,18 @@ class RMSNormGated(nn.Module):
     def forward(
         self, hidden_states: torch.Tensor, gate: torch.Tensor | None = None
     ) -> torch.Tensor:
-        r"""Apply gated RMSNorm to hidden states."""
+        r"""forward(hidden_states: torch.Tensor, gate: torch.Tensor | None = None) -> torch.Tensor
+
+        Apply gated RMSNorm to hidden states.
+
+        Args:
+            hidden_states (torch.Tensor): Input tensor ``[..., hidden_size]``.
+            gate (torch.Tensor | None): Gate tensor matching the shape of
+                ``hidden_states``. When ``None``, no gating is applied.
+
+        Returns:
+            torch.Tensor: Normalized tensor of the same shape.
+        """
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
@@ -57,7 +109,19 @@ class RMSNormGated(nn.Module):
 def apply_mask_to_padding_states(
     hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None
 ) -> torch.Tensor:
-    r"""Zero out hidden states at padded token positions."""
+    r"""apply_mask_to_padding_states(hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor
+
+    Zero out hidden states at padded token positions.
+
+    Args:
+        hidden_states (torch.Tensor): Input tensor ``[B, T, D]``.
+        attention_mask (torch.Tensor | None): Boolean mask ``[B, T]`` where
+            ``True`` means a real token. When ``None``, returns the input
+            unchanged.
+
+    Returns:
+        torch.Tensor: Masked tensor of the same shape as ``hidden_states``.
+    """
     if attention_mask is not None:
         dtype = hidden_states.dtype
         hidden_states = (hidden_states * attention_mask[:, :, None]).to(dtype)

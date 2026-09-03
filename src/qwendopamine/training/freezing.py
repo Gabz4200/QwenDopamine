@@ -12,7 +12,20 @@ logger = logging.getLogger(__name__)
 def validate_unfreeze_phases(
     model: nn.Module, unfreeze_phases: list[dict[str, object]]
 ) -> list[dict[str, object]]:
-    r"""Validate unfreeze phase module names against the model."""
+    r"""validate_unfreeze_phases(model: nn.Module, unfreeze_phases: list[dict[str, object]]) -> list[dict[str, object]]
+
+    Validate unfreeze phase module names against the model.
+
+    Logs a warning for each module reference not found in the model.
+
+    Args:
+        model (nn.Module): Model whose named modules are inspected.
+        unfreeze_phases (list[dict[str, object]]): Phase list with
+            ``"modules"`` entries.
+
+    Returns:
+        list[dict[str, object]]: The input ``unfreeze_phases`` unchanged.
+    """
     model_module_names = {name for name, _ in model.named_modules()}
     for phase in unfreeze_phases:
         modules = phase.get("modules", [])
@@ -64,23 +77,60 @@ def _edit_distance(a: str, b: str) -> int:
 
 
 def set_trainable(module: nn.Module, enabled: bool) -> None:
-    r"""Toggle ``requires_grad`` on all parameters of a module."""
+    r"""set_trainable(module: nn.Module, enabled: bool) -> None
+
+    Toggle ``requires_grad`` on all parameters of a module.
+
+    Args:
+        module (nn.Module): Module whose parameters are updated.
+        enabled (bool): ``True`` to enable gradients, ``False`` to freeze.
+
+    Returns:
+        None
+    """
     for param in module.parameters():
         param.requires_grad_(enabled)
 
 
 def freeze_module(module: nn.Module) -> None:
-    r"""Freeze all parameters of a module."""
+    r"""freeze_module(module: nn.Module) -> None
+
+    Freeze all parameters of a module.
+
+    Args:
+        module (nn.Module): Module to freeze.
+
+    Returns:
+        None
+    """
     set_trainable(module, False)
 
 
 def unfreeze_module(module: nn.Module) -> None:
-    r"""Unfreeze all parameters of a module."""
+    r"""unfreeze_module(module: nn.Module) -> None
+
+    Unfreeze all parameters of a module.
+
+    Args:
+        module (nn.Module): Module to unfreeze.
+
+    Returns:
+        None
+    """
     set_trainable(module, True)
 
 
 def trainable_parameters(model: nn.Module) -> list[nn.Parameter]:
-    r"""Return parameters with ``requires_grad=True``."""
+    r"""trainable_parameters(model: nn.Module) -> list[nn.Parameter]
+
+    Return parameters with ``requires_grad=True``.
+
+    Args:
+        model (nn.Module): Model to inspect.
+
+    Returns:
+        list[nn.Parameter]: Trainable parameters in declaration order.
+    """
     return [param for param in model.parameters() if param.requires_grad]
 
 

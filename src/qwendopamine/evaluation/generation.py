@@ -17,7 +17,22 @@ def generate_text(
     include_prompt: bool = True,
     **kwargs: Any,
 ) -> str:
-    r"""Generate text continuation from a prompt."""
+    r"""generate_text(model: Any, tokenizer: Any, prompt: str, max_new_tokens: int = 256, include_prompt: bool = True, **kwargs: Any) -> str
+
+    Generate text continuation from a prompt.
+
+    Args:
+        model (Any): PyTorch model with a ``generate`` method.
+        tokenizer (Any): Tokenizer with ``__call__`` and ``decode``.
+        prompt (str): Input text string.
+        max_new_tokens (int): Maximum tokens to generate. Default: ``256``.
+        include_prompt (bool): Whether to include input tokens in output.
+            Default: ``True``.
+        **kwargs: Additional keyword arguments forwarded to ``model.generate``.
+
+    Returns:
+        str: Decoded generated text.
+    """
     model.eval()
     device = get_model_device(model)
     inputs = tokenizer(prompt, return_tensors="pt")

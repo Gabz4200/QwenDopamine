@@ -16,6 +16,8 @@ from qwendopamine.models.gdn2.config import GDN2Config
 
 
 class DummyConfig:
+    r"""DummyConfig: minimal GDN-2 config for tests."""
+
     def __init__(
         self,
         hidden_size: int = 128,
@@ -302,6 +304,8 @@ def test_when_gdn2_forward_with_linear_attention_cache_layer_then_stores_states(
         pytest.skip("LinearAttentionCacheLayerMixin not available")
 
     class TestLinearLayerCache(LinearAttentionCacheLayerMixin):
+        """Tests for linear attention cache layer behavior."""
+
         def __init__(self) -> None:
             super().__init__(number_of_states=1)
 

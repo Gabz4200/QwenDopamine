@@ -84,7 +84,32 @@ _DEFAULT_FP32_DECAY = True
 
 
 class GatedDeltaNet2(nn.Module):
-    """Gated DeltaNet 2 (GDN-2) token-mixing layer."""
+    r"""Gated DeltaNet 2 (GDN-2) token-mixing layer.
+
+    Implements the GDN-2 recurrence (paper Eq. 10), extending KDA's scalar-beta
+    erase gate to channel-wise erase (``b``) and write (``w``) gates:
+
+    .. math::
+
+        S_t = (I - k_t (b_t \odot k_t)^T) \text{Diag}(\exp(g_t)) S_{t-1}
+              + k_t (w_t \odot v_t)^T
+
+    The implementation is decomposed into focused helper methods for
+    projections, backend dispatch, and cache management.
+
+    Shapes:
+        S : ``[B, H, K, V]`` — recurrent memory state.
+        q : ``[B, T, H, K]`` — query projections.
+        k : ``[B, T, H, K]`` — key projections.
+        v : ``[B, T, H, V]`` — value projections.
+        b : ``[B, T, H, K]`` — channel-wise erase gate.
+        w : ``[B, T, H, V]`` — channel-wise write gate.
+        g : ``[B, T, H, K]`` — log-decay gate (``a_t = \exp(g_t)``).
+
+    Returns:
+        y : ``[B, T, H, V]`` — mixed output.
+        S : ``[B, H, K, V]`` — updated recurrent state.
+    """
 
     def __init__(
         self,
@@ -813,6 +838,17 @@ class GatedDeltaNet2(nn.Module):
         output_attentions: bool | None = False,
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None, Cache | dict[str, Any] | None]:
+        r"""Forward pass of the GDN-2 token-mixing layer.
+
+        Args:
+            hidden_states: Hidden-state ``[B, T, D]``.
+            attention_mask: Padding mask ``[B, T]`` (optional).
+            past_key_values: Cache for decoding.
+            use_cache: Return updated cache.
+
+        Returns:
+            Tuple ``(hidden_states, attentions, past_key_values)``.
+        """
         batch, seq_len, _ = hidden_states.shape
         mode = "fused_recurrent" if (seq_len <= 64 and not self.training) else self.mode
 

@@ -162,6 +162,9 @@ class ValueBaselineEMA(nn.Module):
         return V_t, A_t
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return f"d_model={self.d_model}, k_stats={self.k_stats}"
 
 
@@ -268,6 +271,9 @@ class AdvantageGate(nn.Module):
         return plasticity, write, erase
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return (
             f"k_stats={self.k_stats}, dropout={self.dropout}, "
             f"legacy_coupled={self.legacy_coupled}"
@@ -559,6 +565,9 @@ class DeltaMemoryCore(nn.Module):
         return S_next, k_cache_out, v_cache_out
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""
         return f"d_model={self.d_model}, use_short_conv={self.use_short_conv}{rank}"
 
@@ -865,6 +874,14 @@ class ReinforcedDeltaLayer(nn.Module):
         return bool(is_available())
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        String representation of the layer's key parameters.
+
+        Returns:
+            str: Comma-separated ``d_model``, ``k_stats``, and optional
+            ``memory_rank``.
+        """
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""
         return f"d_model={self.d_model}, k_stats={self.k_stats}{rank}"
 
@@ -1158,6 +1175,22 @@ class GatedRewardNet(nn.Module):
         use_cache: bool = True,
         **kwargs: Any,
     ) -> tuple[Tensor, None, Any]:
+        r"""GatedRewardNet.forward(hidden_states, reward_values=None, past_key_values=None, output_attentions=False, use_cache=True, **kwargs) -> tuple[Tensor, None, Any]
+
+        Apply the gated reward network recurrence.
+
+        Args:
+            hidden_states (Tensor): Input ``[B, T, D]`` or ``[B, D]``.
+            reward_values (Tensor | None): Reward signal ``[B, T]`` or similar.
+            past_key_values (Any): Optional cache for incremental decoding.
+            output_attentions (bool): Whether to return attention weights.
+            use_cache (bool): Persist recurrent state for next call.
+            **kwargs: Extra arguments ignored by this layer.
+
+        Returns:
+            tuple[Tensor, None, Any]: ``(output, None, new_cache)`` where
+            ``new_cache`` holds recurrent state and running norm stats.
+        """
         if hidden_states.dim() == 3:
             B, L, _ = hidden_states.shape
             seq_len = L
@@ -1224,5 +1257,8 @@ class GatedRewardNet(nn.Module):
         return out, None, new_cache
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""
         return f"hidden_size={self.hidden_size}, k_stats={self.k_stats}{rank}"

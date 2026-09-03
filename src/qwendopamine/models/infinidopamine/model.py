@@ -70,6 +70,13 @@ def _normalize_weights_to_state_dict(
 
 
 class InfiniDopaminePreTrainedModel(FamilyPreTrainedModel):
+    r"""InfiniDopaminePreTrainedModel: base pretrained model with GDN-2 weight
+    initialization.
+
+    Args:
+        config (InfiniDopamineConfig): Model configuration.
+    """
+
     config_class = InfiniDopamineConfig
     config: InfiniDopamineConfig
     _no_split_modules: ClassVar[list[str]] = [
@@ -82,6 +89,7 @@ class InfiniDopaminePreTrainedModel(FamilyPreTrainedModel):
     }
 
     def _init_family_weights(self, module: nn.Module) -> None:
+        """Initialize GDN-2 and vision-rotary parameters."""
         if isinstance(module, InfiniDopamineGatedDeltaNet):
             init.ones_(module.dt_bias)
             init.copy_(
@@ -101,24 +109,38 @@ class InfiniDopaminePreTrainedModel(FamilyPreTrainedModel):
 
 
 class InfiniDopamineVisionModel(FamilyVisionModel):
+    r"""InfiniDopamineVisionModel: vision encoder for multimodal configs.
+
+    Args:
+        config (InfiniDopamineVisionConfig): Vision configuration.
+    """
+
     config_class = InfiniDopamineVisionConfig
     config: InfiniDopamineVisionConfig
     _no_split_modules: ClassVar[list[str]] = ["InfiniDopamineVisionBlock"]
 
     def _delete_vision_attributes(self) -> None:
+        """Remove vision-specific attributes for language-only inference."""
         del self.deepstack_visual_indexes
         del self.deepstack_merger_list
 
 
 class InfiniDopamineModelOutputWithPast(FamilyModelOutputWithPast):
-    pass
+    r"""InfiniDopamineModelOutputWithPast: output container with past-key states."""
 
 
 class InfiniDopamineTextModel(FamilyTextModel):
+    r"""InfiniDopamineTextModel: text-only decoder stack with GDN-2 layers.
+
+    Args:
+        config (InfiniDopamineTextConfig): Text configuration.
+    """
+
     config_class = InfiniDopamineTextConfig
     config: InfiniDopamineTextConfig
 
     def _build_text_layers(self, config: InfiniDopamineTextConfig) -> None:
+        """Build the decoder layer stack and rotary embedding."""
         self.layers = nn.ModuleList(
             [
                 InfiniDopamineDecoderLayer(config, layer_idx)
@@ -132,13 +154,23 @@ class InfiniDopamineTextModel(FamilyTextModel):
         hidden_states: torch.Tensor,
         past_key_values: Cache | None,
     ) -> BaseModelOutputWithPast:
+        """Wrap hidden states and cache in an output container."""
         return InfiniDopamineModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
         )
 
     def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
-        r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
+        r"""get_gate_regularization_loss(target=0.5) -> torch.Tensor
+
+        Sum gate balance regularization across all GDN-2 layer blocks.
+
+        Args:
+            target (float): Target gate balance value. Default: ``0.5``.
+
+        Returns:
+            torch.Tensor: Scalar regularization loss.
+        """
         losses: list[torch.Tensor] = []
         for layer in self.layers[: self.config.num_hidden_layers]:
             if hasattr(layer, "linear_attn") and hasattr(
@@ -157,7 +189,18 @@ class InfiniDopamineTextModel(FamilyTextModel):
         weights: dict[str, torch.Tensor] | nn.Module,
         strict: bool = True,
     ) -> Any:
-        r"""Load pretrained Qwen3.5 (GDN-1) weights into InfiniDopamine (GDN-2 with SWA)."""
+        r"""load_qwen35_weights(weights, strict=True) -> Any
+
+        Load pretrained Qwen3.5 (GDN-1) weights into InfiniDopamine (GDN-2
+        with SWA), stripping visual and MTP prefixes.
+
+        Args:
+            weights (dict[str, torch.Tensor] | nn.Module): State dict or module.
+            strict (bool): Strict load. Default: ``True``.
+
+        Returns:
+            Any: Result of :meth:`load_state_dict` (missing/unexpected keys).
+        """
         state_dict = _normalize_weights_to_state_dict(weights)
 
         has_full_prefix = any(
@@ -185,6 +228,12 @@ class InfiniDopamineTextModel(FamilyTextModel):
 
 
 class InfiniDopamineModel(FamilyModel):
+    r"""InfiniDopamineModel: multimodal model combining vision and text towers.
+
+    Args:
+        config (InfiniDopamineConfig): Multimodal configuration.
+    """
+
     config_class = InfiniDopamineConfig
     _no_split_modules: ClassVar[list[str]] = [
         "InfiniDopamineDecoderLayer",
@@ -192,11 +241,18 @@ class InfiniDopamineModel(FamilyModel):
     ]
 
     def _build_model_components(self, config: InfiniDopamineConfig) -> None:
+        """Build vision and text submodels."""
         self.visual = InfiniDopamineVisionModel(config.vision_config)
         self.language_model = InfiniDopamineTextModel(config.text_config)
 
 
 class InfiniDopamineForCausalLM(FamilyForCausalLM):
+    r"""InfiniDopamineForCausalLM: causal LM head with optional gate/parallel-loss.
+
+    Args:
+        config (InfiniDopamineTextConfig): Text configuration.
+    """
+
     config_class = InfiniDopamineTextConfig
     config: InfiniDopamineTextConfig
     _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
@@ -205,11 +261,11 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
     ]
 
     def _build_causal_lm_model(self, config: InfiniDopamineTextConfig) -> nn.Module:
+        """Return a :class:`InfiniDopamineTextModel`."""
         return InfiniDopamineTextModel(config)
 
-    def _apply_causal_lm_postprocessing(
-        self, outputs: CausalLMOutputWithPast
-    ) -> None:
+    def _apply_causal_lm_postprocessing(self, outputs: CausalLMOutputWithPast) -> None:
+        """Add gate regularization and parallel-reward losses to ``outputs.loss``."""
         if (
             getattr(outputs, "loss", None) is not None
             and self.training
@@ -225,20 +281,25 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
         ):
             weight = getattr(self.config, "parallel_reward_gate_loss_weight", 0.0)
             if weight > 0.0:
-                outputs.loss = outputs.loss + weight * self.get_parallel_reward_gate_loss()
+                outputs.loss = (
+                    outputs.loss + weight * self.get_parallel_reward_gate_loss()
+                )
 
     def get_parallel_reward_gate_loss(self) -> torch.Tensor:
-        r"""Mean ``σ(W_g x + b_g) - init_bias`` across all parallel reward gates.
+        r"""get_parallel_reward_gate_loss() -> torch.Tensor
+
+        Mean ``σ(W_g x + b_g) - init_bias`` across all parallel reward gates.
 
         Penalises the gate from drifting away from its initialisation
         (``sigmoid(init_bias) ≈ 0.0067`` by default) so the dopamine branch
         stays effectively silent until the rest of the model has stabilised.
         Active layers only.
 
-        The penalty is computed on a deterministic representative input so
-        gradient updates do not require the trainer to pass extra
-        activations; the result correctly reflects changes to either the
-        weight or the bias of ``reward_gate_proj``.
+        Args:
+            None
+
+        Returns:
+            torch.Tensor: Scalar penalty on gate deviation.
         """
         device = next(self.parameters()).device
         init_bias = float(getattr(self.config, "reward_gate_init_bias", -5.0))
@@ -260,7 +321,17 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
         weights: dict[str, torch.Tensor] | nn.Module,
         strict: bool = True,
     ) -> Any:
-        r"""Load pretrained Qwen3.5 (GDN-1) weights into InfiniDopamine (GDN-2 with SWA)."""
+        r"""load_qwen35_weights(weights, strict=True) -> Any
+
+        Load Qwen3.5 (GDN-1) weights, remapping language-model prefixes.
+
+        Args:
+            weights (dict[str, torch.Tensor] | nn.Module): State dict or module.
+            strict (bool): Strict load. Default: ``True``.
+
+        Returns:
+            Any: Result of :meth:`load_state_dict`.
+        """
         state_dict = _normalize_weights_to_state_dict(weights)
 
         has_language_model_prefix = any(
@@ -271,10 +342,14 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
             remapped_state_dict: dict[str, torch.Tensor] = {}
             for k, v in state_dict.items():
                 if k.startswith("model.language_model."):
-                    remapped_state_dict[k.replace("model.language_model.", "model.")] = v
+                    remapped_state_dict[
+                        k.replace("model.language_model.", "model.")
+                    ] = v
                 elif k.startswith("language_model."):
                     remapped_state_dict[k.replace("language_model.", "model.")] = v
-                elif k == "lm_head.weight" or not k.startswith(("model.visual.", "visual.", "mtp.")):
+                elif k == "lm_head.weight" or not k.startswith(
+                    ("model.visual.", "visual.", "mtp.")
+                ):
                     remapped_state_dict[k] = v
             state_dict = remapped_state_dict
 
@@ -282,11 +357,23 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
 
 
 class InfiniDopamineForTokenClassification(FamilyForTokenClassification):
+    r"""InfiniDopamineForTokenClassification: token-classification head.
+
+    Args:
+        config (InfiniDopamineConfig): Model configuration.
+    """
+
     config_class = InfiniDopamineConfig
     config: InfiniDopamineConfig
 
 
 class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
+    r"""InfiniDopamineForConditionalGeneration: multimodal causal-LM head.
+
+    Args:
+        config (InfiniDopamineConfig): Multimodal configuration.
+    """
+
     config_class = InfiniDopamineConfig
     config: InfiniDopamineConfig
     _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
@@ -294,6 +381,7 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
     ]
 
     def _build_conditional_model(self, config: InfiniDopamineConfig) -> nn.Module:
+        """Return a :class:`InfiniDopamineModel`."""
         return InfiniDopamineModel(config)
 
     def _apply_conditional_postprocessing(
@@ -301,6 +389,7 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
         loss: Any,
         outputs: Any,
     ) -> None:
+        """Add gate regularization loss to ``outputs.loss``."""
         if (
             loss is not None
             and self.training
@@ -311,7 +400,16 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
             outputs.loss = loss + self.config.gate_loss_weight * gate_loss
 
     def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
-        r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
+        r"""get_gate_regularization_loss(target=0.5) -> torch.Tensor
+
+        Delegate gate balance regularization to the model's text tower.
+
+        Args:
+            target (float): Target gate balance value. Default: ``0.5``.
+
+        Returns:
+            torch.Tensor: Scalar regularization loss.
+        """
         return self.model.get_gate_regularization_loss(target=target)
 
     def load_qwen35_weights(
@@ -319,7 +417,19 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
         weights: dict[str, torch.Tensor] | nn.Module,
         strict: bool = True,
     ) -> Any:
-        r"""Load pretrained Qwen3.5 (GDN-1) weights into InfiniDopamine (GDN-2 with SWA)."""
+        r"""load_qwen35_weights(weights, strict=True) -> _IncompatibleKeys
+
+        Load Qwen3.5 weights into a multimodal model, splitting into vision,
+        text, and LM-head state.
+
+        Args:
+            weights (dict[str, torch.Tensor] | nn.Module): State dict or module.
+            strict (bool): Strict load. Default: ``True``.
+
+        Returns:
+            _IncompatibleKeys: Named tuple of ``missing_keys`` and
+            ``unexpected_keys``.
+        """
         state_dict = _normalize_weights_to_state_dict(weights)
 
         vision_state: dict[str, torch.Tensor] = {}
@@ -375,15 +485,27 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
         return _IncompatibleKeys(all_missing, all_unexpected)
 
 
-class InfiniDopamineTextForSequenceClassification(
-    FamilyTextForSequenceClassification
-):
+class InfiniDopamineTextForSequenceClassification(FamilyTextForSequenceClassification):
+    r"""InfiniDopamineTextForSequenceClassification: sequence classification on
+    text input.
+
+    Args:
+        config (InfiniDopamineTextConfig): Text configuration.
+    """
+
     config_class = InfiniDopamineTextConfig
     config: InfiniDopamineTextConfig
     input_modalities = ("text",)
 
 
 class InfiniDopamineForSequenceClassification(FamilyForSequenceClassification):
+    r"""InfiniDopamineForSequenceClassification: sequence classification on
+    multimodal input.
+
+    Args:
+        config (InfiniDopamineConfig): Multimodal configuration.
+    """
+
     config_class = InfiniDopamineConfig
     config: InfiniDopamineConfig
 

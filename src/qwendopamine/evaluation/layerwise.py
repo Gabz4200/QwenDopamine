@@ -13,7 +13,23 @@ from qwendopamine.utils import get_model_device, move_to_device
 def layerwise_stats(
     model: nn.Module, dataloader: Any, max_steps: int = 50
 ) -> dict[str, float]:
-    r"""Collect per-layer activation statistics across forward passes."""
+    r"""layerwise_stats(model: nn.Module, dataloader: Any, max_steps: int = 50) -> dict[str, float]
+
+    Collect per-layer activation statistics across forward passes.
+
+    Registers a forward hook on every leaf module and accumulates
+    ``norm`` and ``mean`` statistics. Hooks are removed in a ``finally``
+    block.
+
+    Args:
+        model (nn.Module): Model whose ``named_modules()`` are inspected.
+        dataloader (Any): Data loader yielding batches.
+        max_steps (int): Maximum forward steps. Default: ``50``.
+
+    Returns:
+        dict[str, float]: Per-layer ``{layer_name.norm, layer_name.mean}``
+        averages. Empty when no leaf modules found.
+    """
     model.eval()
     device = get_model_device(model)
     layer_sums: dict[str, float] = {}

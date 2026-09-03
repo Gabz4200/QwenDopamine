@@ -9,6 +9,23 @@ from typing import Any
 
 @dataclass
 class GDN2Config:
+    r"""Configuration for GDN-2 blocks.
+
+    Args:
+        hidden_size: Dimension of the hidden states ``[B, T, H, D]``.
+        num_heads: Number of query attention heads.
+        head_dim: Dimension per head ``D``.
+        num_v_heads: Number of value heads (``None`` defaults to ``num_heads``).
+        expand_v: Expansion factor for the value projection ``v``.
+        conv_size: Kernel size of the causal ``ShortConvolution`` pre-filter.
+        conv_bias: If ``True``, add a bias to the convolution.
+        allow_neg_eigval: If ``True``, allow negative eigenvalues in the state matrix.
+        norm_eps: Epsilon value for ``RMSNorm`` normalization.
+        block_size: Maximum sequence length supported by the chunkwise recurrent path.
+        vocab_size: Size of the vocabulary.
+        num_layers: Number of ``GatedDeltaNet2`` layers stacked in the model.
+    """
+
     name: str = ""
     hidden_size: int = 2048
     num_heads: int = 16
@@ -25,6 +42,19 @@ class GDN2Config:
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> GDN2Config:
+        r"""Instantiate a :class:`GDN2Config` from a registered name.
+
+        Args:
+            name: Registered config name (e.g. ``"gdn2_1.3B"``).
+            **kwargs: Additional fields to override the default values for the
+                named config.
+
+        Returns:
+            A :class:`GDN2Config` instance with the requested settings.
+
+        Raises:
+            KeyError: If ``name`` is not a registered config.
+        """
         if name not in name_to_config:
             raise KeyError(
                 f"Unknown config name '{name}'. Available configs: {list(name_to_config.keys())}"

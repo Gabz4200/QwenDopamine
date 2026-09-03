@@ -14,7 +14,26 @@ from qwendopamine.utils import get_model_device, move_to_device
 def compute_perplexity(
     model: nn.Module, dataloader: Any, max_steps: int = 500
 ) -> float:
-    r"""Estimate perplexity over a dataloader by accumulating token-weighted cross-entropy loss."""
+    r"""compute_perplexity(model: nn.Module, dataloader: Any, max_steps: int = 500) -> float
+
+    Estimate perplexity over a dataloader by accumulating token-weighted
+    cross-entropy loss.
+
+    Args:
+        model (nn.Module): Causal language model whose ``__call__`` returns
+            ``{"loss": loss}`` or an object with a ``.loss`` attribute.
+        dataloader (Any): Data loader yielding dict batches with keys such as
+            ``{"input_ids", "labels", "attention_mask"}``.
+        max_steps (int): Maximum batches to process. Default: ``500``.
+
+    Returns:
+        float: Perplexity estimate (``exp(avg_loss)``). Returns
+        ``float('inf')`` on overflow.
+
+    Warns:
+        UserWarning: On overflow when perplexity cannot be computed due to
+        ``exp(avg_loss)`` exceeding float range.
+    """
     model.eval()
     total_loss = 0.0
     total_tokens = 0

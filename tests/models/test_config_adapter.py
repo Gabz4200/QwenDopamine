@@ -17,6 +17,8 @@ from qwendopamine.models.core.config_adapter import (
 
 @dataclass
 class DummyConfig:
+    r"""DummyConfig: minimal config for ConfigAdapter tests."""
+
     hidden_size: int = 128
     vocab_size: int = 1000
     max_position_embeddings: int = 2048
@@ -24,12 +26,14 @@ class DummyConfig:
 
 
 class OnlyAliasesConfig:
+    r"""OnlyAliasesConfig: config with only aliased fields."""
+
     n_embd: int = 256
     n_layer: int = 8
 
 
 class EmptyConfig:
-    pass
+    r"""EmptyConfig: empty config to test default fallback."""
 
 
 def test_when_all_fields_present_then_returns_own_values() -> None:

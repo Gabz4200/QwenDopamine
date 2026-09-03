@@ -25,7 +25,22 @@ def build_rope_cache(
     base: float = 10000.0,
     condense_ratio: float = 1.0,
 ) -> RoPECache:
-    """Build Rotary Position Embedding cos and sin tables."""
+    r"""build_rope_cache(seq_len: int, n_elem: int, dtype: torch.dtype, device: torch.device, base: float = 10000.0, condense_ratio: float = 1.0) -> RoPECache
+
+    Build Rotary Position Embedding cos and sin tables.
+
+    Args:
+        seq_len (int): Maximum sequence length.
+        n_elem (int): Number of embedding elements (must be even).
+        dtype (torch.dtype): Output tensor dtype.
+        device (torch.device): Output tensor device.
+        base (float): RoPE base frequency. Default: ``10000.0``.
+        condense_ratio (float): Sequence length compression factor.
+            Default: ``1.0``.
+
+    Returns:
+        RoPECache: Tuple ``(cos, sin)`` of tensors ``[seq_len, n_elem]``.
+    """
     theta = 1.0 / (
         base
         ** (torch.arange(0, n_elem, 2, device=device, dtype=torch.float32) / n_elem)
@@ -42,7 +57,19 @@ def apply_rotary_emb(
     cos: torch.Tensor,
     sin: torch.Tensor,
 ) -> torch.Tensor:
-    """Apply rotary position embedding to input tensor with exact dtype preservation."""
+    r"""apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor
+
+    Apply rotary position embedding to input tensor with exact dtype
+    preservation.
+
+    Args:
+        x (torch.Tensor): Input ``[..., n_elem]``.
+        cos (torch.Tensor): Cosine cache ``[seq_len, n_elem]``.
+        sin (torch.Tensor): Sine cache ``[seq_len, n_elem]``.
+
+    Returns:
+        torch.Tensor: Rotated tensor of the same shape and dtype as ``x``.
+    """
     orig_dtype = x.dtype
     x_f = x.float()
     rot_dim = cos.size(-1) * 2
@@ -63,6 +90,16 @@ def apply_rotary_emb(
 
 
 class SwiGLU(nn.Module):
+    r"""SwiGLU activation with parallel-gated linear projections.
+
+    Computes ``w3(silu(w1(x)) * w2(x))``.
+
+    Args:
+        in_features (int): Input dimension.
+        hidden_features (int): Hidden (intermediate) dimension.
+        bias (bool): Whether to include bias on linear layers. Default: ``False``.
+    """
+
     def __init__(
         self, in_features: int, hidden_features: int, bias: bool = False
     ) -> None:
@@ -72,6 +109,14 @@ class SwiGLU(nn.Module):
         self.w3 = nn.Linear(hidden_features, in_features, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r"""forward(x: torch.Tensor) -> torch.Tensor
+
+        Args:
+            x (torch.Tensor): Input ``[..., in_features]``.
+
+        Returns:
+            torch.Tensor: Activated output ``[..., in_features]``.
+        """
         x1 = self.w1(x)
         x2 = self.w2(x)
         x = F.silu(x1) * x2
@@ -80,15 +125,41 @@ class SwiGLU(nn.Module):
 
 
 class LLaMAMLP(nn.Module):
+    r"""LLaMA-style MLP wrapping a SwiGLU activation.
+
+    Args:
+        config (GDN2GPTConfig): Configuration with ``n_embd``,
+            ``intermediate_size``, and ``bias``.
+    """
+
     def __init__(self, config: GDN2GPTConfig) -> None:
         super().__init__()
         self.swiglu = SwiGLU(config.n_embd, config.intermediate_size, bias=config.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r"""forward(x: torch.Tensor) -> torch.Tensor
+
+        Args:
+            x (torch.Tensor): Input ``[..., n_embd]``.
+
+        Returns:
+            torch.Tensor: Output ``[..., n_embd]``.
+        """
         return self.swiglu(x)
 
 
 class CausalSelfAttention(nn.Module):
+    r"""Grouped-query attention with RoPE and KV-cache support.
+
+    Args:
+        config (GDN2GPTConfig): Configuration specifying ``n_head``,
+            ``n_query_groups``, ``head_size``, ``n_embd``, ``nope``,
+            ``rotary_percentage``.
+        layer_idx (int): Layer index used for cache disambiguation.
+        n_embd (int): Embedding dimension.
+        head_size (int | None): Override head dimension. Default: ``None``.
+    """
+
     def __init__(
         self,
         config: GDN2GPTConfig,
@@ -126,6 +197,19 @@ class CausalSelfAttention(nn.Module):
         input_pos: torch.Tensor | None = None,
         kv_cache: KVCache | None = None,
     ) -> tuple[torch.Tensor, KVCache | None]:
+        r"""forward(x, rope=None, max_seq_length=None, mask=None, input_pos=None, kv_cache=None) -> tuple[torch.Tensor, KVCache | None]
+
+        Args:
+            x (torch.Tensor): Query ``[B, T, D]``.
+            rope (RoPECache | None): ``(cos, sin)`` cache.
+            max_seq_length (int | None): Cache window length.
+            mask (torch.Tensor | None): Attention mask.
+            input_pos (torch.Tensor | None): Positions for cache indexing.
+            kv_cache (KVCache | None): ``(k_cache, v_cache)``.
+
+        Returns:
+            tuple[torch.Tensor, KVCache | None]: ``(output, kv_cache)``.
+        """
         b, t, c = x.size()
         qkv = self.attn(x)
         q_per_kv = self.n_head // self.n_query_groups
@@ -174,6 +258,13 @@ class CausalSelfAttention(nn.Module):
 
 
 class Block(nn.Module):
+    r"""Transformer block choosing between GDN-2 and standard attention.
+
+    Args:
+        config (GDN2GPTConfig): Model configuration.
+        layer_idx (int): Index of this layer within the model.
+    """
+
     def __init__(self, config: GDN2GPTConfig, layer_idx: int) -> None:
         super().__init__()
         self.config = config
@@ -227,6 +318,21 @@ class Block(nn.Module):
         input_pos: torch.Tensor | None = None,
         kv_cache: KVCache | None = None,
     ) -> tuple[torch.Tensor, KVCache | None]:
+        r"""forward(x: torch.Tensor, rope: RoPECache | None, max_seq_length: int, mask: torch.Tensor | None = None, input_pos: torch.Tensor | None = None, kv_cache: KVCache | None = None) -> tuple[torch.Tensor, KVCache | None]
+
+        Apply attention (GDN-2 or standard) and MLP sublayer with residuals.
+
+        Args:
+            x (torch.Tensor): Input ``[B, T, D]``.
+            rope (RoPECache | None): ``(cos, sin)`` cache or ``None``.
+            max_seq_length (int): Cache window length.
+            mask (torch.Tensor | None): Attention mask.
+            input_pos (torch.Tensor | None): Positions for cache indexing.
+            kv_cache (KVCache | None): ``(k_cache, v_cache)``.
+
+        Returns:
+            tuple[torch.Tensor, KVCache | None]: ``(output, kv_cache)``.
+        """
         n_1 = self.norm_1(x)
         if self.use_gdn2:
             h, _, new_kv_cache = self.attn(n_1, attention_mask=None)
@@ -249,6 +355,14 @@ class Block(nn.Module):
 
 
 class GDN2GPT(nn.Module):
+    r"""GDN2GPT(config: GDN2GPTConfig) -> None
+
+    Lit-GPT style decoder with hybrid GDN-2 / standard-attention blocks.
+
+    Args:
+        config (GDN2GPTConfig): Model configuration.
+    """
+
     def __init__(self, config: GDN2GPTConfig) -> None:
         super().__init__()
         assert config.padded_vocab_size is not None
@@ -268,9 +382,17 @@ class GDN2GPT(nn.Module):
 
     @property
     def transformer(self) -> nn.ModuleDict:
+        r"""transformer() -> nn.ModuleDict
+
+        Return the transformer submodules (embeddings, blocks, norm).
+
+        Returns:
+            nn.ModuleDict: Named submodules ``wte``, ``h``, ``ln_f``.
+        """
         return nn.ModuleDict({"wte": self.wte, "h": self.h, "ln_f": self.ln_f})
 
     def _init_weights(self, module: nn.Module) -> None:
+        """Initialize weights following GPT-2 / Mamba init conventions."""
         if isinstance(module, nn.Embedding):
             if self.mamba_init:
                 torch.nn.init.normal_(module.weight, std=0.02)
@@ -296,6 +418,13 @@ class GDN2GPT(nn.Module):
                     torch.nn.init.zeros_(module.bias)
 
     def reset_cache(self) -> None:
+        """reset_cache() -> None
+
+        Clear KV caches and reset Rope/Mask caches to ``None``.
+
+        Returns:
+            None
+        """
         self.max_len = self.config.block_size
         self.kv_caches.clear()
         self.rope_cache = None
@@ -307,6 +436,20 @@ class GDN2GPT(nn.Module):
         max_seq_length: int | None = None,
         input_pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        r"""forward(idx: torch.Tensor, max_seq_length: int | None = None, input_pos: torch.Tensor | None = None) -> torch.Tensor
+
+        Forward pass through embedding, transformer blocks, and LM head.
+
+        Args:
+            idx (torch.Tensor): Token ids ``[B, T]``.
+            max_seq_length (int | None): Maximum sequence length for cache.
+                Default: ``None`` (uses ``config.block_size``).
+            input_pos (torch.Tensor | None): Input positions ``[T]`` for
+                incremental decoding. Default: ``None``.
+
+        Returns:
+            torch.Tensor: Vocabulary logits ``[B, T, vocab_size]``.
+        """
         _b, t = idx.size()
         use_kv_cache = input_pos is not None
 
@@ -330,7 +473,9 @@ class GDN2GPT(nn.Module):
         if use_kv_cache:
             if not self.config.nope and cos is not None and sin is not None:
                 if input_pos is None:
-                    raise ValueError("input_pos is required when using KV cache with RoPE.")
+                    raise ValueError(
+                        "input_pos is required when using KV cache with RoPE."
+                    )
                 cos = cos.index_select(0, input_pos)
                 sin = sin.index_select(0, input_pos)
             if self.mask_cache is None:
@@ -383,16 +528,53 @@ class GDN2GPT(nn.Module):
         return self.lm_head(x)
 
     def gradient_checkpointing_enable(self) -> None:
+        """gradient_checkpointing_enable() -> None
+
+        Enable gradient checkpointing on forward passes.
+
+        Returns:
+            None
+        """
         self.config.gradient_checkpointing = True
 
     def gradient_checkpointing_disable(self) -> None:
+        """gradient_checkpointing_disable() -> None
+
+        Disable gradient checkpointing.
+
+        Returns:
+            None
+        """
         self.config.gradient_checkpointing = False
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> GDN2GPT:
+        r"""from_name(name: str, **kwargs: Any) -> GDN2GPT
+
+        Instantiate from a preset config name.
+
+        Args:
+            name (str): Preset name (e.g. ``"1B"``).
+            **kwargs: Extra keyword arguments forwarded to
+                :meth:`GDN2GPTConfig.from_name`.
+
+        Returns:
+            GDN2GPT: Instantiated model.
+        """
         return cls(GDN2GPTConfig.from_name(name, **kwargs))
 
     def build_rope_cache(self, idx: torch.Tensor, seq_len: int) -> RoPECache:
+        r"""build_rope_cache(idx: torch.Tensor, seq_len: int) -> RoPECache
+
+        Build (or rebuild) the RoPE cos/sin cache.
+
+        Args:
+            idx (torch.Tensor): Reference tensor providing device and dtype.
+            seq_len (int): Maximum sequence length.
+
+        Returns:
+            RoPECache: ``(cos, sin)`` tensors ``[seq_len, n_elem]``.
+        """
         return build_rope_cache(
             seq_len=seq_len,
             n_elem=int(self.config.rotary_percentage * self.config.head_size),
@@ -403,6 +585,16 @@ class GDN2GPT(nn.Module):
         )
 
     def build_mask_cache(self, idx: torch.Tensor) -> torch.Tensor:
+        r"""build_mask_cache(idx: torch.Tensor) -> torch.Tensor
+
+        Build a lower-triangular causal mask cache.
+
+        Args:
+            idx (torch.Tensor): Reference tensor providing the device.
+
+        Returns:
+            torch.Tensor: Boolean mask ``[1, 1, B, B]`` (tril).
+        """
         ones = torch.ones(
             (self.config.block_size, self.config.block_size),
             device=idx.device,
@@ -413,6 +605,19 @@ class GDN2GPT(nn.Module):
     def build_kv_caches(
         self, idx: torch.Tensor, max_seq_length: int
     ) -> list[KVCache | None]:
+        r"""build_kv_caches(idx: torch.Tensor, max_seq_length: int) -> list[KVCache | None]
+
+        Pre-allocate per-layer KV caches for decoding.
+
+        Args:
+            idx (torch.Tensor): Reference tensor providing batch size and
+                device.
+            max_seq_length (int): Maximum cache length per layer.
+
+        Returns:
+            list[KVCache | None]: One ``(k_cache, v_cache)`` tuple per block,
+            or ``None`` for GDN-2 blocks that manage their own state.
+        """
         b = idx.size(0)
         heads = self.config.n_query_groups
         k_cache_shape = (b, max_seq_length, heads, self.config.head_size)
@@ -434,7 +639,18 @@ class GDN2GPT(nn.Module):
 
 
 def compute_model_params(cfg: GDN2GPTConfig) -> dict[str, int]:
-    """Analytically compute model parameter counts across components."""
+    r"""compute_model_params(cfg: GDN2GPTConfig) -> dict[str, int]
+
+    Analytically compute model parameter counts across components.
+
+    Args:
+        cfg (GDN2GPTConfig): Model configuration.
+
+    Returns:
+        dict[str, int]: Per-component param counts keyed by ``"total"``,
+        ``"embed"``, ``"lm_head"``, ``"standard_block"``, ``"gdn2_block"``,
+        ``"num_standard_layers"``, ``"num_gdn2_layers"``.
+    """
     padded_vocab = cfg.padded_vocab_size or cfg.vocab_size
     embed_params = padded_vocab * cfg.n_embd
     lm_head_params = cfg.n_embd * padded_vocab

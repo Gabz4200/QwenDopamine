@@ -24,13 +24,19 @@ def _get_cfg(config: DictConfig, *keys: str, default: Any = None) -> Any:
     config_name="train/cpu",
 )
 def main(config: DictConfig) -> None:
-    r"""Training CLI entrypoint.
+    r"""main(config: DictConfig) -> None
 
-    Loads a Hugging Face model with optional quantization and prints a
+    Hydra-backed training CLI entrypoint.
+
+    Loads a HuggingFace model (with optional quantization) and prints a
     confirmation message.
 
-    The accessor helper ``_get_cfg`` supports both flat and nested Hydra configurations,
-    falling back to safe defaults when optional sections are omitted.
+    Args:
+        config (DictConfig): Hydra configuration. Supports flat keys and
+            nested ``train.*`` sections via :func:`_get_cfg`.
+
+    Returns:
+        None
     """
     print(OmegaConf.to_yaml(config))
     quantization_config = None

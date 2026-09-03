@@ -8,6 +8,47 @@ from typing import Any
 
 @dataclass
 class GDN2GPTConfig:
+    r"""GDN2GPTConfig: configuration for the lit_gpt-style hybrid transformer decoder.
+
+    Args:
+        name (str): Preset variant name. Default: ``"1B"``.
+        block_size (int): Sequence length context. Default: ``2048``.
+        vocab_size (int): Vocabulary size. Default: ``50257``.
+        padded_vocab_size (int | None): Padded vocab for tensor-parallel.
+            Default: ``None`` (defaults to ``vocab_size``).
+        n_layer (int): Number of transformer layers. Default: ``24``.
+        n_head (int): Number of attention heads. Default: ``16``.
+        n_embd (int): Embedding width. Default: ``2048``.
+        head_size (int): Per-head dimension. Default: ``128``.
+        n_query_groups (int): KV head groups (GQA). Default: ``8``.
+        intermediate_size (int): MLP hidden size. Default: ``5504``.
+        norm_eps (float): LayerNorm epsilon. Default: ``1e-5``.
+        bias (bool): Use bias in linear layers. Default: ``False``.
+        nope (bool): Disable positional embeddings. Default: ``False``.
+        rotary_percentage (float): RoPE fraction. Default: ``1.0``.
+        rope_base (float): RoPE base frequency. Default: ``10000.0``.
+        condense_ratio (float): NTK scale. Default: ``1.0``.
+        gdn2_layers (list[int] | None): Layer indices using GDN-2.
+            Default: ``None``.
+        gdn2_per_layer (int): Per-layer GDN flag. Default: ``0``.
+        mlp (bool): Include MLP in GDN-2 blocks. Default: ``True``.
+        parallel_residual (bool): Use parallel residual. Default: ``False``.
+        shared_attention_norm (bool): Share attention norm. Default: ``False``.
+        mamba_init (bool): Use Mamba-style init. Default: ``False``.
+        conv_size (int): Short convolution kernel. Default: ``4``.
+        expand_v (float): Value expansion ratio. Default: ``1.0``.
+        use_short_conv (bool): Use short convolution. Default: ``True``.
+        train_chunk_size (int): Training chunk. Default: ``128``.
+        gradient_checkpointing (bool): Enable gradient checkpointing.
+            Default: ``False``.
+        chunk_size (int | None): Inference chunk. Default: ``None``
+            (defaults to ``train_chunk_size``).
+        allow_neg_eigval (bool): Allow negative eigenvalues. Default: ``False``.
+        backend (str): Kernel backend. Default: ``"auto"``.
+        fp32_decay (bool): FP32 decay in optimizer. Default: ``True``.
+        compile_backend (bool): Compile Taichi backend. Default: ``False``.
+    """
+
     name: str = "1B"
     block_size: int = 2048
     vocab_size: int = 50257
@@ -49,6 +90,17 @@ class GDN2GPTConfig:
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> GDN2GPTConfig:
+        r"""from_name(cls, name: str, **kwargs: Any) -> GDN2GPTConfig
+
+        Build a config from a named preset.
+
+        Args:
+            name (str): Preset name (e.g. ``"1B"``, ``"3B"``).
+            **kwargs (Any): Override preset values.
+
+        Returns:
+            GDN2GPTConfig: Configured instance.
+        """
         presets: dict[str, dict[str, Any]] = {
             "1B": {
                 "name": "1B",

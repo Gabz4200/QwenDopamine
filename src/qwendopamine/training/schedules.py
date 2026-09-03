@@ -16,7 +16,23 @@ def build_scheduler(
     min_lr: float = 1e-5,
     max_steps: int = 100000,
 ) -> LRScheduler:
-    r"""Build a learning-rate scheduler with linear warmup wrapper."""
+    r"""build_scheduler(optimizer: Optimizer, name: str, warmup_steps: int = 2000, min_lr: float = 1e-5, max_steps: int = 100000) -> LRScheduler
+
+    Build a learning-rate scheduler with linear warmup wrapper.
+
+    Args:
+        optimizer (Optimizer): Optimizer to schedule.
+        name (str): Scheduler name (``"cosine"``).
+        warmup_steps (int): Warmup steps. Default: ``2000``.
+        min_lr (float): Minimum learning rate. Default: ``1e-5``.
+        max_steps (int): Total training steps. Default: ``100000``.
+
+    Returns:
+        LRScheduler: A :class:`LinearWarmupScheduler` for ``name="cosine"``.
+
+    Raises:
+        KeyError: If ``name`` is not recognised.
+    """
     if name == "cosine":
         base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max(max_steps - warmup_steps, 1), eta_min=min_lr
@@ -26,7 +42,16 @@ def build_scheduler(
 
 
 class LinearWarmupScheduler(LRScheduler):
-    r"""Linearly increase learning rate over warmup steps, then delegate to a base scheduler."""
+    r"""LinearWarmupScheduler(optimizer: torch.optim.Optimizer, warmup_steps: int, min_lr: float, base_scheduler: LRScheduler) -> None
+
+    Linearly warm up the learning rate, then delegate to a base scheduler.
+
+    Args:
+        optimizer (torch.optim.Optimizer): Optimizer to schedule.
+        warmup_steps (int): Number of warmup steps.
+        min_lr (float): Minimum learning rate floor.
+        base_scheduler (LRScheduler): Scheduler to delegate to after warmup.
+    """
 
     def __init__(
         self,
@@ -45,7 +70,19 @@ class LinearWarmupScheduler(LRScheduler):
         self.step_count = 0
 
     def step(self, epoch: int | None = None) -> None:
-        r"""Step the scheduler state forward."""
+        r"""step(epoch: int | None = None) -> None
+
+        Advance the scheduler by one step.
+
+        During warmup, sets a linear scale on each param group. After
+        warmup, delegates to the base scheduler.
+
+        Args:
+            epoch (int | None): Epoch for the base scheduler. Default: ``None``.
+
+        Returns:
+            None
+        """
         self.step_count += 1
         if self.step_count <= self.warmup_steps:
             scale = self.step_count / max(self.warmup_steps, 1)
@@ -55,7 +92,14 @@ class LinearWarmupScheduler(LRScheduler):
         self.base_scheduler.step(epoch)
 
     def state_dict(self) -> dict[str, Any]:
-        r"""Return scheduler state preserving warmup progress and base scheduler."""
+        r"""state_dict() -> dict[str, Any]
+
+        Return scheduler state preserving warmup progress and base scheduler.
+
+        Returns:
+            dict[str, Any]: State with keys ``base_scheduler``,
+            ``step_count``, ``warmup_steps``, ``min_lr``.
+        """
         return {
             "base_scheduler": self.base_scheduler.state_dict(),
             "step_count": self.step_count,
@@ -64,7 +108,16 @@ class LinearWarmupScheduler(LRScheduler):
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
-        r"""Load scheduler state from a state dict."""
+        r"""load_state_dict(state_dict: dict[str, Any]) -> None
+
+        Restore scheduler state from a state dict.
+
+        Args:
+            state_dict (dict[str, Any]): State dict from :meth:`state_dict`.
+
+        Returns:
+            None
+        """
         if "base_scheduler" in state_dict:
             self.base_scheduler.load_state_dict(state_dict["base_scheduler"])
             self.step_count = state_dict.get("step_count", self.step_count)
@@ -76,7 +129,9 @@ class LinearWarmupScheduler(LRScheduler):
         if self.step_count <= self.warmup_steps and self.warmup_steps > 0:
             scale = self.step_count / max(self.warmup_steps, 1)
             for group in self.optimizer.param_groups:
-                initial_lr = float(group.get("initial_lr", group.get("lr", self.min_lr)) or self.min_lr)
+                initial_lr = float(
+                    group.get("initial_lr", group.get("lr", self.min_lr)) or self.min_lr
+                )
                 group["lr"] = initial_lr * scale
 
 

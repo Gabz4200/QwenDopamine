@@ -25,13 +25,33 @@ def chunk_taichi_gdn2(
     chunk_size: int = 64,
     **_: object,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """GDN-2 chunkwise forward + backward.
+    r"""GDN-2 chunkwise forward + backward.
 
-    Delegates to the Taichi kernel when the runtime is available;
-    otherwise falls back to the pure-PyTorch reference. Output is
-    always returned as a contiguous tensor so downstream
-    ``torch.compile`` / ``opcheck`` callers see a stable memory
-    layout.
+    Executes one chunkwise GDN-2 recurrence step. Delegates to the Taichi
+    kernel when the runtime is available; otherwise falls back to the
+    pure-PyTorch reference (:func:`torch_chunk_gdn2`). Output is always
+    returned as a contiguous tensor so downstream ``torch.compile`` /
+    ``opcheck`` callers see a stable memory layout.
+
+    The chunkwise path reduces the ``O(T)`` token serialism to ``O(T/C)``
+    chunk steps while remaining hardware-agnostic (paper Appendix A).
+
+    Args:
+        q: Queries ``[B, T, H, K]``.
+        k: Keys ``[B, T, H, K]``.
+        v: Values ``[B, T, H, V]``.
+        g: Log-decay gate ``[B, T, H, K]``.
+        b: Channel-wise erase gate ``[B, T, H, K]``.
+        w: Channel-wise write gate ``[B, T, H, V]``.
+        initial_state: Optional initial recurrent state ``[B, H, K, V]``.
+        output_final_state: If ``True``, return the final state.
+        use_qk_l2norm_in_kernel: Apply L2 normalization to q/k.
+        chunk_size: Size of each chunk ``C`` for the WY recurrence.
+
+    Returns:
+        out: Output tensor ``[B, T, H, V]``.
+        state: Final recurrent state ``[B, H, K, V]`` if
+            ``output_final_state`` is ``True``, else ``None``.
     """
     if _is_available():
         from qwendopamine.kernels.taichi.gdn2_api import (
@@ -89,13 +109,29 @@ def recurrent_taichi_gdn2(
     use_qk_l2norm_in_kernel: bool = True,
     **_: object,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """GDN-2 single-token recurrent forward + backward.
+    r"""GDN-2 single-token recurrent forward + backward.
 
-    Delegates to the Taichi kernel when the runtime is available;
-    otherwise falls back to the pure-PyTorch reference. Output is
-    always returned as a contiguous tensor so downstream
-    ``torch.compile`` / ``opcheck`` callers see a stable memory
-    layout.
+    Executes the GDN-2 recurrence token-by-token. Delegates to the Taichi
+    kernel when the runtime is available; otherwise falls back to the
+    pure-PyTorch reference (:func:`torch_recurrent_gdn2`). Output is always
+    returned as a contiguous tensor so downstream ``torch.compile`` /
+    ``opcheck`` callers see a stable memory layout.
+
+    Args:
+        q: Queries ``[B, T, H, K]``.
+        k: Keys ``[B, T, H, K]``.
+        v: Values ``[B, T, H, V]``.
+        g: Log-decay gate ``[B, T, H, K]``.
+        b: Channel-wise erase gate ``[B, T, H, K]``.
+        w: Channel-wise write gate ``[B, T, H, V]``.
+        initial_state: Optional initial recurrent state ``[B, H, K, V]``.
+        output_final_state: If ``True``, return the final state.
+        use_qk_l2norm_in_kernel: Apply L2 normalization to q/k.
+
+    Returns:
+        out: Output tensor ``[B, T, H, V]``.
+        state: Final recurrent state ``[B, H, K, V]`` if
+            ``output_final_state`` is ``True``, else ``None``.
     """
     if _is_available():
         from qwendopamine.kernels.taichi.gdn2_api import (

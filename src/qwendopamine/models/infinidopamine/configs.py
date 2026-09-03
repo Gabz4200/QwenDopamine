@@ -15,6 +15,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 @strict(accept_kwargs=True)
 class InfiniDopamineTextConfig(Qwen3NextConfig):
     r"""Text configuration for InfiniDopamine models."""
+
     model_type = "infinidopamine_text"
     base_config_key = "text_config"
 
@@ -85,43 +86,113 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
 
     @property
     def gate_reg_coef(self) -> float:
+        r"""gate_reg_coef() -> float
+
+        Return the gate regularization coefficient.
+
+        Returns:
+            float: Alias for :attr:`gate_loss_weight`.
+        """
         return self.gate_loss_weight
 
     @gate_reg_coef.setter
     def gate_reg_coef(self, val: float) -> None:
+        r"""gate_reg_coef(val) -> None
+
+        Set the gate regularization coefficient.
+
+        Args:
+            val (float): Value forwarded to :attr:`gate_loss_weight`.
+        """
         self.gate_loss_weight = val
 
     @property
     def attention_dropout_prob(self) -> float:
+        r"""attention_dropout_prob() -> float
+
+        Return the attention dropout probability.
+
+        Returns:
+            float: Alias for :attr:`attention_dropout`.
+        """
         return self.attention_dropout
 
     @attention_dropout_prob.setter
     def attention_dropout_prob(self, val: float) -> None:
+        r"""attention_dropout_prob(val) -> None
+
+        Set the attention dropout probability.
+
+        Args:
+            val (float): Value forwarded to :attr:`attention_dropout`.
+        """
         self.attention_dropout = val
 
     @property
     def hidden_dropout_prob(self) -> float:
+        r"""hidden_dropout_prob() -> float
+
+        Return the hidden dropout probability.
+
+        Returns:
+            float: Alias for :attr:`hidden_dropout`.
+        """
         return self.hidden_dropout
 
     @hidden_dropout_prob.setter
     def hidden_dropout_prob(self, val: float) -> None:
+        r"""hidden_dropout_prob(val) -> None
+
+        Set the hidden dropout probability.
+
+        Args:
+            val (float): Value forwarded to :attr:`hidden_dropout`.
+        """
         self.hidden_dropout = val
 
     @property
     def mlp_only_layers(self) -> list[int]:
+        r"""mlp_only_layers() -> list[int]
+
+        Return the list of layer indices using MLP-only routing.
+
+        Returns:
+            list[int]: Always ``[]`` for InfiniDopamine.
+        """
         return []
 
     @mlp_only_layers.setter
     def mlp_only_layers(self, val: object) -> None:
-        pass
+        r"""mlp_only_layers(val) -> None
+
+        No-op setter for compatibility with the Qwen3.5 config schema.
+
+        Args:
+            val (object): Ignored.
+        """
+        # no-op setter for schema compatibility.
 
     @property
     def decoder_sparse_step(self) -> int:
+        r"""decoder_sparse_step() -> int
+
+        Return the decoder sparse-step interval.
+
+        Returns:
+            int: Always ``1`` for InfiniDopamine.
+        """
         return 1
 
     @decoder_sparse_step.setter
     def decoder_sparse_step(self, val: object) -> None:
-        pass
+        r"""decoder_sparse_step(val) -> None
+
+        No-op setter for compatibility with the Qwen3.5 config schema.
+
+        Args:
+            val (object): Ignored.
+        """
+        # no-op setter for schema compatibility.
 
     norm_topk_prob = AttributeError()
     moe_intermediate_size = AttributeError()
@@ -140,6 +211,7 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
 @strict
 class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
     r"""Vision configuration for InfiniDopamine models."""
+
     model_type = "infinidopamine_vision"
     deepstack_visual_indexes = AttributeError()
 
@@ -147,6 +219,7 @@ class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
 @strict
 class InfiniDopamineConfig(Qwen3VLConfig):
     """Master configuration for InfiniDopamine multimodal models."""
+
     model_type = "infinidopamine"
     sub_configs: ClassVar[dict[str, type]] = {
         "text_config": InfiniDopamineTextConfig,

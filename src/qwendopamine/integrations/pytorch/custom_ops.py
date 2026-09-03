@@ -603,6 +603,16 @@ def _register_one(
     active = _devices.default_device()
 
     def kernel(*args: object) -> object:
+        r"""(args: object) -> object - Per-device kernel wrapper.
+
+        Migrate input tensors to active accelerator device before calling
+        the op body. See :func:`default_device` for device selection.
+
+        Args:
+            *args (object): Positional args passed to the op body.
+        Returns:
+            object: Op result from ``body(*migrated_args)``.
+        """
         moved = list(args)
         for i in tensor_arg_indices:
             t = moved[i]

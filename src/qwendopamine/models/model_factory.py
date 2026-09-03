@@ -25,7 +25,16 @@ from qwendopamine.models.qwen35 import (
 
 
 class ResearchDecoder(nn.Module):
-    r"""Configurable research decoder assembled from token/position embeddings, transformer layer blocks, RMSNorm, and LM head."""
+    r"""ResearchDecoder(config: Any) -> None
+
+    Configurable research decoder assembled from token/position embeddings,
+    transformer layer blocks, RMSNorm, and LM head.
+
+    See :class:`ConfigAdapter` for config normalization.
+
+    Args:
+        config (Any): Raw configuration object from any model family.
+    """
 
     def __init__(self, config: Any) -> None:
         super().__init__()
@@ -58,7 +67,19 @@ class ResearchDecoder(nn.Module):
     def forward(
         self, input_ids: torch.Tensor, position_ids: torch.Tensor | None = None
     ) -> torch.Tensor:
-        r"""Compute logits from token ids with optional explicit position ids."""
+        r"""forward(input_ids: torch.Tensor, position_ids: torch.Tensor | None = None) -> torch.Tensor
+
+        Compute logits from token ids with optional explicit position ids.
+
+        Args:
+            input_ids (torch.Tensor): Token indices ``[B, T]``.
+            position_ids (torch.Tensor | None): Explicit position indices
+                ``[B, T]``. When ``None``, positions ``0..T-1`` are generated
+                on the model's device. Default: ``None``.
+
+        Returns:
+            torch.Tensor: Vocabulary logits ``[B, T, vocab_size]``.
+        """
         if position_ids is None:
             seq_len = input_ids.shape[1]
             position_ids = torch.arange(
@@ -104,7 +125,9 @@ def _resolve_model_family(config: Any) -> tuple[str, Any]:
     config = _unwrap_text_config(config)
     model_type = getattr(config, "model_type", None)
     if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or (
-        model_type and model_type in _MODEL_FAMILIES and model_type.startswith("infinidopamine")
+        model_type
+        and model_type in _MODEL_FAMILIES
+        and model_type.startswith("infinidopamine")
     ):
         return "infinidopamine", config
     if isinstance(config, (Qwen3_5TextConfig, Qwen3_5Config)) or (
@@ -115,7 +138,18 @@ def _resolve_model_family(config: Any) -> tuple[str, Any]:
 
 
 def build_model(config: Any) -> nn.Module:
-    r"""Instantiate a Qwen3.5/InfiniDopamine causal model or ResearchDecoder from config."""
+    r"""build_model(config: Any) -> nn.Module
+
+    Instantiate a Qwen3.5/InfiniDopamine causal model or ResearchDecoder from config.
+
+    Args:
+        config (Any): Raw configuration object from any model family.
+
+    Returns:
+        nn.Module: A causal language model (``InfiniDopamineForCausalLM``,
+        ``Qwen3_5ForCausalLM``, or :class:`ResearchDecoder`) depending on the
+        resolved model family.
+    """
     family, config = _resolve_model_family(config)
     if family == "infinidopamine":
         return InfiniDopamineForCausalLM(config)
@@ -127,7 +161,22 @@ def build_model(config: Any) -> nn.Module:
 def build_reference_model(
     config: Any, quantization_config: Any = None, device_map: str = "cpu", **kwargs: Any
 ) -> nn.Module:
-    r"""Instantiate a reference HF causal language model with optional quantization."""
+    r"""build_reference_model(config: Any, quantization_config: Any = None, device_map: str = "cpu", **kwargs: Any) -> nn.Module
+
+    Instantiate a reference HF causal language model with optional quantization.
+
+    Args:
+        config (Any): Raw configuration object from any model family.
+        quantization_config (Any): Optional quantization configuration
+            passed through ``_from_config``. Default: ``None``.
+        device_map (str): Target device for model placement. Default: ``"cpu"``.
+        **kwargs: Additional keyword arguments forwarded to
+            ``_from_config`` (e.g. ``dtype``, ``torch_dtype``).
+
+    Returns:
+        nn.Module: Reference HuggingFace causal language model on
+        ``device_map``.
+    """
     family, config = _resolve_model_family(config)
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config
@@ -136,9 +185,7 @@ def build_reference_model(
             config, dtype=torch.bfloat16, **kwargs
         )
     else:
-        model = Qwen3_5ForCausalLM._from_config(
-            config, dtype=torch.bfloat16, **kwargs
-        )
+        model = Qwen3_5ForCausalLM._from_config(config, dtype=torch.bfloat16, **kwargs)
     return model.to(device_map)
 
 

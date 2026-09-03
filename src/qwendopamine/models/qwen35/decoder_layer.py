@@ -39,6 +39,18 @@ from qwendopamine.models.qwen35.configs import Qwen3_5Config, Qwen3_5TextConfig
     ]
 )
 class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
+    r"""Qwen3_5GatedDeltaNet(config: Qwen3_5Config | Qwen3_5TextConfig, layer_idx: int) -> None
+
+    Qwen3.5 linear-attention layer backed by Gated Delta Rule 2.
+
+    Replaces the upstream ``in_proj_qkvz`` / ``in_proj_ba`` with a fused
+    ``in_proj_qkv`` projection.
+
+    Args:
+        config (Qwen3_5Config | Qwen3_5TextConfig): Qwen3.5 configuration.
+        layer_idx (int): Layer index for cache disambiguation.
+    """
+
     def __init__(self, config: Qwen3_5Config | Qwen3_5TextConfig, layer_idx: int):
         super().__init__(config, layer_idx)
 
@@ -53,6 +65,14 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         self.in_proj_a = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
 
     def fix_query_key_value_ordering(self):
+        r"""fix_query_key_value_ordering() -> None
+
+        No-op required by HF checkpoint loading.
+
+        Raises:
+            AttributeError: Always — this layer uses fused projections that
+            do not need reordering.
+        """
         raise AttributeError("Not needed for Qwen3.5 Series")
 
     def forward(
@@ -62,6 +82,19 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         attention_mask: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ):
+        r"""forward(hidden_states: torch.Tensor, cache_params: Cache | None = None, attention_mask: torch.Tensor | None = None, **kwargs: Unpack[TransformersKwargs]) -> torch.Tensor
+
+        Apply Gated Delta Rule 2 recurrence to hidden states.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            cache_params (Cache | None): HF cache for decoding state.
+            attention_mask (torch.Tensor | None): Padding mask ``[B, T]``.
+            **kwargs: Extra HF kwargs (``cu_seq_lens_q``, etc.).
+
+        Returns:
+            torch.Tensor: ``[B, T, D]`` output.
+        """
         hidden_states = apply_mask_to_padding_states(hidden_states, attention_mask)
 
         batch_size, seq_len, _ = hidden_states.shape
@@ -177,20 +210,43 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
 
 
 class Qwen3_5Attention(Qwen3NextAttention):
-    pass
+    r"""Qwen3_5Attention: standard full-attention layer (inherits from
+    :class:`Qwen3NextAttention`.
+    """
 
 
 class Qwen3_5MLP(Qwen3NextMLP):
+    r"""Qwen3_5MLP(config: Qwen3_5Config, intermediate_size: int) -> None
+
+    MLP block wrapping the upstream :class:`Qwen3NextMLP` with an explicit
+    intermediate size.
+
+    Args:
+        config (Qwen3_5Config): Qwen3.5 configuration.
+        intermediate_size (int): Feed-forward hidden dimension.
+    """
+
     def __init__(self, config: Qwen3_5Config, intermediate_size: int):
         super().__init__(config, intermediate_size)
         self.intermediate_size = intermediate_size
 
 
 class Qwen3_5RMSNorm(Qwen3NextRMSNorm):
-    pass
+    r"""Qwen3_5RMSNorm: RMS normalization (inherits from
+    :class:`Qwen3NextRMSNorm`.
+    """
 
 
 class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
+    r"""Qwen3_5DecoderLayer(config: Qwen3_5TextConfig, layer_idx: int) -> None
+
+    Decoder layer selecting GDN-2 or standard attention per ``layer_types``.
+
+    Args:
+        config (Qwen3_5TextConfig): Qwen3.5 text configuration.
+        layer_idx (int): Layer index.
+    """
+
     def __init__(self, config: Qwen3_5TextConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -216,6 +272,21 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
         past_key_values: Cache | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.FloatTensor:
+        r"""forward(hidden_states: torch.Tensor, position_embeddings=None, attention_mask=None, position_ids=None, past_key_values=None, **kwargs) -> torch.FloatTensor
+
+        Apply the selected token-mixer block and MLP residual sublayers.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            position_embeddings (tuple | None): ``(cos, sin)`` RoPE cache.
+            attention_mask (torch.Tensor | None): Padding mask.
+            position_ids (torch.LongTensor | None): Position indices.
+            past_key_values (Cache | None): KV cache for decoding.
+            **kwargs: Extra HF kwargs.
+
+        Returns:
+            torch.FloatTensor: ``[B, T, D]`` residual output.
+        """
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)

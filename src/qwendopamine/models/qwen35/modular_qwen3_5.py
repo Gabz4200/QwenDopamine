@@ -83,6 +83,8 @@ from qwendopamine.models.shared.model_family import (
     ]
 )
 class Qwen3_5PreTrainedModel(FamilyPreTrainedModel):
+    r"""Base class for Qwen3.5 pretrained models."""
+
     config_class = Qwen3_5Config
     config: Qwen3_5Config
     _no_split_modules: ClassVar[list[str]] = [
@@ -116,6 +118,8 @@ class Qwen3_5PreTrainedModel(FamilyPreTrainedModel):
 
 
 class Qwen3_5VisionModel(FamilyVisionModel):
+    r"""Qwen3.5 vision model (multimodal stem)."""
+
     config_class = Qwen3_5VisionConfig
     config: Qwen3_5VisionConfig
     _no_split_modules: ClassVar[list[str]] = ["Qwen3_5VisionBlock"]
@@ -126,10 +130,12 @@ class Qwen3_5VisionModel(FamilyVisionModel):
 
 
 class Qwen3_5ModelOutputWithPast(FamilyModelOutputWithPast):
-    pass
+    r"""Qwen3.5 model output with past key/values cache."""
 
 
 class Qwen3_5TextModel(FamilyTextModel):
+    r"""Qwen3.5 text-only backbone."""
+
     config_class = Qwen3_5TextConfig
     config: Qwen3_5TextConfig
 
@@ -148,6 +154,8 @@ class Qwen3_5TextModel(FamilyTextModel):
 
 
 class Qwen3_5Model(FamilyModel):
+    r"""Qwen3.5 multimodal model (vision + text backbones)."""
+
     config_class = Qwen3_5Config
     _no_split_modules: ClassVar[list[str]] = [
         "Qwen3_5DecoderLayer",
@@ -160,6 +168,8 @@ class Qwen3_5Model(FamilyModel):
 
 
 class Qwen3_5ForCausalLM(FamilyForCausalLM):
+    r"""Qwen3.5 causal language modelling head."""
+
     config_class = Qwen3_5TextConfig
     config: Qwen3_5TextConfig
     _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
@@ -172,11 +182,15 @@ class Qwen3_5ForCausalLM(FamilyForCausalLM):
 
 
 class Qwen3_5ForTokenClassification(FamilyForTokenClassification):
+    r"""Qwen3.5 token classification head."""
+
     config_class = Qwen3_5Config
     config: Qwen3_5Config
 
 
 class Qwen3_5ForConditionalGeneration(FamilyForConditionalGeneration):
+    r"""Qwen3.5 conditional generation head (multimodal)."""
+
     config_class = Qwen3_5Config
     config: Qwen3_5Config
     _keys_to_ignore_on_load_unexpected: ClassVar[list[str]] = [
@@ -186,24 +200,24 @@ class Qwen3_5ForConditionalGeneration(FamilyForConditionalGeneration):
     def _build_conditional_model(self, config: Qwen3_5Config) -> nn.Module:
         return Qwen3_5Model(config)
 
-    def get_video_features(
-        self, **super_kwargs
-    ) -> tuple | BaseModelOutputWithPooling:
+    def get_video_features(self, **super_kwargs) -> tuple | BaseModelOutputWithPooling:
         return super().get_video_features(**super_kwargs)
 
-    def get_image_features(
-        self, **super_kwargs
-    ) -> tuple | BaseModelOutputWithPooling:
+    def get_image_features(self, **super_kwargs) -> tuple | BaseModelOutputWithPooling:
         return super().get_image_features(**super_kwargs)
 
 
 class Qwen3_5TextForSequenceClassification(FamilyTextForSequenceClassification):
+    r"""Qwen3.5 text sequence classification head."""
+
     config_class = Qwen3_5TextConfig
     config: Qwen3_5TextConfig
     input_modalities = ("text",)
 
 
 class Qwen3_5ForSequenceClassification(FamilyForSequenceClassification):
+    r"""Qwen3.5 multimodal sequence classification head."""
+
     config_class = Qwen3_5Config
     config: Qwen3_5Config
 

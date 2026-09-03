@@ -61,7 +61,6 @@ class AsinhScaler(nn.Module):
         x = torch.asinh(alpha * x)
         return x.to(input_dtype)
 
-
     def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """Align ``cond`` to the same rank as ``x`` for broadcasting."""
         if cond.dim() == 0:
@@ -89,6 +88,9 @@ class AsinhScaler(nn.Module):
         return cond
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return (
             f"dim={self.dim}, "
             f"init_scale={self.init_scale}, "
@@ -109,7 +111,9 @@ class LearnableSoftsign(nn.Module):
 
         if per_channel:
             if num_channels is None:
-                raise ValueError("num_channels must be specified when per_channel=True.")
+                raise ValueError(
+                    "num_channels must be specified when per_channel=True."
+                )
             if num_channels <= 0:
                 raise ValueError("num_channels must be greater than 0.")
         if eps <= 0:
@@ -147,7 +151,6 @@ class LearnableSoftsign(nn.Module):
         out = x_f / (torch.abs(x_f) + alpha + self.eps)
         return out.to(input_dtype)
 
-
     def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """Align ``cond`` to the same rank as ``x`` for broadcasting."""
         if cond.dim() == 0:
@@ -175,6 +178,9 @@ class LearnableSoftsign(nn.Module):
         return cond
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return (
             f"per_channel={self.per_channel}, "
             f"num_channels={self.num_channels}, "
@@ -235,7 +241,9 @@ class LearnableFourierFeatures(nn.Module):
         linear1 = nn.Linear(self.mlp_in_dim, h_dim)
         linear2 = nn.Linear(h_dim, self.dg_dim)
         # Best init for GELU MLP: He/Kaiming for hidden, Xavier small for output
-        nn.init.kaiming_uniform_(linear1.weight, a=0, mode="fan_in", nonlinearity="relu")
+        nn.init.kaiming_uniform_(
+            linear1.weight, a=0, mode="fan_in", nonlinearity="relu"
+        )
         nn.init.zeros_(linear1.bias)
         nn.init.xavier_uniform_(linear2.weight, gain=0.5)
         nn.init.zeros_(linear2.bias)
@@ -294,7 +302,6 @@ class LearnableFourierFeatures(nn.Module):
         Y = self.mlp(F)
         return rearrange(Y, "b l g d -> b l (g d)")
 
-
     def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """Align ``cond`` to the same rank as ``x`` for broadcasting."""
         if cond.dim() == 0:
@@ -322,6 +329,9 @@ class LearnableFourierFeatures(nn.Module):
         return cond
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return (
             f"pos_dim={self.pos_dim}, "
             f"f_dim={self.f_dim}, "
@@ -409,7 +419,6 @@ class TokenWiseFiLM(nn.Module):
 
         return x * gamma + beta
 
-
     def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """Align ``cond`` to the same rank as ``x`` for broadcasting."""
         if cond.dim() == 0:
@@ -437,5 +446,7 @@ class TokenWiseFiLM(nn.Module):
         return cond
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, cond_dim={self.cond_dim}, dropout={self.dropout}"
+        r"""extra_repr() -> str
 
+        Return a string with the extra representation of the module."""
+        return f"dim={self.dim}, cond_dim={self.cond_dim}, dropout={self.dropout}"

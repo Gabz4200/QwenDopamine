@@ -47,6 +47,16 @@ from qwendopamine.models.reinforced import (
     ]
 )
 class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
+    r"""InfiniDopamineGatedDeltaNet(config, layer_idx) -> None
+
+    InfiniDopamine linear-attention layer with adaptive gating and
+    per-head gate entropy monitoring.
+
+    Args:
+        config (InfiniDopamineConfig | InfiniDopamineTextConfig): Layer config.
+        layer_idx (int): Layer index for cache disambiguation.
+    """
+
     def __init__(
         self,
         config: InfiniDopamineConfig | InfiniDopamineTextConfig,
@@ -127,6 +137,13 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
                 ).contiguous()
 
     def fix_query_key_value_ordering(self) -> None:
+        r"""fix_query_key_value_ordering() -> None
+
+        No-op required by HF checkpoint loading.
+
+        Raises:
+            AttributeError: Always — this layer uses fused projections.
+        """
         raise AttributeError("Not needed for InfiniDopamine Series")
 
     def forward(
@@ -136,6 +153,19 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         attention_mask: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
+        r"""forward(hidden_states: torch.Tensor, cache_params: Cache | None = None, attention_mask: torch.Tensor | None = None, **kwargs) -> torch.Tensor
+
+        Apply Gated Delta Rule 2 recurrence to hidden states.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            cache_params (Cache | None): HF cache for decoding state.
+            attention_mask (torch.Tensor | None): Padding mask ``[B, T]``.
+            **kwargs: Extra HF kwargs.
+
+        Returns:
+            torch.Tensor: ``[B, T, D]`` output.
+        """
         hidden_states = apply_mask_to_padding_states(hidden_states, attention_mask)
 
         batch_size, seq_len, _ = hidden_states.shape
@@ -262,9 +292,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             swa_mask = causal_mask
 
         min_dtype_val = torch.finfo(scores.dtype).min
-        scores = scores.masked_fill(
-            ~swa_mask.unsqueeze(0).unsqueeze(0), min_dtype_val
-        )
+        scores = scores.masked_fill(~swa_mask.unsqueeze(0).unsqueeze(0), min_dtype_val)
         if attention_mask is not None:
             if attention_mask.dim() == 2:
                 scores = scores.masked_fill(
@@ -273,9 +301,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             elif attention_mask.dim() == 4:
                 scores = scores + attention_mask
 
-        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(
-            q_heads.dtype
-        )
+        attn_weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(q_heads.dtype)
         if self.training and self.attention_dropout > 0.0:
             attn_weights = F.dropout(
                 attn_weights, p=self.attention_dropout, training=True
@@ -288,9 +314,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         if self.training:
             self.last_gate = attn_gate
 
-        core_attn_out = (
-            attn_gate * swa_attn_out + (1.0 - attn_gate) * gdn2_attn_out
-        )
+        core_attn_out = attn_gate * swa_attn_out + (1.0 - attn_gate) * gdn2_attn_out
         if self.training and self.hidden_dropout > 0.0:
             core_attn_out = F.dropout(
                 core_attn_out, p=self.hidden_dropout, training=True
@@ -344,15 +368,28 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         # Clamping the gate at 1e-6 / 1-1e-6 would silently mask the NaN
         # because the gradient through clamp is 0 outside the interval,
         # hiding the real failure from tensor inspection.
-        finite_gate = torch.nan_to_num(
-            gate, nan=0.5, posinf=1.0, neginf=0.0
-        ).clamp(1e-6, 1.0 - 1e-6)
-        entropy = -(finite_gate * torch.log(finite_gate)
-                    + (1.0 - finite_gate) * torch.log1p(-finite_gate))
+        finite_gate = torch.nan_to_num(gate, nan=0.5, posinf=1.0, neginf=0.0).clamp(
+            1e-6, 1.0 - 1e-6
+        )
+        entropy = -(
+            finite_gate * torch.log(finite_gate)
+            + (1.0 - finite_gate) * torch.log1p(-finite_gate)
+        )
         return torch.mean(entropy)
 
 
 class InfiniDopamineGatedRewardNet(GatedRewardNet):
+    r"""InfiniDopamineGatedRewardNet(config, layer_idx, k_stats=6, **kwargs) -> None
+
+    InfiniDopamine reward-augmented variant of :class:`GatedRewardNet`.
+
+    Args:
+        config (InfiniDopamineConfig | InfiniDopamineTextConfig): Layer config.
+        layer_idx (int): Layer index for cache disambiguation.
+        k_stats (int): Number of reward statistics. Default: ``6``.
+        **kwargs: Extra args forwarded to :class:`GatedRewardNet`.
+    """
+
     def __init__(
         self,
         config: InfiniDopamineConfig | InfiniDopamineTextConfig,
@@ -493,6 +530,20 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         reward_values: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> torch.Tensor:
+        r"""forward(hidden_states, cache_params=None, attention_mask=None, reward_values=None, **kwargs) -> torch.Tensor
+
+        Apply GatedRewardNet recurrence and persist reward cache.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            cache_params (Cache | None): HF cache to read/write states.
+            attention_mask (torch.Tensor | None): Padding mask.
+            reward_values (torch.Tensor | None): Reward input ``[B, T]``.
+            **kwargs: Extra kwargs forwarded to the parent.
+
+        Returns:
+            torch.Tensor: ``[B, T, D]`` output.
+        """
         use_cache = kwargs.pop("use_cache", cache_params is not None)
         out, _, new_cache = super().forward(
             hidden_states=hidden_states,
@@ -507,6 +558,15 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
 
 
 class InfiniDopamineAttention(Qwen3NextAttention):
+    r"""InfiniDopamineAttention(config, layer_idx) -> None
+
+    Standard full-attention layer with sliding-window support.
+
+    Args:
+        config (InfiniDopamineTextConfig): Layer configuration.
+        layer_idx (int): Layer index.
+    """
+
     def __init__(self, config: InfiniDopamineTextConfig, layer_idx: int) -> None:
         super().__init__(config, layer_idx)
         self.sliding_window = getattr(config, "sliding_window", 1024)
@@ -516,6 +576,15 @@ class InfiniDopamineAttention(Qwen3NextAttention):
 
 
 class InfiniDopamineMLP(Qwen3NextMLP):
+    r"""InfiniDopamineMLP(config, intermediate_size) -> None
+
+    MLP block with hidden-state dropout.
+
+    Args:
+        config (InfiniDopamineConfig): Layer configuration.
+        intermediate_size (int): Feed-forward hidden dimension.
+    """
+
     def __init__(self, config: InfiniDopamineConfig, intermediate_size: int) -> None:
         super().__init__(config, intermediate_size)
         self.intermediate_size = intermediate_size
@@ -524,6 +593,16 @@ class InfiniDopamineMLP(Qwen3NextMLP):
         )
 
     def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
+        r"""forward(hidden_state: torch.Tensor) -> torch.Tensor
+
+        Apply gated MLP with optional training dropout.
+
+        Args:
+            hidden_state (torch.Tensor): Input ``[..., D]``.
+
+        Returns:
+            torch.Tensor: ``[..., D]`` output.
+        """
         gate = self.act_fn(self.gate_proj(hidden_state))
         if self.training and self.hidden_dropout > 0.0:
             gate = F.dropout(gate, p=self.hidden_dropout, training=True)
@@ -535,7 +614,9 @@ class InfiniDopamineMLP(Qwen3NextMLP):
 
 
 class InfiniDopamineRMSNorm(Qwen3NextRMSNorm):
-    pass
+    r"""InfiniDopamineRMSNorm: RMS normalization (inherits from
+    :class:`Qwen3NextRMSNorm`).
+    """
 
 
 class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
@@ -573,9 +654,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         }
     )
 
-    def __init__(
-        self, config: InfiniDopamineTextConfig, layer_idx: int
-    ) -> None:
+    def __init__(self, config: InfiniDopamineTextConfig, layer_idx: int) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.hidden_dropout = getattr(
@@ -648,9 +727,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         self.reward_branch_norm = InfiniDopamineRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-        self.reward_gate_proj = nn.Linear(
-            config.hidden_size, 1, bias=True
-        )
+        self.reward_gate_proj = nn.Linear(config.hidden_size, 1, bias=True)
         nn.init.zeros_(self.reward_gate_proj.weight)
         nn.init.constant_(
             self.reward_gate_proj.bias,
@@ -667,6 +744,24 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         reward_values: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.FloatTensor:
+        r"""forward(hidden_states: torch.Tensor, position_embeddings=None, attention_mask=None, position_ids=None, past_key_values=None, reward_values=None, **kwargs) -> torch.FloatTensor
+
+        Apply the selected token-mixer block, MLP, and optional parallel
+        reward branch with residual connections.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            position_embeddings (tuple | None): ``(cos, sin)`` RoPE cache.
+            attention_mask (torch.Tensor | None): Padding mask.
+            position_ids (torch.LongTensor | None): Position indices.
+            past_key_values (Cache | None): KV cache for decoding.
+            reward_values (torch.Tensor | None): Reward signal for the
+                parallel reward branch.
+            **kwargs: Extra HF kwargs.
+
+        Returns:
+            torch.FloatTensor: ``[B, T, D]`` residual output.
+        """
         residual = hidden_states
         x_norm = self.input_layernorm(hidden_states)
 
@@ -703,9 +798,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
             mixed = mixed + gate * reward_out
 
         if self.training and self.hidden_dropout > 0.0:
-            mixed = F.dropout(
-                mixed, p=self.hidden_dropout, training=True
-            )
+            mixed = F.dropout(mixed, p=self.hidden_dropout, training=True)
 
         hidden_states = residual + mixed
 

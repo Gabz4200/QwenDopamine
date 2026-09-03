@@ -10,7 +10,16 @@ __all__ = ["DEFAULT_QWEN35_REPO", "__version__"]
 
 
 def main() -> None:
-    """CLI dispatcher: delegate to the Hydra-backed training entrypoint."""
+    r"""main() -> None
+
+    CLI dispatcher: delegate to the Hydra-backed training entrypoint.
+
+    Imports :func:`qwendopamine.cli.train.main` lazily to avoid pulling the
+    full Hydra/transformers stack into ``import qwendopamine``.
+
+    Returns:
+        None
+    """
     from qwendopamine.cli.train import main as train_main
 
     train_main()

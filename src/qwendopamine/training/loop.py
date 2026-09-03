@@ -57,10 +57,15 @@ class TrainingLoop:
         self.global_step = 0
 
     def run(self, train_loader: Any) -> None:
-        r"""Run training for up to ``config.max_steps`` optimizer steps.
+        r"""run(train_loader: Any) -> None
+
+        Run training for up to ``config.max_steps`` optimizer steps.
 
         Args:
             train_loader (Any): iterable yielding training batches.
+
+        Raises:
+            ValueError: If ``train_loader`` is empty.
         """
         self.model.train()
         accum = 0

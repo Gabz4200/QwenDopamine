@@ -66,19 +66,42 @@ def _initialise() -> None:
 
 
 def is_available() -> bool:
-    """Return True if the Taichi runtime could be initialised."""
+    r"""is_available() -> bool
+
+    Return True if the Taichi runtime could be initialised.
+
+    Returns:
+        bool: ``True`` when Taichi imported and a backend was selected,
+        ``False`` otherwise.
+    """
     _initialise()
     return _HAS_TAICHI and _ARCH != "unavailable"
 
 
 def taichi_arch() -> str:
-    """Return the active Taichi backend (``cpu`` / ``cuda`` / ``gpu``)."""
+    r"""taichi_arch() -> str
+
+    Return the active Taichi backend string.
+
+    Returns:
+        str: Resolved backend (``"cpu"``, ``"cuda"``, ``"gpu"``, or
+        ``"unavailable"``).
+    """
     _initialise()
     return _ARCH
 
 
 def require() -> Any:
-    """Return the imported ``taichi`` module, raising a clear error if missing."""
+    r"""require() -> Any
+
+    Return the imported ``taichi`` module, raising a clear error if missing.
+
+    Returns:
+        Any: The ``taichi`` module.
+
+    Raises:
+        RuntimeError: If Taichi could not be imported or initialised.
+    """
     _initialise()
     if not _HAS_TAICHI:
         raise RuntimeError(

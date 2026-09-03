@@ -26,6 +26,21 @@ class Qwen3_5TextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
     def compute_default_rope_parameters(
         config: Qwen3_5TextConfig, device=None, **kwargs
     ) -> tuple[torch.Tensor, float]:
+        r"""compute_default_rope_parameters(config: Qwen3_5TextConfig, device=None, **kwargs) -> tuple[torch.Tensor, float]
+
+        Compute default rotary position embedding (RoPE) parameters.
+
+        Args:
+            config (Qwen3_5TextConfig): Text configuration with
+                ``rope_parameters`` containing ``rope_theta`` and
+                ``partial_rotary_factor``.
+            device: Target device for the returned ``inv_freq`` tensor.
+            **kwargs: Ignored.
+
+        Returns:
+            tuple[torch.Tensor, float]: ``(inv_freq, attention_factor)``
+            where ``inv_freq`` has shape ``[dim]``.
+        """
         _ = kwargs
         base = config.rope_parameters["rope_theta"]
         partial_rotary_factor = config.rope_parameters.get("partial_rotary_factor", 1.0)

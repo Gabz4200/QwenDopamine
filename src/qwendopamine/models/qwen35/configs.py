@@ -15,6 +15,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 @strict(accept_kwargs=True)
 class Qwen3_5TextConfig(Qwen3NextConfig):
     r"""Text configuration for Qwen3.5 models."""
+
     model_type = "qwen3_5_text"
     base_config_key = "text_config"
 
@@ -56,19 +57,47 @@ class Qwen3_5TextConfig(Qwen3NextConfig):
 
     @property
     def mlp_only_layers(self) -> list[int]:
+        r"""mlp_only_layers() -> list[int]
+
+        Return the list of layer indices using MLP-only routing.
+
+        Returns:
+            list[int]: Always ``[]`` for this config variant.
+        """
         return []
 
     @mlp_only_layers.setter
     def mlp_only_layers(self, val: object) -> None:
-        pass
+        r"""mlp_only_layers(val) -> None
+
+        No-op setter for schema compatibility.
+
+        Args:
+            val (object): Ignored.
+        """
+        # no-op setter for schema compatibility.
 
     @property
     def decoder_sparse_step(self) -> int:
+        r"""decoder_sparse_step() -> int
+
+        Return the decoder sparse-step interval.
+
+        Returns:
+            int: Always ``1`` for this config variant.
+        """
         return 1
 
     @decoder_sparse_step.setter
     def decoder_sparse_step(self, val: object) -> None:
-        pass
+        r"""decoder_sparse_step(val) -> None
+
+        No-op setter for schema compatibility.
+
+        Args:
+            val (object): Ignored.
+        """
+        # no-op setter for schema compatibility.
 
     norm_topk_prob = AttributeError()
     moe_intermediate_size = AttributeError()
@@ -87,6 +116,7 @@ class Qwen3_5TextConfig(Qwen3NextConfig):
 @strict
 class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
     r"""Vision configuration for Qwen3.5 models."""
+
     model_type = "qwen3_5_vision"
     deepstack_visual_indexes = AttributeError()
 
@@ -94,6 +124,7 @@ class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
 @strict
 class Qwen3_5Config(Qwen3VLConfig):
     """Master configuration for Qwen3.5 multimodal models."""
+
     model_type = "qwen3_5"
     sub_configs: ClassVar[dict[str, type]] = {
         "text_config": Qwen3_5TextConfig,

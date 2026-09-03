@@ -29,9 +29,27 @@ from qwendopamine.integrations.huggingface.configs import (
 
 
 class HFIntegration:
+    r"""Facade for HuggingFace ``AutoConfig``, ``AutoModel``, and tokenizer
+    registration of QwenDopamine architectures.
+
+    All methods are static; import the class and call the methods directly:
+
+    .. code-block:: python
+
+        from qwendopamine.integrations.huggingface import HFIntegration
+        HFIntegration.register_infinidopamine_hf()
+    """
+
     @staticmethod
     def register_gdn2_hf() -> None:
-        r"""Register GDN2HFConfig, Qwen35GDN2HFConfig, and InfiniDopamineGDN2HFConfig with AutoConfig."""
+        r"""register_gdn2_hf() -> None
+
+        Register GDN2HFConfig, Qwen35GDN2HFConfig, and InfiniDopamineGDN2HFConfig
+        with HuggingFace ``AutoConfig``.
+
+        Returns:
+            None
+        """
         from qwendopamine.integrations.huggingface.configs import (
             InfiniDopamineGDN2HFConfig,
             Qwen35GDN2HFConfig,
@@ -46,7 +64,13 @@ class HFIntegration:
 
     @staticmethod
     def register_qwen35_hf() -> None:
-        r"""Register Qwen3.5 configs and models with Hugging Face Auto classes."""
+        r"""register_qwen35_hf() -> None
+
+        Register Qwen3.5 configs and models with HuggingFace Auto classes.
+
+        Returns:
+            None
+        """
         from qwendopamine.models.qwen35 import (
             Qwen3_5Config,
             Qwen3_5ForCausalLM,
@@ -122,7 +146,14 @@ class HFIntegration:
 
     @staticmethod
     def register_infinidopamine_hf() -> None:
-        r"""Register InfiniDopamine configs and models with Hugging Face Auto classes for TRL and Transformers compatibility."""
+        r"""register_infinidopamine_hf() -> None
+
+        Register InfiniDopamine configs and models with HuggingFace Auto
+        classes for TRL and Transformers compatibility.
+
+        Returns:
+            None
+        """
         from qwendopamine.models.infinidopamine import (
             InfiniDopamineConfig,
             InfiniDopamineForCausalLM,
@@ -212,7 +243,14 @@ class HFIntegration:
 
     @staticmethod
     def register_all_hf() -> None:
-        r"""Register all QwenDopamine modules (GDN2, Qwen3.5, InfiniDopamine) with Hugging Face Auto classes."""
+        r"""register_all_hf() -> None
+
+        Register all QwenDopamine modules (GDN2, Qwen3.5, InfiniDopamine) with
+        HuggingFace Auto classes.
+
+        Returns:
+            None
+        """
         HFIntegration.register_gdn2_hf()
         HFIntegration.register_qwen35_hf()
         HFIntegration.register_infinidopamine_hf()
@@ -224,7 +262,20 @@ class HFIntegration:
         sliding_window: int = 1024,
         **kwargs: Any,
     ) -> Any:
-        r"""Build an InfiniDopamineTextConfig instance with sensible defaults."""
+        r"""build_infinidopamine_config(hidden_size: int = 2048, num_hidden_layers: int = 24, sliding_window: int = 1024, **kwargs: Any) -> Any
+
+        Build an InfiniDopamineTextConfig instance with sensible defaults.
+
+        Args:
+            hidden_size (int): Hidden dimension. Default: ``2048``.
+            num_hidden_layers (int): Number of decoder layers. Default: ``24``.
+            sliding_window (int): Attention window size. Default: ``1024``.
+            **kwargs: Extra config fields forwarded to
+                :class:`~qwendopamine.models.infinidopamine.InfiniDopamineTextConfig`.
+
+        Returns:
+            Any: A ``InfiniDopamineTextConfig`` instance.
+        """
         from qwendopamine.models.infinidopamine import InfiniDopamineTextConfig
 
         return InfiniDopamineTextConfig(
@@ -239,7 +290,19 @@ class HFIntegration:
         config: Any = None,
         **kwargs: Any,
     ) -> Any:
-        r"""Build an InfiniDopamineForCausalLM model instance."""
+        r"""build_infinidopamine_model(config: Any = None, **kwargs: Any) -> Any
+
+        Build an ``InfiniDopamineForCausalLM`` model instance.
+
+        Args:
+            config (Any | None): Existing config, a dict of config kwargs, or
+                ``None`` to build from ``**kwargs``. Default: ``None``.
+            **kwargs: Extra config fields used when ``config`` is ``None``
+                or a dict.
+
+        Returns:
+            Any: An ``InfiniDopamineForCausalLM`` instance.
+        """
         from qwendopamine.models.infinidopamine import (
             InfiniDopamineForCausalLM,
             InfiniDopamineTextConfig,
@@ -259,10 +322,23 @@ class HFIntegration:
         use_gradient_checkpointing: bool = True,
         gradient_checkpointing_kwargs: dict[str, Any] | None = None,
     ) -> Any:
-        r"""Prepare an InfiniDopamine or Qwen model for TRL training (SFTTrainer, DPOTrainer, GRPOTrainer).
+        r"""prepare_model_for_trl_training(model: Any, use_gradient_checkpointing: bool = True, gradient_checkpointing_kwargs: dict[str, Any] | None = None) -> Any
 
-        Enables gradient checkpointing, ensures input embeddings calculate gradients,
-        and verifies generation / causal-LM training contracts.
+        Prepare an InfiniDopamine or Qwen model for TRL training
+        (SFTTrainer, DPOTrainer, GRPOTrainer).
+
+        Enables gradient checkpointing, ensures input embeddings calculate
+        gradients, and verifies generation / causal-LM training contracts.
+
+        Args:
+            model (Any): Model to prepare.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+                Default: ``True``.
+            gradient_checkpointing_kwargs (dict[str, Any] | None): Extra
+                kwargs for ``gradient_checkpointing_enable``. Default: ``None``.
+
+        Returns:
+            Any: The same model, modified in-place.
         """
         if use_gradient_checkpointing:
             if hasattr(model, "gradient_checkpointing_enable"):
@@ -298,7 +374,21 @@ class HFIntegration:
         config_or_name: str | Any = "gdn2_1.3B",
         **kwargs: Any,
     ) -> GDN2HFConfig:
-        r"""Build a GDN2HFConfig instance from a name or config object."""
+        r"""build_gdn2_hf_config(config_or_name: str | Any = "gdn2_1.3B", **kwargs: Any) -> GDN2HFConfig
+
+        Build a ``GDN2HFConfig`` instance from a name or config object.
+
+        Args:
+            config_or_name (str | Any): Either a preset name (e.g.
+                ``"gdn2_1.3B"``) looked up via
+                :func:`~qwendopamine.models.gdn2.config.GDN2Config.from_name`,
+                or an existing ``GDN2Config`` / dict-like object.
+            **kwargs: Extra fields forwarded when ``config_or_name`` is a
+                string or dict.
+
+        Returns:
+            GDN2HFConfig: HF-compatible config wrapping the GDN-2 block config.
+        """
         from qwendopamine.models.gdn2.config import GDN2Config
 
         if isinstance(config_or_name, str):
@@ -312,7 +402,19 @@ class HFIntegration:
         layer_idx: int | None = None,
         **kwargs: Any,
     ) -> GDN2HFBlock:
-        r"""Build a Hugging Face compatible GDN2HFBlock module."""
+        r"""build_gdn2_hf_block(config: PreTrainedConfig | Any, layer_idx: int | None = None, **kwargs: Any) -> GDN2HFBlock
+
+        Build a HuggingFace compatible :class:`~.GDN2HFBlock` module.
+
+        Args:
+            config (PreTrainedConfig | Any): HF config or GDN2Config/dict.
+            layer_idx (int | None): Layer index for cache naming.
+                Default: ``None``.
+            **kwargs: Extra kwargs forwarded to ``GDN2HFBlock``.
+
+        Returns:
+            GDN2HFBlock: Instantiated HF-compatible GDN-2 block.
+        """
         return GDN2HFBlock(config=config, layer_idx=layer_idx, **kwargs)
 
     @staticmethod

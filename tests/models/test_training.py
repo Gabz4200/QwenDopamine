@@ -54,6 +54,8 @@ def test_when_metric_tracker_updated_then_records_and_exports_dict() -> None:
 
 
 class ToyLM(nn.Module):
+    r"""ToyLM: tiny linear model for training-loop integration tests."""
+
     def __init__(self) -> None:
         super().__init__()
         self.fc = nn.Linear(8, 8)
@@ -61,6 +63,17 @@ class ToyLM(nn.Module):
     def forward(
         self, x: torch.Tensor, labels: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
+        r"""forward(x: torch.Tensor, labels: torch.Tensor | None = None) -> dict[str, torch.Tensor]
+
+        Linear forward with optional MSE loss.
+
+        Args:
+            x (torch.Tensor): Input embeddings.
+            labels (torch.Tensor | None): Optional target for MSE loss.
+
+        Returns:
+            dict[str, torch.Tensor]: ``{"loss"}`` or ``{"logits"}``.
+        """
         out = self.fc(x)
         if labels is not None:
             return {"loss": nn.functional.mse_loss(out, labels)}

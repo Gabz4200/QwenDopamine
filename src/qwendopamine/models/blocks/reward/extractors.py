@@ -229,6 +229,9 @@ class RewardStatisticsExtractor(nn.Module):
         return reward_stats
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return (
             f"normalize={self.normalize}, "
             f"reward_init_scale={self.reward_init_scale}, "
@@ -339,6 +342,9 @@ class RewardFourierEncoder(nn.Module):
         return cond
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return (
             f"f_dim={self.f_dim}, "
             f"h_dim={self.h_dim}, "
@@ -507,4 +513,7 @@ class RewardFiLM(nn.Module):
         return output
 
     def extra_repr(self) -> str:
+        r"""extra_repr() -> str
+
+        Return a string with the extra representation of the module."""
         return f"dim={self.dim}, hidden_dim={self.hidden_dim}, dropout={self.dropout}"

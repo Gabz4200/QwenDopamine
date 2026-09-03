@@ -772,11 +772,11 @@ class ReinforcedDeltaLayer(nn.Module):
         # 5. Readout with FiLM-modulated Query
         q_prime_unsig = q_prime_t.unsqueeze(-1)  # (B, d, 1)
         if self.memory_rank is None:
-            o_t = torch.bmm(S_next, q_prime_unsig).squeeze(
-                -1
-            )  # (B, d)  # pyrefly: ignore[bad-argument-type]
+            assert isinstance(S_next, Tensor)
+            o_t = torch.bmm(S_next, q_prime_unsig).squeeze(-1)  # (B, d)
         else:
-            U, V = S_next  # pyrefly: ignore[bad-argument-type]
+            assert isinstance(S_next, tuple)
+            U, V = S_next
             # (U V^T) q = U (V^T q)
             Vt_q = torch.bmm(V.transpose(1, 2), q_prime_unsig).squeeze(-1)  # (B, r)
             o_t = torch.bmm(U, Vt_q.unsqueeze(-1)).squeeze(-1)  # (B, d)

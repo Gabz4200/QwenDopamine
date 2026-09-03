@@ -6,7 +6,7 @@ r"""Hand-derived third reference for the Gated DeltaNet-2 (GDN-2) recurrence.
 This module is the single source of truth for GDN-2 forward and per-step
 backward math. It is **independent** of both
 :mod:`qwendopamine.models.gdn2.recurrence.recurrent` (local torch
-recurrent reference) and :mod:`qwendopamine.models.gdn2.taichi`
+recurrent reference) and :mod:`qwendopamine.kernels.taichi`
 (Taichi kernels) so it can be used to validate them.
 
 The recurrence (paper Eq. 10) is
@@ -62,7 +62,7 @@ def canonical_gdn2_step(
     Args:
         scale_qk: If ``True``, multiply ``q_t`` by ``K**-0.5`` so the
             canonical matches the API-level scale applied by
-            :func:`qwendopamine.models.gdn2.taichi.recurrent_taichi_gdn2`
+            :func:`qwendopamine.kernels.taichi.recurrent_taichi_gdn2`
             and :func:`torch_recurrent_gdn2`. Default ``False`` keeps
             the canonical as a pure-math reference.
 

@@ -8,6 +8,7 @@ import and expose their entry points when CUDA is absent.
 
 from typing import Any, cast
 
+import pytest
 import torch
 from torch import nn
 
@@ -54,11 +55,18 @@ def test_when_all_gdn2_model_then_forward_and_backward_flow() -> None:
 
 
 def test_when_gradient_checkpointing_then_output_matches() -> None:
+    # Force the pure-PyTorch chunkwise backend. Taichi's GPU backends
+    # (Vulkan on a headless box) introduce per-run fp32 noise that
+    # breaks bit-exact equality between two otherwise identical model
+    # copies; the test exercises gradient checkpointing's correctness,
+    # not the kernel choice.
     cfg = _make_cfg()
+    cfg.backend = "torch-chunk"
     model_ref = GDN2GPT(cfg)
     model_ckpt = GDN2GPT(cfg)
     model_ckpt.load_state_dict(model_ref.state_dict())
 
+    torch.manual_seed(0)
     x = torch.randint(0, 512, (2, 32))
     model_ref.train()
     model_ckpt.train()
@@ -67,11 +75,20 @@ def test_when_gradient_checkpointing_then_output_matches() -> None:
     out_ref = model_ref(x)
     out_ckpt = model_ckpt(x)
     assert out_ref.shape == out_ckpt.shape
-    assert torch.allclose(out_ref.float(), out_ckpt.float(), atol=1e-5)
+    # Both model copies run on the same backend with the same
+    # weights; gradient checkpointing must preserve the forward
+    # output bit-exactly when the kernel is deterministic.
+    assert torch.allclose(out_ref.float(), out_ckpt.float(), atol=1e-6)
 
 
 def test_when_all_gdn2_model_then_overfits_small_batch() -> None:
-    model = GDN2GPT(_make_cfg())
+    # Force the pure-PyTorch chunkwise backend. Taichi's GPU backends
+    # (Vulkan on a headless box) are too slow per step for an in-test
+    # 30-step overfit loop, and the test exercises the optimization
+    # path (loss decrease), not the kernel choice.
+    cfg = _make_cfg()
+    cfg.backend = "torch-chunk"
+    model = GDN2GPT(cfg)
     model.train()
     opt = torch.optim.AdamW(model.parameters(), lr=3e-3)
     loss_fn = nn.CrossEntropyLoss()
@@ -113,6 +130,14 @@ def test_when_l2norm_disabled_then_chunk_and_recurrent_still_agree() -> None:
 
 
 def test_when_auto_backend_on_cpu_then_chooses_pytorch() -> None:
+    # ``auto`` picks Taichi whenever the runtime is available (CUDA →
+    # Vulkan → Metal/OpenGL → CPU). This test asserts the pure-PyTorch
+    # fallback tree; skip when Taichi is available.
+    from qwendopamine.kernels.taichi import is_available
+
+    if is_available():
+        pytest.skip("Taichi is available; auto selects Taichi")
+
     assert resolve_gdn2_backend("auto", training=True, seq_len=64) == "torch-chunk"
     assert resolve_gdn2_backend("auto", training=False, seq_len=1) == "torch-recurrent"
     assert resolve_gdn2_backend("auto", training=False, seq_len=32) == "torch-recurrent"

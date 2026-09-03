@@ -12,7 +12,7 @@ where ``omega_W`` is a per-batch scalar, ``omega_E`` is a per-`d`
 column-wise scalar, and ``e[d] = v[d] - sum_kk S[d, kk] * k[kk]`` is
 the delta residual. The per-step state update is implemented in
 :mod:`qwendopamine.models.reinforced.delta` and the per-step Taichi
-adjoint in :mod:`qwendopamine.models.reinforced.taichi`.
+adjoint in :mod:`qwendopamine.kernels.taichi.reinforced_kernels`.
 
 This module provides hand-derived third references that are
 **independent** of both the local torch reference and the Taichi

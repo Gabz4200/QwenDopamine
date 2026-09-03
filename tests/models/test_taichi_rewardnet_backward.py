@@ -4,7 +4,7 @@ Each test compares the gradient produced by the Taichi path against the
 gradient produced by the pure-PyTorch reference (which uses PyTorch autograd
 through the token-by-token recurrence). The Taichi path's backward is the
 per-token VJP of the delta-rule update, implemented in
-:func:`qwendopamine.models.reinforced.taichi.launch_delta_core_step_bwd`.
+:func:`qwendopamine.kernels.taichi.reinforced_kernels.launch_delta_core_step_bwd`.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from qwendopamine.models.gdn2.taichi import is_available
-from qwendopamine.models.reinforced.taichi import delta_core_step_autograd
+from qwendopamine.kernels.taichi import is_available
+from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_autograd
 
 pytestmark = pytest.mark.skipif(
     not is_available(),

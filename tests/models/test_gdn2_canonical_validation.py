@@ -30,6 +30,7 @@ import pytest
 import torch
 from torch.nn import functional as F
 
+from qwendopamine.kernels.taichi import is_available, recurrent_taichi_gdn2
 from qwendopamine.models.gdn2.recurrence.canonical_reference import (
     canonical_gdn2_sequence,
     canonical_gdn2_step,
@@ -39,7 +40,6 @@ from qwendopamine.models.gdn2.recurrence.recurrent import (
     gated_delta_2_step,
     torch_recurrent_gdn2,
 )
-from qwendopamine.models.gdn2.taichi import is_available, recurrent_taichi_gdn2
 
 # Tolerance for fp32 accumulation noise (no L2 norm, no scale in canonical).
 _F32_ATOL = 1e-5
@@ -319,7 +319,7 @@ def test_taichi_recurrent_per_step_backward_matches_canonical(B, H, K, V):
     The Taichi path is a single token wrapped in the autograd Function
     so we can compare the per-input gradients.
     """
-    from qwendopamine.models.gdn2.taichi.api import (
+    from qwendopamine.kernels.taichi.gdn2_api import (
         _RecurrentTaichiGdn2Function,
     )
 
@@ -423,8 +423,8 @@ def test_taichi_chunkwise_forward_matches_canonical(B, T, H, K, V):
     ensure the chunkwise engine implements the WY factorization
     correctly per paper Appendix A.
     """
+    from qwendopamine.kernels.taichi import chunk_taichi_gdn2
     from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
-    from qwendopamine.models.gdn2.taichi import chunk_taichi_gdn2
 
     torch.manual_seed(5)
     q = torch.randn(B, T, H, K)

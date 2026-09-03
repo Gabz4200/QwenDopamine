@@ -22,8 +22,6 @@ def _warn_fallback_once(reason: str) -> None:
         warnings.warn(f"[gdn2] Using pure PyTorch fallback: {reason}", stacklevel=3)
 
 
-
-
 GDN2_BACKENDS = (
     "auto",
     "taichi",
@@ -45,7 +43,8 @@ _DEFAULT_COMPILE_BACKEND = False
 
 def _taichi_ok() -> bool:
     try:
-        from qwendopamine.models.gdn2.taichi import is_available
+        from qwendopamine.kernels.taichi import is_available
+
         return bool(is_available())
     except (ImportError, RuntimeError):
         return False
@@ -59,33 +58,26 @@ def resolve_gdn2_backend(
 ) -> str:
     r"""Resolve the concrete GDN-2 execution backend for a forward call.
 
-    The Taichi backend is the single hardware-accelerated engine; it JIT
-    compiles to native CPU code on CPU and to GPU shaders on CUDA, so the
-    same source runs everywhere. ``"auto"`` selects Taichi when available
-    and otherwise falls back to the chunkwise / recurrent pure-PyTorch
-    reference kernels.
+    The Taichi backend is the single hardware-accelerated engine; Taichi
+    itself picks CUDA → Vulkan → Metal/OpenGL → CPU. ``"auto"`` selects
+    Taichi when available and otherwise falls back to the chunkwise /
+    recurrent pure-PyTorch reference kernels.
     """
     if requested not in GDN2_BACKENDS:
         raise ValueError(
             f"Invalid GDN-2 backend '{requested}'. Valid backends: {list(GDN2_BACKENDS)}"
         )
     if requested != "auto":
-        # Backwards-compat aliases. The CUDA-bound triton/fla paths were
-        # replaced by Taichi; the old scalar names now route to the
-        # equivalent path.
+        # The CUDA-bound triton/fla paths were replaced by Taichi; the
+        # old scalar names now route to the equivalent path.
         if requested in ("triton", "fla"):
             return "taichi" if _taichi_ok() else "torch-chunk"
         if requested == "compiled":
             return "torch-chunk"
         return requested
 
-    # Auto: prefer Taichi (covers both CPU and GPU via its own JIT).
-    try:
-        from qwendopamine.models.gdn2.taichi import is_available
-        if is_available():
-            return "taichi"
-    except (ImportError, RuntimeError):
-        pass
+    if _taichi_ok():
+        return "taichi"
 
     if not training and seq_len <= _SINGLE_TOKEN_SEQ_LEN:
         return "torch-recurrent"

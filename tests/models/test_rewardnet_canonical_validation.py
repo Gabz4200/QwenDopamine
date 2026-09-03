@@ -4,7 +4,7 @@ Each test compares the per-step and per-sequence RewardNet update
 against a hand-derived third reference that is **independent** of
 both the local torch reference
 (:mod:`qwendopamine.models.reinforced.delta`) and the Taichi kernels
-(:mod:`qwendopamine.models.reinforced.taichi`). Tests are skipped when
+(:mod:`qwendopamine.kernels.taichi.reinforced_kernels`). Tests are skipped when
 the Taichi runtime is not available; the pure-PyTorch path is still
 exercised via :mod:`tests.models.test_reward`.
 
@@ -27,7 +27,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from qwendopamine.models.gdn2.taichi import is_available
+from qwendopamine.kernels.taichi import is_available
 from qwendopamine.models.reinforced import ReinforcedDeltaLayer
 from qwendopamine.models.reinforced.canonical_reference import (
     canonical_delta_step,
@@ -235,7 +235,7 @@ def test_taichi_per_step_forward_matches_canonical(B, D):
     effective gates equal the canonical's ``omega_w_eff`` /
     ``omega_e_eff``.
     """
-    from qwendopamine.models.reinforced.taichi import launch_delta_core_step
+    from qwendopamine.kernels.taichi.reinforced_kernels import launch_delta_core_step
 
     torch.manual_seed(0)
     S, k, v, omega_w_eff, omega_e_eff = _rand_inputs(B, D, seed=0)
@@ -290,7 +290,7 @@ def test_taichi_per_step_backward_matches_canonical(B, D):
         d_omega_e     [B, 1]  = sum_d d_omega_e_eff * erase
         d_erase       [B, D]  = d_omega_e_eff * omega_e
     """
-    from qwendopamine.models.reinforced.taichi import delta_core_step_autograd
+    from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_autograd
 
     torch.manual_seed(0)
     # Use constant per-channel effective gates so the Taichi autograd

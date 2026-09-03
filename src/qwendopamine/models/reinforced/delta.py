@@ -825,7 +825,7 @@ class ReinforcedDeltaLayer(nn.Module):
         if use_taichi_now:
             omega_W_scalar = plasticity_t * write_t  # (B, 1)
             omega_E_scalar = plasticity_t * erase_t  # (B, 1)
-            from qwendopamine.models.reinforced.taichi import (
+            from qwendopamine.kernels.taichi.reinforced_kernels import (
                 delta_core_step_autograd,
             )
 
@@ -859,7 +859,7 @@ class ReinforcedDeltaLayer(nn.Module):
     def _taichi_dispatchable(self) -> bool:
         """Return True when the Taichi runtime is usable."""
         try:
-            from qwendopamine.models.gdn2.taichi import is_available
+            from qwendopamine.kernels.taichi import is_available
         except ImportError:
             return False
         return bool(is_available())

@@ -11,13 +11,13 @@ from __future__ import annotations
 import pytest
 import torch
 
-from qwendopamine.models.gdn2.taichi import is_available
+from qwendopamine.kernels.taichi import is_available
+from qwendopamine.kernels.taichi.reinforced_kernels import _DeltaCoreStepFunction
 from qwendopamine.models.reinforced import (
     GatedRewardNet,
     GatedRewardNetConfig,
 )
 from qwendopamine.models.reinforced.delta import ReinforcedDeltaLayer
-from qwendopamine.models.reinforced.taichi import _DeltaCoreStepFunction
 
 taichi_skip = pytest.mark.skipif(
     not is_available(), reason="Taichi runtime not available"

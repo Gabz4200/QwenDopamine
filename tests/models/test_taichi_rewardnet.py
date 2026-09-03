@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from qwendopamine.models.gdn2.taichi import is_available
+from qwendopamine.kernels.taichi import is_available
+from qwendopamine.kernels.taichi.reinforced_kernels import launch_delta_core_step
 from qwendopamine.models.reinforced.delta import DeltaMemoryCore
-from qwendopamine.models.reinforced.taichi import launch_delta_core_step
 
 pytestmark = pytest.mark.skipif(
     not is_available(),

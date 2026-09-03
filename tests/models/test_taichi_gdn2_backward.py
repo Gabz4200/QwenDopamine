@@ -4,7 +4,7 @@ Each test compares the gradient produced by the Taichi path against
 the gradient produced by the pure-PyTorch reference (which uses
 PyTorch autograd through the token-by-token recurrence). The Taichi
 recurrent path's backward is the per-token VJP of paper Eq. 10,
-implemented in :func:`qwendopamine.models.gdn2.taichi.kernels.launch_recurrent_step_bwd`.
+implemented in :func:`qwendopamine.kernels.taichi.kernels.launch_recurrent_step_bwd`.
 """
 
 from __future__ import annotations
@@ -12,13 +12,13 @@ from __future__ import annotations
 import pytest
 import torch
 
-from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
-from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
-from qwendopamine.models.gdn2.taichi import (
+from qwendopamine.kernels.taichi import (
     chunk_taichi_gdn2,
     is_available,
     recurrent_taichi_gdn2,
 )
+from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
+from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
 
 pytestmark = pytest.mark.skipif(
     not is_available(),

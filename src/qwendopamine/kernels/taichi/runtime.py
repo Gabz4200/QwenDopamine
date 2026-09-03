@@ -1,10 +1,9 @@
 """Lazy Taichi runtime initialisation.
 
-Resolves the active Taichi architecture (CUDA GPU if available, otherwise CPU)
-and exposes it via :func:`taichi_arch`. Taichi handles JIT compilation of
-``@ti.kernel`` functions and dispatches them to the resolved backend, so the
-same kernel source produces CPU or GPU code with no CPU-only fallback path
-required.
+Lets Taichi pick the backend itself: ``ti.init(arch=ti.gpu)`` makes Taichi
+try CUDA → Vulkan → Metal/OpenGL → CPU in that order. We do not steer
+the choice manually; the resolved backend is read back via
+:func:`taichi_arch` so callers can report what landed.
 """
 
 from __future__ import annotations
@@ -29,16 +28,16 @@ _ARCH: str = "cpu"
 
 
 def _initialise() -> None:
-    """Initialise the Taichi runtime with auto-selected architecture.
+    """Initialise the Taichi runtime, deferring backend choice to Taichi.
 
-    Passes an explicit preference list ``[ti.cuda, ti.gpu, ti.cpu]`` to
-    :func:`ti.init` so Taichi picks the first backend that actually
-    works on this machine (CUDA > generic GPU > CPU). When no
-    preference is given, Taichi's own default priority applies
-    (CUDA if available, then Vulkan/Metal, then CPU).
+    ``ti.init(arch=ti.gpu)`` asks Taichi to try CUDA, then Vulkan, then
+    Metal/OpenGL, then fall back to CPU. If even ``ti.gpu`` cannot be
+    resolved (e.g. on a headless box with no GPU drivers), a second
+    ``ti.init()`` call with no arguments applies Taichi's own default
+    priority (CUDA > Vulkan/Metal > CPU).
 
-    The chosen arch is stored in the module-level ``_ARCH`` variable
-    so every subsequent kernel compilation picks the same target.
+    The chosen arch is stored in ``_ARCH`` so every subsequent kernel
+    compilation picks the same target.
     """
     global _INITIALISED, _ARCH
     with _LOCK:
@@ -52,18 +51,12 @@ def _initialise() -> None:
         chosen: str = "cpu"
         try:
             ti.init(  # type: ignore[missing-attribute]
-                arch=[  # type: ignore[missing-attribute]
-                    ti.cuda,  # type: ignore[missing-attribute]
-                    ti.gpu,  # type: ignore[missing-attribute]
-                    ti.cpu,  # type: ignore[missing-attribute]
-                ],
+                arch=ti.gpu,  # type: ignore[missing-attribute]
                 default_fp=ti.f32,  # type: ignore[missing-attribute]
             )
             resolved = ti.cfg.arch  # type: ignore[attr-defined]
             chosen = str(resolved) if resolved is not None else "auto"
         except Exception:  # noqa: BLE001
-            # Last-resort fallback: bare ``ti.init()`` lets Taichi apply
-            # its built-in default priority (CUDA > Vulkan/Metal > CPU).
             ti.init(default_fp=ti.f32)  # type: ignore[missing-attribute]
             resolved = ti.cfg.arch  # type: ignore[attr-defined]
             chosen = str(resolved) if resolved is not None else "auto"

@@ -32,7 +32,7 @@ Shape contract (backward, per-batch):
 
 import torch
 
-from qwendopamine.models.gdn2.taichi import runtime as _rt
+from qwendopamine.kernels.taichi import runtime as _rt
 
 ti = _rt.ti  # type: ignore[assignment]
 

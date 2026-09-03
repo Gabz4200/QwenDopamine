@@ -178,6 +178,21 @@ unannotated-return = false
 unannotated-parameter = false
 
 [[sub-config]]
+matches = "src/qwendopamine/kernels/**"
+[sub-config.errors]
+invalid-annotation = false
+parse-error = false
+implicit-import = false
+bad-argument-type = false
+bad-assignment = false
+unsupported-operation = false
+bad-function-definition = false
+implicit-any-parameter = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false
+
+[[sub-config]]
 matches = "tests/**"
 [sub-config.errors]
 implicit-import = false

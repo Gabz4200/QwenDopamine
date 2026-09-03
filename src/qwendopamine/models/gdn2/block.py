@@ -44,23 +44,27 @@ try:
 except ImportError:
     LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
 
-# Safe optional Taichi ops imports. The Taichi backend is the single
-# hardware-accelerated path; it JIT-compiles to native CPU code on CPU and
-# to GPU shaders on CUDA, so no separate CUDA dependency is required.
+# Safe optional Taichi ops imports via the public ops layer. The Taichi
+# backend is the single hardware-accelerated path; it JIT-compiles to
+# native CPU code on CPU and to GPU shaders on CUDA, so no separate
+# CUDA dependency is required. The model layer never imports the
+# Taichi kernels directly — it asks the ops layer to dispatch.
 _HAS_TAICHI_OPS = False
 _taichi_chunk_gdn2 = None
 _taichi_recurrent_gdn2 = None
 try:
-    from qwendopamine.models.gdn2.taichi import (
+    from qwendopamine.kernels.taichi import is_available as _taichi_is_available
+    from qwendopamine.kernels.taichi.gdn2_api import (
         chunk_taichi_gdn2 as _taichi_chunk_gdn2,
     )
-    from qwendopamine.models.gdn2.taichi import is_available as _taichi_is_available
-    from qwendopamine.models.gdn2.taichi import (
+    from qwendopamine.kernels.taichi.gdn2_api import (
         recurrent_taichi_gdn2 as _taichi_recurrent_gdn2,
     )
+
     _HAS_TAICHI_OPS = bool(_taichi_is_available())
 except (ImportError, RuntimeError) as e:
     from qwendopamine.models.gdn2.backend import _warn_fallback_once
+
     _warn_fallback_once(f"Taichi ops failed to load: {e}")
 
 _DEFAULT_HIDDEN_SIZE = 2048
@@ -110,9 +114,15 @@ class GatedDeltaNet2(nn.Module):
             hidden_size_or_config, "n_embd"
         ):
             cfg = hidden_size_or_config
-            hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", _DEFAULT_HIDDEN_SIZE))
-            num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", _DEFAULT_NUM_HEADS))
-            head_dim = getattr(cfg, "head_dim", getattr(cfg, "head_size", _DEFAULT_HEAD_DIM))
+            hidden_size = getattr(
+                cfg, "hidden_size", getattr(cfg, "n_embd", _DEFAULT_HIDDEN_SIZE)
+            )
+            num_heads = getattr(
+                cfg, "num_heads", getattr(cfg, "n_head", _DEFAULT_NUM_HEADS)
+            )
+            head_dim = getattr(
+                cfg, "head_dim", getattr(cfg, "head_size", _DEFAULT_HEAD_DIM)
+            )
             num_v_heads = getattr(
                 cfg,
                 "num_v_heads",
@@ -288,8 +298,12 @@ class GatedDeltaNet2(nn.Module):
             Zero-initialized state of shape ``[B, H, K, V]``.
         """
         return torch.zeros(
-            batch_size, self.num_heads, self.head_k_dim, self.head_v_dim,
-            device=device, dtype=dtype
+            batch_size,
+            self.num_heads,
+            self.head_k_dim,
+            self.head_v_dim,
+            device=device,
+            dtype=dtype,
         )
 
     # ------------------------------------------------------------------
@@ -302,7 +316,11 @@ class GatedDeltaNet2(nn.Module):
         conv_state_q: torch.Tensor | None = None,
         conv_state_k: torch.Tensor | None = None,
         conv_state_v: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None],
+    ]:
         """Execute a single auto-regressive token step on CPU/GPU.
 
         This is the preferred API for inference-time decoding. It updates the
@@ -475,6 +493,7 @@ class GatedDeltaNet2(nn.Module):
                         IndexError,
                     ) as e:
                         from qwendopamine.models.gdn2.backend import _warn_fallback_once
+
                         _warn_fallback_once(f"update_recurrent_state failed: {e}")
                 elif recurrent_state is not None:
                     rec_dict = getattr(layer_cache, "recurrent_states", None)
@@ -500,6 +519,7 @@ class GatedDeltaNet2(nn.Module):
                         IndexError,
                     ) as e:
                         from qwendopamine.models.gdn2.backend import _warn_fallback_once
+
                         _warn_fallback_once(f"update_conv_state failed: {e}")
                 elif conv_state is not None:
                     conv_dict = getattr(layer_cache, "conv_states", None)
@@ -580,7 +600,14 @@ class GatedDeltaNet2(nn.Module):
         g: torch.Tensor,
         b: torch.Tensor,
         w: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         r"""Rearrange projections into per-head layout and apply value-head grouping."""
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
         k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
@@ -678,6 +705,7 @@ class GatedDeltaNet2(nn.Module):
             AttributeError,
         ) as e:
             from qwendopamine.models.gdn2.backend import _warn_fallback_once
+
             _warn_fallback_once(
                 f"Taichi kernel failed ({e}); falling back to pure PyTorch"
             )
@@ -812,8 +840,12 @@ class GatedDeltaNet2(nn.Module):
             hidden_states = index_first_axis(hidden_states, indices).unsqueeze(0)
 
         q, k, v, g, b, w, conv_state_q, conv_state_k, conv_state_v = self._compute_qkv(
-            hidden_states, conv_state_q, conv_state_k, conv_state_v,
-            use_cache if use_cache is not None else False, cu_seqlens
+            hidden_states,
+            conv_state_q,
+            conv_state_k,
+            conv_state_v,
+            use_cache if use_cache is not None else False,
+            cu_seqlens,
         )
         q, k, v, g, b, w = self._prepare_tokens(q, k, v, g, b, w)
 
@@ -821,8 +853,17 @@ class GatedDeltaNet2(nn.Module):
             self.backend, training=self.training, seq_len=seq_len
         )
         o, recurrent_state = self._dispatch_backend(
-            backend, mode, q, k, v, g, b, w, recurrent_state,
-            use_cache if use_cache is not None else False, cu_seqlens
+            backend,
+            mode,
+            q,
+            k,
+            v,
+            g,
+            b,
+            w,
+            recurrent_state,
+            use_cache if use_cache is not None else False,
+            cu_seqlens,
         )
 
         if use_cache or past_key_values is not None:
@@ -836,7 +877,13 @@ class GatedDeltaNet2(nn.Module):
                 ),
             )
 
-        return self._compute_output(hidden_states, o, g, is_padded, indices, batch, seq_len), None, past_key_values
+        return (
+            self._compute_output(
+                hidden_states, o, g, is_padded, indices, batch, seq_len
+            ),
+            None,
+            past_key_values,
+        )
 
 
 def _normalise_backend(name: str) -> str:

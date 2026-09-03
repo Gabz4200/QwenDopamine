@@ -27,8 +27,8 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 
-from qwendopamine.models.gdn2.taichi import kernels as _kernels
-from qwendopamine.models.gdn2.taichi import runtime as _rt
+from qwendopamine.kernels.taichi import gdn2_kernels as _kernels
+from qwendopamine.kernels.taichi import runtime as _rt
 
 
 def _normalize_qk(

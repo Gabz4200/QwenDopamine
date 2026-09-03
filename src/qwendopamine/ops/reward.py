@@ -39,7 +39,7 @@ def _reward_torch_step(
     )
 
 
-def delta_core_step_autograd(
+def delta_core_step_out(
     state: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -56,7 +56,7 @@ def delta_core_step_autograd(
     fallback below implements the same column-wise spec.
     """
     if _is_available():
-        from qwendopamine.kernels.taichi import delta_core_step_autograd as _fn
+        from qwendopamine.kernels.taichi import delta_core_step_out as _fn
 
         return _fn(
             state,

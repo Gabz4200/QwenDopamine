@@ -102,7 +102,7 @@ def test_chunk_gdn2_python_op_backward_produces_finite_grads() -> None:
 
 def test_delta_core_step_python_op_backward_produces_finite_grads() -> None:
     """The Reinforced Delta op's autograd must produce finite gradients."""
-    from qwendopamine.ops import delta_core_step_autograd
+    from qwendopamine.ops import delta_core_step_out
 
     B, D = 1, 3
     torch.manual_seed(0)
@@ -114,7 +114,7 @@ def test_delta_core_step_python_op_backward_produces_finite_grads() -> None:
     write = torch.rand(B, D, requires_grad=True)
     erase = torch.rand(B, D, requires_grad=True)
     next_state = torch.empty_like(state)
-    out = delta_core_step_autograd(
+    out = delta_core_step_out(
         state, k, v, omega_w, omega_e, write, erase, next_state
     )
     out.sum().backward()

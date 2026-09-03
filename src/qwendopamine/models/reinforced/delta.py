@@ -809,7 +809,7 @@ class ReinforcedDeltaLayer(nn.Module):
         )
 
         # Decide whether to dispatch to the Taichi path. The Taichi
-        # kernel is autograd-aware (see :func:`delta_core_step_autograd`)
+        # kernel is autograd-aware (see :func:`delta_core_step_out`)
         # and takes the per-batch scalar plasticity (already shaped
         # ``[B, 1]``) plus the channel-wise write/erase gates.
         use_taichi_now = (
@@ -826,11 +826,11 @@ class ReinforcedDeltaLayer(nn.Module):
             omega_W_scalar = plasticity_t * write_t  # (B, 1)
             omega_E_scalar = plasticity_t * erase_t  # (B, 1)
             from qwendopamine.kernels.taichi.reinforced_kernels import (
-                delta_core_step_autograd,
+                delta_core_step_out,
             )
 
             assert isinstance(S_prev, Tensor)  # narrow for the type checker
-            S_next = delta_core_step_autograd(
+            S_next = delta_core_step_out(
                 S_prev.float(),
                 k_t.float(),
                 v_t.float(),

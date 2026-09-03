@@ -5,6 +5,9 @@ Verifies:
   2. When taichi is unavailable the op still produces a tensor of correct
     shape and dtype.
   3. The public op signature accepts the same args as the torch reference.
+  4. The registered ``delta_core_step`` custom op passes ``opcheck``
+    over a battery of input shapes (mirrors the official Python
+    custom-ops tutorial).
 """
 
 from __future__ import annotations
@@ -13,9 +16,10 @@ import inspect
 
 import pytest
 import torch
+from torch.library import opcheck
 
 from qwendopamine.kernels.taichi import is_available
-from qwendopamine.ops.reward import delta_core_step_autograd
+from qwendopamine.ops.reward import delta_core_step_out
 
 
 @pytest.mark.skipif(
@@ -43,7 +47,7 @@ class TestRewardOpDispatch:
 
         # This should fall back to torch without error
         # The fallback computes the state update via torch ops
-        result = delta_core_step_autograd(
+        result = delta_core_step_out(
             state,
             k,
             v,
@@ -86,7 +90,7 @@ class TestRewardOpDispatch:
         next_state = torch.empty(B, D, D)
 
         # Call the op; it should fall back to torch and produce correct results
-        result = delta_core_step_autograd(
+        result = delta_core_step_out(
             state,
             k,
             v,
@@ -109,7 +113,7 @@ class TestRewardOpDispatch:
 
     def test_signature_matches_torch_reference(self):
         """The public op signature accepts the same args as the torch reference."""
-        public_sig = inspect.signature(delta_core_step_autograd)
+        public_sig = inspect.signature(delta_core_step_out)
         public_params = set(public_sig.parameters.keys())
 
         # The public op should accept: state, k, v, omega_w, omega_e, write, erase, next_state
@@ -124,5 +128,42 @@ class TestRewardOpDispatch:
             "next_state",
         }
         assert required_params.issubset(public_params), (
-            f"Missing params in delta_core_step_autograd: {required_params - public_params}"
+            f"Missing params in delta_core_step_out: {required_params - public_params}"
         )
+
+
+# ---------------------------------------------------------------------------
+# opcheck battery for delta_core_step (mirrors the official Python
+# custom-ops tutorial)
+# ---------------------------------------------------------------------------
+def _delta_inputs(B: int, D: int) -> tuple[torch.Tensor, ...]:
+    """Build a fresh input tuple for the delta_core_step op."""
+    torch.manual_seed(0)
+    state = torch.zeros(B, D, D)
+    k = torch.randn(B, D)
+    v = torch.randn(B, D)
+    omega_w = torch.zeros(B, 1)
+    omega_e = torch.zeros(B, 1)
+    write = torch.rand(B, D)
+    erase = torch.rand(B, D)
+    return (state, k, v, omega_w, omega_e, write, erase)
+
+
+@pytest.mark.skipif(
+    not is_available(),
+    reason="Taichi runtime is not available on this machine",
+)
+def test_delta_core_step_opcheck_battery() -> None:
+    """The registered ``delta_core_step`` op passes ``opcheck`` on a battery."""
+    op = torch.ops.qwendopamine.delta_core_step
+    base = _delta_inputs(2, 4)
+    examples: list[tuple[torch.Tensor, ...]] = [
+        base,
+        _delta_inputs(1, 0),  # empty D
+        tuple(
+            t.double() if isinstance(t, torch.Tensor) and t.is_floating_point() else t
+            for t in base
+        ),  # fp64
+    ]
+    for example in examples:
+        opcheck(op, example, {})

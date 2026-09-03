@@ -359,7 +359,7 @@ class _DeltaCoreStepFunction(torch.autograd.Function):
         return dstate, dk, dv, d_omega_w, d_omega_e, d_write, d_erase, None
 
 
-def delta_core_step_autograd(
+def delta_core_step_out(
     state,
     k,
     v,
@@ -583,7 +583,7 @@ class _ChunkwiseDeltaCoreStepFunction(torch.autograd.Function):
         )
 
 
-def chunkwise_delta_core_step_autograd(
+def chunkwise_delta_core_step_out(
     state0: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
@@ -597,7 +597,7 @@ def chunkwise_delta_core_step_autograd(
 
     Applies the per-step RewardNet update over the time axis and
     saves per-token states for the Taichi adjoint. Equivalent to
-    calling :func:`delta_core_step_autograd` for every token but
+    calling :func:`delta_core_step_out` for every token but
     exposes the full per-token state vector to the bwd kernel so the
     chunkwise adjoint can be evaluated in a single Taichi launch.
 
@@ -626,8 +626,8 @@ def chunkwise_delta_core_step_autograd(
 
 
 __all__ = [
-    "chunkwise_delta_core_step_autograd",
-    "delta_core_step_autograd",
+    "chunkwise_delta_core_step_out",
+    "delta_core_step_out",
     "launch_chunk_bwd_per_bh",
     "launch_delta_core_step",
     "launch_delta_core_step_bwd",

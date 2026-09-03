@@ -14,7 +14,7 @@ functional (returning a fresh tensor), the autograd rules cannot be
 attached 1:1. Callers that need autograd through the public ops
 should go through the :mod:`qwendopamine.ops` Python wrappers
 (``chunk_taichi_gdn2``, ``recurrent_taichi_gdn2``,
-``delta_core_step_autograd``) directly — those already carry the
+``delta_core_step_out``) directly — those already carry the
 right ``torch.autograd.Function`` registration.
 """
 
@@ -34,7 +34,7 @@ def _register_recurrent_gdn2_autograd() -> None:
     return
 
 
-def _register_delta_core_step_autograd() -> None:
+def _register_delta_core_step_out() -> None:
     """No-op: see :func:`_register_chunk_gdn2_autograd`."""
     return
 
@@ -50,7 +50,7 @@ def register_all_autograd() -> None:
         return
     _register_chunk_gdn2_autograd()
     _register_recurrent_gdn2_autograd()
-    _register_delta_core_step_autograd()
+    _register_delta_core_step_out()
     _REGISTERED_AUTOGRAD = True
 
 

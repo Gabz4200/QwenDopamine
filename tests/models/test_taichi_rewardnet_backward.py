@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from qwendopamine.kernels.taichi import is_available
-from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_autograd
+from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_out
 
 pytestmark = pytest.mark.skipif(
     not is_available(),
@@ -69,7 +69,7 @@ def test_delta_core_step_backward_matches_reference(B, D):
     (state_ref, k_ref, v_ref, ow_ref, oe_ref, W_ref, E_ref) = _make_inputs(B, D)
 
     ns_ta = torch.empty_like(state_ta)
-    out_ta = delta_core_step_autograd(
+    out_ta = delta_core_step_out(
         state_ta, k_ta, v_ta, ow_ta, oe_ta, W_ta, E_ta, ns_ta
     )
     out_ref = _ref_step(state_ref, k_ref, v_ref, ow_ref, oe_ref, W_ref, E_ref)
@@ -116,7 +116,7 @@ def test_delta_core_step_training_step_converges():
 
     loss_initial = (state - target).pow(2).sum().item()  # before any step
     for _ in range(5):
-        out = delta_core_step_autograd(state, k, v, ow, oe, W, E, ns)
+        out = delta_core_step_out(state, k, v, ow, oe, W, E, ns)
         loss = (out - target).pow(2).sum()
         loss.backward()
         with torch.no_grad():
@@ -168,7 +168,7 @@ def test_multi_token_recurrence_backward(B, D, T):
         oe_t = oe_ta[:, t, :]
         W_t = W_ta[:, t, :]
         E_t = E_ta[:, t, :]
-        s_ta = delta_core_step_autograd(s_ta, k_t, v_t, ow_t, oe_t, W_t, E_t, ns_ta)
+        s_ta = delta_core_step_out(s_ta, k_t, v_t, ow_t, oe_t, W_t, E_t, ns_ta)
         s_ref = _ref_step(
             s_ref,
             k_ref[:, t, :],

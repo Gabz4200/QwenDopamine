@@ -50,6 +50,14 @@ def chunk_taichi_gdn2(
             use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
             chunk_size=chunk_size,
         )
+        # Defensive clone: the kernel may return a tensor that shares
+        # storage with ``initial_state`` on some backends. The public op
+        # must not return a value aliased to an input (the
+        # ``custom_op`` schema contract requires this).
+        if state is not None and state.data_ptr() == (
+            initial_state.data_ptr() if initial_state is not None else 0
+        ):
+            state = state.clone()
         return (out.contiguous(), state) if out is not None else (q.new_empty(0), state)
     out, state = torch_chunk_gdn2(
         q,
@@ -62,6 +70,10 @@ def chunk_taichi_gdn2(
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
     )
+    if state is not None and state.data_ptr() == (
+        initial_state.data_ptr() if initial_state is not None else 0
+    ):
+        state = state.clone()
     return (out.contiguous(), state) if out is not None else (q.new_empty(0), state)
 
 
@@ -101,6 +113,10 @@ def recurrent_taichi_gdn2(
             output_final_state=output_final_state,
             use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
         )
+        if state is not None and state.data_ptr() == (
+            initial_state.data_ptr() if initial_state is not None else 0
+        ):
+            state = state.clone()
         return (out.contiguous(), state) if out is not None else (q.new_empty(0), state)
     out, state = torch_recurrent_gdn2(
         q,
@@ -113,4 +129,8 @@ def recurrent_taichi_gdn2(
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
     )
+    if state is not None and state.data_ptr() == (
+        initial_state.data_ptr() if initial_state is not None else 0
+    ):
+        state = state.clone()
     return (out.contiguous(), state) if out is not None else (q.new_empty(0), state)

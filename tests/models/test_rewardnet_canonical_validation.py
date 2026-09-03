@@ -290,7 +290,7 @@ def test_taichi_per_step_backward_matches_canonical(B, D):
         d_omega_e     [B, 1]  = sum_d d_omega_e_eff * erase
         d_erase       [B, D]  = d_omega_e_eff * omega_e
     """
-    from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_autograd
+    from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_out
 
     torch.manual_seed(0)
     # Use constant per-channel effective gates so the Taichi autograd
@@ -322,7 +322,7 @@ def test_taichi_per_step_backward_matches_canonical(B, D):
     write_t = write.clone().requires_grad_(True)
     erase_t = erase.clone().requires_grad_(True)
     ns = torch.empty_like(S_t)
-    out = delta_core_step_autograd(
+    out = delta_core_step_out(
         S_t,
         k_t,
         v_t,

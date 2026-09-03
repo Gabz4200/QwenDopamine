@@ -18,7 +18,7 @@ column-wise scalar, and ``e[d]`` is the delta residual.
 This module exposes the **readable, autograd-friendly** implementation
 of the same math. It is independent of the Taichi kernel and of
 :mod:`qwendopamine.models.reinforced.delta`. The production path
-(``qwendopamine.ops.delta_core_step_autograd``) must match this
+(``qwendopamine.ops.delta_core_step_out``) must match this
 reference within numerical tolerance.
 
 Shapes (per-step):

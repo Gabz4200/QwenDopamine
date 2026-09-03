@@ -5,6 +5,11 @@ Verifies:
   2. When taichi is unavailable the op still produces a tensor of correct
     shape and dtype.
   3. The public op signature accepts the same args as the torch reference.
+  4. The registered custom ops pass ``opcheck`` over a battery of
+    representative input shapes (mirrors the official PyTorch tutorial's
+    example battery at
+    https://docs.pytorch.org/tutorials/advanced/python_custom_ops.html
+    "Testing Python custom operators").
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import inspect
 
 import pytest
 import torch
+from torch.library import opcheck
 
 from qwendopamine.kernels.taichi import is_available
 from qwendopamine.ops.gdn2 import chunk_taichi_gdn2, recurrent_taichi_gdn2
@@ -170,3 +176,65 @@ class TestGdn2OpDispatch:
         assert chunk_required.issubset(chunk_params), (
             f"Missing params in chunk_taichi_gdn2: {chunk_required - chunk_params}"
         )
+
+
+# ---------------------------------------------------------------------------
+# opcheck battery (mirrors the official Python custom-ops tutorial)
+# ---------------------------------------------------------------------------
+def _gdn2_inputs(
+    B: int, T: int, H: int, K: int, V: int
+) -> tuple[torch.Tensor | None, ...]:
+    """Build a fresh input tuple for the GDN-2 ops (last slot is initial_state or None)."""
+    torch.manual_seed(0)
+    q = torch.randn(B, T, H, K)
+    k = torch.randn(B, T, H, K)
+    v = torch.randn(B, T, H, V)
+    g = torch.zeros(B, T, H, K)
+    b = torch.rand(B, T, H, K)
+    w = torch.rand(B, T, H, V)
+    return (q, k, v, g, b, w, None)
+
+
+_GDN2_OPS = [
+    ("chunk_gdn2", False),
+    ("chunk_gdn2_with_state", True),
+    ("recurrent_gdn2", False),
+    ("recurrent_gdn2_with_state", True),
+]
+
+
+@pytest.mark.skipif(
+    not is_available(),
+    reason="Taichi runtime is not available on this machine",
+)
+@pytest.mark.parametrize("op_name,with_state", _GDN2_OPS)
+def test_opcheck_battery(op_name: str, with_state: bool) -> None:
+    """Each registered GDN-2 op passes ``opcheck`` on a battery of inputs.
+
+    The battery covers the shapes the official Python custom-ops tutorial
+    recommends: contiguous, empty, double dtype, and non-contiguous
+    (swapped strides) inputs.
+    """
+    op = getattr(torch.ops.qwendopamine, op_name)
+    base = _gdn2_inputs(1, 2, 2, 4, 4)
+    examples: list[tuple[torch.Tensor | None, ...]] = [
+        base,
+        _gdn2_inputs(1, 0, 2, 4, 4),  # empty T axis
+        tuple(
+            t.double() if isinstance(t, torch.Tensor) and t.is_floating_point() else t
+            for t in base
+        ),  # fp64
+    ]
+    # Non-contiguous q via swapped inner strides.
+    _q, k, v, g, b, w, init = base
+    q_max = (1 - 1) * (2 * 2 * 4) + (2 - 1) * 4 + (2 - 1) * (2 * 4) + (4 - 1)
+    q_storage = torch.empty(q_max + 1)
+    q_t = q_storage.as_strided(
+        size=(1, 2, 2, 4),
+        stride=(2 * 2 * 4, 4, 2 * 4, 1),  # swap H and K dim strides
+    )
+    assert not q_t.is_contiguous()
+    examples.append((q_t, k, v, g, b, w, init))
+
+    for example in examples:
+        opcheck(op, example, {})

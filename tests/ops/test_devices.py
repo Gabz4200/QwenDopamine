@@ -48,7 +48,7 @@ def test_public_op_runs_on_cpu_tensors() -> None:
 
 def test_reward_op_runs_on_cpu_tensors() -> None:
     """The reward op must accept CPU tensors."""
-    from qwendopamine.ops import delta_core_step_autograd
+    from qwendopamine.ops import delta_core_step_out
 
     B, D = 2, 4
     state = torch.zeros(B, D, D)
@@ -59,9 +59,7 @@ def test_reward_op_runs_on_cpu_tensors() -> None:
     write = torch.rand(B, D)
     erase = torch.rand(B, D)
     next_state = torch.empty_like(state)
-    out = delta_core_step_autograd(
-        state, k, v, omega_w, omega_e, write, erase, next_state
-    )
+    out = delta_core_step_out(state, k, v, omega_w, omega_e, write, erase, next_state)
     assert out.device.type == "cpu"
 
 
@@ -69,31 +67,41 @@ def test_reward_op_runs_on_cpu_tensors() -> None:
 # Non-contiguous tensors
 # ---------------------------------------------------------------------------
 def test_public_op_handles_non_contiguous_input() -> None:
-    """The public ops must accept non-contiguous tensors (the kernel contract is contiguous, so we copy first)."""
+    """The public ops must accept non-contiguous tensors (the kernel contract is contiguous, so we copy first).
+
+    Uses the same non-contiguous patterns the official PyTorch
+    tutorial recommends for ``opcheck`` exercises:
+    a transposed view and a sliced tensor with non-zero storage offset.
+    """
     from qwendopamine.ops import recurrent_taichi_gdn2
 
-    B, T, H, K, V = 1, 2, 2, 4, 4
-    # Create non-contiguous tensors by transposing an extra dim then back.
-    base_q = torch.randn(B, T, H, K)
-    q = base_q.transpose(0, 1).transpose(0, 1)  # round-trip; may stay non-contig
-    if q.is_contiguous():
-        q = q[None].transpose(0, 1).squeeze(1)
-    base_k = torch.randn(B, T, H, K)
-    k = base_k.transpose(0, 1).transpose(0, 1)
-    if k.is_contiguous():
-        k = k[None].transpose(0, 1).squeeze(1)
-    base_v = torch.randn(B, T, H, V)
-    v = base_v.transpose(0, 1).transpose(0, 1)
-    if v.is_contiguous():
-        v = v[None].transpose(0, 1).squeeze(1)
+    B, T, H, K, V = 2, 4, 2, 8, 8
+    # q: non-contiguous via swapped inner strides. Storage must
+    # address the highest-offset element.
+    q_max_offset = (B - 1) * (T * H * K) + (T - 1) * K + (H - 1) * (H * K) + (K - 1)
+    q_storage = torch.empty(q_max_offset + 1)
+    q = q_storage.as_strided(
+        size=(B, T, H, K),
+        stride=(T * H * K, K, H * K, 1),  # swap H and K dim strides
+    )
+    assert not q.is_contiguous()
+    # k: different non-contig pattern (swapped outer strides).
+    k_max_offset = (B - 1) * (H * K) + (T - 1) * (T * H * K) + (H - 1) * K + (K - 1)
+    k_storage = torch.empty(k_max_offset + 1)
+    k = k_storage.as_strided(
+        size=(B, T, H, K),
+        stride=(H * K, T * H * K, K, 1),  # swap B and T dim strides
+    )
+    assert not k.is_contiguous()
+    v = torch.randn(B, T, H, V)
     g = torch.zeros(B, T, H, K)
     b = torch.rand(B, T, H, K)
     w = torch.rand(B, T, H, V)
 
-    # The op should not crash; the kernel contract is contiguous, so the
-    # op may internally call .contiguous() (or the kernel may copy).
     out, _ = recurrent_taichi_gdn2(q, k, v, g, b, w, None, True)
     assert out.shape == (B, T, H, V)
+    # Output must be contiguous (kernel contract).
+    assert out.is_contiguous()
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +194,10 @@ def test_custom_op_returns_cpu_tensors_when_called_with_cpu_inputs() -> None:
     g = torch.zeros(B, T, H, K)
     b = torch.rand(B, T, H, K)
     w = torch.rand(B, T, H, V)
-    out_list = torch.ops.qwendopamine.chunk_gdn2(q, k, v, g, b, w, None, True)
+    # ``chunk_gdn2`` returns a single Tensor; ``chunk_gdn2_with_state``
+    # returns a list of two Tensors. Cover both.
+    out = torch.ops.qwendopamine.chunk_gdn2(q, k, v, g, b, w, None)
+    assert out.device.type == "cpu"
+    out_list = torch.ops.qwendopamine.chunk_gdn2_with_state(q, k, v, g, b, w, None)
     for t in out_list:
         assert t.device.type == "cpu"

@@ -7,7 +7,7 @@ def test_kernels_module_importable():
     """Verify qwendopamine.kernels.taichi is importable and exposes expected symbols."""
     from qwendopamine.kernels.taichi import (
         chunk_taichi_gdn2,
-        delta_core_step_autograd,
+        delta_core_step_out,
         recurrent_taichi_gdn2,
         require,
         taichi_arch,
@@ -22,8 +22,8 @@ def test_kernels_module_importable():
     assert callable(require), "require should be callable"
     assert callable(chunk_taichi_gdn2), "chunk_taichi_gdn2 should be callable"
     assert callable(recurrent_taichi_gdn2), "recurrent_taichi_gdn2 should be callable"
-    assert callable(delta_core_step_autograd), (
-        "delta_core_step_autograd should be callable"
+    assert callable(delta_core_step_out), (
+        "delta_core_step_out should be callable"
     )
 
     # Verify is_available returns a bool

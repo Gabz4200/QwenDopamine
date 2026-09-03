@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "skills": {
+    "add-uint-support": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/add-uint-support/SKILL.md",
+      "computedHash": "db3c4f35335254b7b1073efb3b0c19871327f284f673107d1365c4f4ae9c2479"
+    },
+    "aoti-debug": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/aoti-debug/SKILL.md",
+      "computedHash": "c40ddf44bc389044627a1cd6b16aa77b66a1f15f3faa4375ca787095fc889de4"
+    },
+    "async-python-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/async-python-patterns/SKILL.md",
+      "computedHash": "e0f03523d989848310c93a599541948474f24ccaa04c8d52ed1b45cc5adaebde"
+    },
+    "at-dispatch-v2": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/at-dispatch-v2/SKILL.md",
+      "computedHash": "be5d83ac0529077e1be2d9a904b702a5438d5d79e097101e6663c99a2deb043a"
+    },
+    "ci-metrics": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/ci-metrics/SKILL.md",
+      "computedHash": "8e3028c981f9190cdaf5c444934a80be0200a3d85adef4cbaf68bfef5cf0a5ba"
+    },
+    "cpu-kernels": {
+      "source": "huggingface/kernels",
+      "sourceType": "github",
+      "skillPath": "kernel-builder/skills/cpu-kernels/SKILL.md",
+      "computedHash": "e924d6c24da2db98df85fe7c95a26cb5e64e53e26c26dce3d7362d7dc36a35c5"
+    },
+    "cuda-index-width": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/cuda-index-width/SKILL.md",
+      "computedHash": "f0c79c4c3e2c4aae8c298c0916e3c265f9cff2795c83931e9bbffc840aef7677"
+    },
+    "cuda-kernels": {
+      "source": "huggingface/kernels",
+      "sourceType": "github",
+      "skillPath": "kernel-builder/skills/cuda-kernels/SKILL.md",
+      "computedHash": "d1065830d08c0aafddf0e4934c6bbef09f3f8163b15e8b2050d9e152ef953469"
+    },
+    "distributed-triage": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/distributed-triage/SKILL.md",
+      "computedHash": "379076326bef9a418c74d74868675f977fe001db81f2debac2d65e2f2c275b61"
+    },
+    "docstring": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/docstring/SKILL.md",
+      "computedHash": "8f9ef1fd3551beb6d9760515930ab76e380195a27a675df013268c3fa50c83ce"
+    },
+    "document-public-apis": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/document-public-apis/SKILL.md",
+      "computedHash": "dee225dffa343cfc551a5da713d07b091771739e11cd65295c1190ffbe08a14e"
+    },
+    "fix-issue": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/fix-issue/SKILL.md",
+      "computedHash": "f70643b487e16d13607c41bcec8f1185cf7e8f88b5d7402116927fec9af34f41"
+    },
+    "llm-evaluation": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/llm-application-dev/skills/llm-evaluation/SKILL.md",
+      "computedHash": "af89a6013eacc5db7afe102b4a2af95ad8dcad4721e35700cba24b1ebd35c94f"
+    },
+    "lora-qlora-recipes": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/llm-finetuning/skills/lora-qlora-recipes/SKILL.md",
+      "computedHash": "2aa78f9bae1a7561e256009eb63c20e9329016a5544677543d65bc54003e36e6"
+    },
+    "metal-kernel": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/metal-kernel/SKILL.md",
+      "computedHash": "5e9dae43738d6346f8f43db55a3f4c9deede755e720df6bbf5795a39f401d345"
+    },
+    "pr-review": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/pr-review/SKILL.md",
+      "computedHash": "d29d11edf188c2e5eaa4e31399ec63773ae36cdb4d73acb111be4c2bb3b3a326"
+    },
+    "preference-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/llm-finetuning/skills/preference-optimization/SKILL.md",
+      "computedHash": "d6ee3201bf305c3a09ca5f1381bb7eb0402dd388dbcb93a8f61652cb317b5406"
+    },
+    "pt2-bug-basher": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/pt2-bug-basher/SKILL.md",
+      "computedHash": "20bef582bc1e68722ad00ec98352be2df2f7ccda2018dfd5c2a57f6fcefa79fd"
+    },
+    "pyrefly-type-coverage": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/pyrefly-type-coverage/SKILL.md",
+      "computedHash": "c96f833abeaec951d7f25003d8d276dc232201f1192f212ededb102fb37c752b"
+    },
+    "python-anti-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-anti-patterns/SKILL.md",
+      "computedHash": "5a6d1c378bbfc859a12fe08dda1e2b856af725ff3cc46ee38cea8bd03736abdb"
+    },
+    "python-background-jobs": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-background-jobs/SKILL.md",
+      "computedHash": "31ad678672ecc974ef91379d59c79622fa6a65fa2712d051020ddc6e376b4eb0"
+    },
+    "python-code-style": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-code-style/SKILL.md",
+      "computedHash": "35ed0c437f33462187b0a89da8e5bfe9ac259dbc8731257c5445f1a5e1229acf"
+    },
+    "python-configuration": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-configuration/SKILL.md",
+      "computedHash": "4c5a9bb3ba5100379c57e773372eeafb45601a159c8a2f523bc30a4f3686ce30"
+    },
+    "python-design-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-design-patterns/SKILL.md",
+      "computedHash": "e9340dc302515d844fb5c4d6a14da72bed62ef50ab8b56540dd80a1a22a3c059"
+    },
+    "python-error-handling": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-error-handling/SKILL.md",
+      "computedHash": "b7bf403c928c5646329a0e0f686abe93dd2b353b23ababfd5ef79578f3082067"
+    },
+    "python-observability": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-observability/SKILL.md",
+      "computedHash": "7459b3f35505710e43f28edf4859f80d7c9ed0040321fdbc2b99f48dbc333222"
+    },
+    "python-packaging": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-packaging/SKILL.md",
+      "computedHash": "f909306678a23ce30ce7f792e86fb721a6d339d7a01ace7acd3b122781f55a31"
+    },
+    "python-performance-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-performance-optimization/SKILL.md",
+      "computedHash": "5a0e5ccd00cd8e850e1068707e042339e182190eb89f8a300f58c18f53876059"
+    },
+    "python-project-structure": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-project-structure/SKILL.md",
+      "computedHash": "2f4f560964af8ecad4d54666c044baa54671d0abd1136c848b539befe24db170"
+    },
+    "python-resilience": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-resilience/SKILL.md",
+      "computedHash": "f7a19b3542c2a18ed33a1d64f6a95b3eae88eb5a3f18439ca0414cf496a12c1b"
+    },
+    "python-resource-management": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-resource-management/SKILL.md",
+      "computedHash": "255030ac16b4b20207a8916a8580551144bfdff851410b1f4bc2bedcd5cc41d9"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-testing-patterns/SKILL.md",
+      "computedHash": "1306eea409e7eff2288d7658806cb508f18339a0ee9a686d324a0fd2570eae55"
+    },
+    "python-type-safety": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-type-safety/SKILL.md",
+      "computedHash": "16314aa8a4a465773be809c517f62f8ef704f5ab1bb237e8c9b8a759689fcb21"
+    },
+    "pytorch-patterns": {
+      "source": "affaan-m/ecc",
+      "sourceType": "github",
+      "skillPath": "skills/pytorch-patterns/SKILL.md",
+      "computedHash": "eb170710a86bc3bc292ad27fddbdf15e46f707eab139e192bad59099cb47586a"
+    },
+    "rocm-kernels": {
+      "source": "huggingface/kernels",
+      "sourceType": "github",
+      "skillPath": "kernel-builder/skills/rocm-kernels/SKILL.md",
+      "computedHash": "159f6e2b99137bd87b3483c14e57a197d3d0769107c63101ff1b758f5d8841ac"
+    },
+    "scrub-issue": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/scrub-issue/SKILL.md",
+      "computedHash": "a5355aa74544c1f71e0346e67ea5b92e4656ad83cd78e1060515c4d63d69357c"
+    },
+    "skill-writer": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/skill-writer/SKILL.md",
+      "computedHash": "c220867183e2f6a32290b0c87d6dcc56ce507154e20ae7cb64ad91bee2d4677e"
+    },
+    "tilegym-adding-cutile-kernel": {
+      "source": "nvidia/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tilegym-adding-cutile-kernel/SKILL.md",
+      "computedHash": "5366f0aa66e55abf5d6115d5c5f004080fd135b709ac46d9d946e2e5ea89d271"
+    },
+    "tilegym-improve-cutile-kernel-perf": {
+      "source": "nvidia/skills",
+      "sourceType": "github",
+      "skillPath": "skills/tilegym-improve-cutile-kernel-perf/SKILL.md",
+      "computedHash": "9f1a8129aad0972c811fa049ff113d289c0f8e0580d8b07f4d68b4994a6ed39b"
+    },
+    "triaging-issues": {
+      "source": "pytorch/pytorch",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/triaging-issues/SKILL.md",
+      "computedHash": "b467edbdc099457b4fd8e7e6f7258c3468fcb50d5105490da37f2d033de42d15"
+    },
+    "uv-package-manager": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/uv-package-manager/SKILL.md",
+      "computedHash": "c2bf8833d6c3ffa283171ef3b8da90274451605e170077f1ee6529cc38aa6438"
+    },
+    "xpu-kernels": {
+      "source": "huggingface/kernels",
+      "sourceType": "github",
+      "skillPath": "kernel-builder/skills/xpu-kernels/SKILL.md",
+      "computedHash": "b3788be9509af364d00456dcb0a71091a75babd8052fdcadf116dc16fa31e84c"
+    }
+  }
+}

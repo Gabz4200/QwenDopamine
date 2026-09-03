@@ -44,30 +44,24 @@ try:
 except ImportError:
     LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
 
-# Safe optional Triton/FLA ops imports
-_HAS_TRITON_OPS = False
+# Safe optional Taichi ops imports. The Taichi backend is the single
+# hardware-accelerated path; it JIT-compiles to native CPU code on CPU and
+# to GPU shaders on CUDA, so no separate CUDA dependency is required.
+_HAS_TAICHI_OPS = False
+_taichi_chunk_gdn2 = None
+_taichi_recurrent_gdn2 = None
 try:
-    from qwendopamine.models.gdn2.triton.chunk_gdn2 import (
-        _HAS_TRITON_FLA as _CHUNK_HAS_TRITON,
+    from qwendopamine.models.gdn2.taichi import (
+        chunk_taichi_gdn2 as _taichi_chunk_gdn2,
     )
-    from qwendopamine.models.gdn2.triton.chunk_gdn2 import (
-        chunk_gdn2 as _triton_chunk_gdn2,
+    from qwendopamine.models.gdn2.taichi import is_available as _taichi_is_available
+    from qwendopamine.models.gdn2.taichi import (
+        recurrent_taichi_gdn2 as _taichi_recurrent_gdn2,
     )
-    from qwendopamine.models.gdn2.triton.fused_recurrent_gdn2 import (
-        _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON,
-    )
-    from qwendopamine.models.gdn2.triton.fused_recurrent_gdn2 import (
-        fused_recurrent_gdn2 as _triton_fused_recurrent_gdn2,
-    )
-
-    _HAS_TRITON_OPS = bool(_CHUNK_HAS_TRITON or _RECURRENT_HAS_TRITON)
-except (ImportError, AttributeError) as e:
-    _triton_chunk_gdn2 = None
-    _triton_fused_recurrent_gdn2 = None
-    _HAS_TRITON_OPS = False
+    _HAS_TAICHI_OPS = bool(_taichi_is_available())
+except (ImportError, RuntimeError) as e:
     from qwendopamine.models.gdn2.backend import _warn_fallback_once
-
-    _warn_fallback_once(f"Triton ops failed to load: {e}")
+    _warn_fallback_once(f"Taichi ops failed to load: {e}")
 
 _DEFAULT_HIDDEN_SIZE = 2048
 _DEFAULT_NUM_HEADS = 16
@@ -623,17 +617,16 @@ class GatedDeltaNet2(nn.Module):
         cu_seqlens: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         r"""Dispatch the forward pass to the selected GDN-2 backend."""
-        if backend in ("triton", "fla"):
-            return self._run_triton_backend(
-                backend, mode, q, k, v, g, b, w, recurrent_state, use_cache, cu_seqlens
+        if backend == "taichi":
+            return self._run_taichi_backend(
+                mode, q, k, v, g, b, w, recurrent_state, use_cache
             )
         return self._run_torch_backend(
             backend, mode, q, k, v, g, b, w, recurrent_state, use_cache
         )
 
-    def _run_triton_backend(
+    def _run_taichi_backend(
         self,
-        backend: str,
         mode: str,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -643,59 +636,50 @@ class GatedDeltaNet2(nn.Module):
         w: torch.Tensor,
         recurrent_state: torch.Tensor | None,
         use_cache: bool,
-        cu_seqlens: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        r"""Run the Triton/FLA backend with automatic fallback to pure PyTorch."""
-        if not _HAS_TRITON_OPS:
+        r"""Run the Taichi kernel. Falls back to the torch path on failure."""
+        if not _HAS_TAICHI_OPS:
             raise RuntimeError(
-                f"GDN-2 backend '{backend}' was requested but Triton/FLA is not installed. "
-                "Install the optional CUDA dependencies (pip install 'qwendopamine[gpu]') "
-                "or use backend='auto'/'torch'."
+                "GDN-2 backend 'taichi' was requested but Taichi failed to "
+                "initialise. Reinstall the project with `uv sync` to ensure "
+                "the taichi dependency is present."
             )
         try:
-            if mode == "chunk" and _triton_chunk_gdn2 is not None:
-                return _triton_chunk_gdn2(
+            if mode == "chunk" and _taichi_chunk_gdn2 is not None:
+                return _taichi_chunk_gdn2(
                     q=q,
                     k=k,
                     v=v,
                     g=g,
                     b=b,
                     w=w,
-                    A_log=self.A_log,
-                    dt_bias=self.dt_bias,
                     initial_state=recurrent_state,
                     output_final_state=use_cache or False,
                     use_qk_l2norm_in_kernel=True,
-                    use_gate_in_kernel=False,
-                    cu_seqlens=cu_seqlens,
+                    chunk_size=self.chunk_size,
                 )
-            if _triton_fused_recurrent_gdn2 is not None:
-                return _triton_fused_recurrent_gdn2(
+            if _taichi_recurrent_gdn2 is not None:
+                return _taichi_recurrent_gdn2(
                     q=q,
                     k=k,
                     v=v,
                     g=g,
                     b=b,
                     w=w,
-                    A_log=self.A_log,
-                    dt_bias=self.dt_bias,
                     initial_state=recurrent_state,
                     output_final_state=use_cache or False,
                     use_qk_l2norm_in_kernel=True,
-                    use_gate_in_kernel=False,
-                    cu_seqlens=cu_seqlens,
                 )
-            raise RuntimeError("Triton ops present but no kernel is callable")
+            raise RuntimeError("Taichi ops present but no kernel is callable")
         except (
             RuntimeError,
             TypeError,
             ValueError,
             AttributeError,
-            ImportError,
         ) as e:
             from qwendopamine.models.gdn2.backend import _warn_fallback_once
             _warn_fallback_once(
-                f"Triton kernel failed ({e}); falling back to pure PyTorch"
+                f"Taichi kernel failed ({e}); falling back to pure PyTorch"
             )
             fallback = "torch-chunk" if mode == "chunk" else "torch-recurrent"
             return self._run_torch_backend(
@@ -855,9 +839,20 @@ class GatedDeltaNet2(nn.Module):
         return self._compute_output(hidden_states, o, g, is_padded, indices, batch, seq_len), None, past_key_values
 
 
+def _normalise_backend(name: str) -> str:
+    if name == "torch":
+        return "torch-chunk"
+    if name == "compiled":
+        return "torch-chunk"
+    if name in ("triton", "fla"):
+        return "taichi"
+    return name
+
+
 # Backends constant accessible from block module
 _GATED_DELTA_NET_BACKENDS = (
     "auto",
+    "taichi",
     "torch",
     "torch-chunk",
     "torch-recurrent",

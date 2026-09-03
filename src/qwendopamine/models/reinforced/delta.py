@@ -238,9 +238,7 @@ class AdvantageGate(nn.Module):
             self.erase_proj.bias.zero_()
             self.erase_proj.weight.zero_()
 
-    def forward(
-        self, A_t: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor] | tuple[Tensor]:
+    def forward(self, A_t: Tensor) -> tuple[Tensor, Tensor, Tensor] | tuple[Tensor]:
         r"""Compute plasticity, write, erase (or a single coupled scalar).
 
         Args:
@@ -254,9 +252,7 @@ class AdvantageGate(nn.Module):
         if A_t.dim() != 2:
             raise ValueError(f"Expected A_t shape (B, k_stats), got {A_t.shape}.")
         if A_t.size(-1) != self.k_stats:
-            raise ValueError(
-                f"Expected k_stats={self.k_stats}, got {A_t.size(-1)}."
-            )
+            raise ValueError(f"Expected k_stats={self.k_stats}, got {A_t.size(-1)}.")
 
         if self.training and self.dropout > 0.0:
             A_t = F.dropout(A_t, p=self.dropout, training=True)
@@ -346,6 +342,7 @@ class DeltaMemoryCore(nn.Module):
         # Short convolutions for causal smoothing
         if use_short_conv:
             from qwendopamine.models.gdn2.ops.conv import ShortConvolution
+
             self.k_conv1d = ShortConvolution(
                 d_model, kernel_size=conv_size, bias=conv_bias
             )
@@ -479,7 +476,7 @@ class DeltaMemoryCore(nn.Module):
                 :class:`AdvantageGate`. Gates the erase term; negative
                 advantage drives it up so bad outcomes actively suppress.
             S_prev: previous state. Dense ``(B, d, d)`` or low-rank factors
-                ``(U, V)`` of shape ``(B, d, r)``.
+                ``(U, V)`` of shape (B, d, r).
             k_cache: optional cached conv state for k.
             v_cache: optional cached conv state for v.
 
@@ -488,7 +485,35 @@ class DeltaMemoryCore(nn.Module):
             k_cache_out: updated k conv cache.
             v_cache_out: updated v conv cache.
         """
-        # Project and optionally apply short conv
+        k_t, v_t, W_t, E_t, k_cache_out, v_cache_out = self._compute_step_inputs(
+            x,
+            k_cache=k_cache,
+            v_cache=v_cache,
+        )
+        return self._apply_step(
+            S_prev,
+            k_t,
+            v_t,
+            W_t,
+            E_t,
+            plasticity_t,
+            write_t,
+            erase_t,
+            k_cache_out=k_cache_out,
+            v_cache_out=v_cache_out,
+        )
+
+    def _compute_step_inputs(
+        self,
+        x: Tensor,
+        k_cache: Tensor | None = None,
+        v_cache: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor | None, Tensor | None]:
+        """Project x through k/v, w, e and (optionally) short conv.
+
+        Returns ``(k_t, v_t, W_t, E_t, k_cache_out, v_cache_out)`` where
+        ``W_t, E_t`` are the sigmoid-activated channel-wise gates.
+        """
         k_t = self.k_proj(x)  # (B, d)
         v_t = self.v_proj(x)  # (B, d)
 
@@ -501,16 +526,24 @@ class DeltaMemoryCore(nn.Module):
             v_t, v_cache_out = self.v_conv1d(v_t.unsqueeze(1), v_cache)
             v_t = v_t.squeeze(1)
 
-        # Write and Erase gates (channel-wise, sigmoid activated)
         W_t = torch.sigmoid(self.w_proj(x))  # (B, d)
         E_t = torch.sigmoid(self.e_proj(x))  # (B, d)
+        return k_t, v_t, W_t, E_t, k_cache_out, v_cache_out
 
-        # Separated modulation: plasticity gates the whole update; write
-        # and erase are signed-advantage gates that can act independently.
-        # Each factor lives in (0, 1), so the products are also in (0, 1)
-        # and no upper-bound clamp is needed (the previous coupled
-        # ``clamp(max=2.0)`` belonged to the legacy single-omega form).
-        # The shape (B, d, 1) is broadcast over the d×d state channels.
+    def _apply_step(
+        self,
+        S_prev: Tensor | tuple[Tensor, Tensor],
+        k_t: Tensor,
+        v_t: Tensor,
+        W_t: Tensor,
+        E_t: Tensor,
+        plasticity_t: Tensor,
+        write_t: Tensor,
+        erase_t: Tensor,
+        k_cache_out: Tensor | None = None,
+        v_cache_out: Tensor | None = None,
+    ) -> tuple[Tensor | tuple[Tensor, Tensor], Tensor | None, Tensor | None]:
+        """Compute ``S_next`` from the projected step inputs (pure torch)."""
         omega_W = (plasticity_t * write_t * W_t).unsqueeze(-1)
         omega_E = (plasticity_t * erase_t * E_t).unsqueeze(-1)
 
@@ -585,6 +618,7 @@ class ReinforcedDeltaLayer(nn.Module):
         reward_normalize: bool = False,
         reward_normalize_eps: float = 1e-5,
         reward_ema_alpha: float = 0.1,
+        use_taichi: bool = True,
     ) -> None:
         super().__init__()
 
@@ -602,6 +636,8 @@ class ReinforcedDeltaLayer(nn.Module):
             raise ValueError("memory_rank must be positive when provided.")
         if memory_rank is not None and memory_rank > d_model:
             raise ValueError("memory_rank must be ≤ d_model.")
+        if not isinstance(use_taichi, bool):
+            raise TypeError("use_taichi must be a bool.")
 
         self.d_model = d_model
         self.k_stats = k_stats
@@ -612,17 +648,25 @@ class ReinforcedDeltaLayer(nn.Module):
         self.reward_normalize = reward_normalize
         self.reward_normalize_eps = reward_normalize_eps
         self.reward_ema_alpha = reward_ema_alpha
+        # Taichi autograd path is only valid for the dense state
+        # representation; low-rank stays on the pure-PyTorch path.
+        self.use_taichi = bool(use_taichi) and memory_rank is None
 
         # Statistics extraction and normalization (local import to avoid circular)
         from qwendopamine.models.blocks.reward import (
             LearnableSoftsign,
             RewardStatisticsExtractor,
         )
+
         self.stats_extractor = RewardStatisticsExtractor(reward_dropout=reward_dropout)
-        self.stats_normalizer = LearnableSoftsign(per_channel=True, num_channels=k_stats)
+        self.stats_normalizer = LearnableSoftsign(
+            per_channel=True, num_channels=k_stats
+        )
 
         # RL components
-        self.baseline_tracker = ValueBaselineEMA(d_model, k_stats, init_alpha=init_alpha)
+        self.baseline_tracker = ValueBaselineEMA(
+            d_model, k_stats, init_alpha=init_alpha
+        )
         self.advantage_gate = AdvantageGate(
             k_stats,
             dropout=advantage_dropout,
@@ -658,7 +702,9 @@ class ReinforcedDeltaLayer(nn.Module):
         V_prev: Tensor | None = None,
         k_cache: Tensor | None = None,
         v_cache: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor | tuple[Tensor, Tensor], Tensor, Tensor | None, Tensor | None]:
+    ) -> tuple[
+        Tensor, Tensor | tuple[Tensor, Tensor], Tensor, Tensor | None, Tensor | None
+    ]:
         """
         Args:
             x: (B, d_model) - Input features for current token.
@@ -686,7 +732,9 @@ class ReinforcedDeltaLayer(nn.Module):
             V_prev = torch.zeros(B, self.k_stats, device=x.device, dtype=x.dtype)
 
         # 1. Reward Statistics Extraction & Normalization
-        R_stats = self.stats_extractor(reward_values, batch_size=B, seq_len=1)  # (B, 1, k_stats)
+        R_stats = self.stats_extractor(
+            reward_values, batch_size=B, seq_len=1
+        )  # (B, 1, k_stats)
         R_stats = self.stats_normalizer(R_stats).squeeze(1)  # (B, k_stats)
 
         # 2. RL: Baseline Tracking & Advantage Gate
@@ -698,7 +746,7 @@ class ReinforcedDeltaLayer(nn.Module):
         if self.advantage_legacy_coupled:
             (omega_t,) = gate_out
             plasticity_t = omega_t.clamp(max=1.0)
-            write_t = (omega_t >= 1.0).to(omega_t.dtype)
+            write_t = (omega_t >= 1.0).to(omega_t.dtype) * (2.0 - omega_t)
             erase_t = (omega_t < 1.0).to(omega_t.dtype) * (2.0 - omega_t)
         else:
             plasticity_t, write_t, erase_t = gate_out
@@ -708,13 +756,15 @@ class ReinforcedDeltaLayer(nn.Module):
         gamma_t, beta_t = self.reward_encoder(R_stats)  # (B, d) each
         q_prime_t = gamma_t * q_t + beta_t  # (B, d)
 
-        # 4. Memory Update (DeltaMemoryCore)
-        S_next, k_cache_out, v_cache_out = self.memory_core(
-            x,
-            plasticity_t,
-            write_t,
-            erase_t,
-            S_prev,
+        # 4. Memory Update. The Taichi path is only valid for the dense
+        # state (memory_rank is None); for the low-rank path we fall
+        # back to the pure-PyTorch DeltaMemoryCore.
+        S_next, k_cache_out, v_cache_out = self._step_with_or_without_taichi(
+            x=x,
+            S_prev=S_prev,
+            plasticity_t=plasticity_t,
+            write_t=write_t,
+            erase_t=erase_t,
             k_cache=k_cache,
             v_cache=v_cache,
         )
@@ -722,7 +772,9 @@ class ReinforcedDeltaLayer(nn.Module):
         # 5. Readout with FiLM-modulated Query
         q_prime_unsig = q_prime_t.unsqueeze(-1)  # (B, d, 1)
         if self.memory_rank is None:
-            o_t = torch.bmm(S_next, q_prime_unsig).squeeze(-1)  # (B, d)  # pyrefly: ignore[bad-argument-type]
+            o_t = torch.bmm(S_next, q_prime_unsig).squeeze(
+                -1
+            )  # (B, d)  # pyrefly: ignore[bad-argument-type]
         else:
             U, V = S_next  # pyrefly: ignore[bad-argument-type]
             # (U V^T) q = U (V^T q)
@@ -730,6 +782,87 @@ class ReinforcedDeltaLayer(nn.Module):
             o_t = torch.bmm(U, Vt_q.unsqueeze(-1)).squeeze(-1)  # (B, d)
 
         return o_t, S_next, V_t, k_cache_out, v_cache_out
+
+    def _step_with_or_without_taichi(
+        self,
+        x: Tensor,
+        S_prev: Tensor | tuple[Tensor, Tensor],
+        plasticity_t: Tensor,
+        write_t: Tensor,
+        erase_t: Tensor,
+        k_cache: Tensor | None = None,
+        v_cache: Tensor | None = None,
+    ) -> tuple[Tensor | tuple[Tensor, Tensor], Tensor | None, Tensor | None]:
+        """Run one Delta step on the Taichi autograd path when available.
+
+        The Taichi kernel implements the dense ``(1 - omega_E) * S +
+        omega_W * (e k^T)`` update and a per-token VJP. The conv
+        projections and read happen in PyTorch so the only kernel
+        call is the matrix-state update itself.
+        """
+        k_t, v_t, W_t, E_t, k_cache_out, v_cache_out = (
+            self.memory_core._compute_step_inputs(
+                x,
+                k_cache=k_cache,
+                v_cache=v_cache,
+            )
+        )
+
+        # Decide whether to dispatch to the Taichi path. The Taichi
+        # kernel is autograd-aware (see :func:`delta_core_step_autograd`)
+        # and takes the per-batch scalar plasticity (already shaped
+        # ``[B, 1]``) plus the channel-wise write/erase gates.
+        use_taichi_now = (
+            self.use_taichi
+            and self.memory_rank is None
+            and not torch.is_grad_enabled()
+            or (
+                self.use_taichi
+                and self.memory_rank is None
+                and self._taichi_dispatchable()
+            )
+        )
+        if use_taichi_now:
+            omega_W_scalar = plasticity_t * write_t  # (B, 1)
+            omega_E_scalar = plasticity_t * erase_t  # (B, 1)
+            from qwendopamine.models.reinforced.taichi import (
+                delta_core_step_autograd,
+            )
+
+            assert isinstance(S_prev, Tensor)  # narrow for the type checker
+            S_next = delta_core_step_autograd(
+                S_prev.float(),
+                k_t.float(),
+                v_t.float(),
+                omega_W_scalar.float(),
+                omega_E_scalar.float(),
+                W_t.float(),
+                E_t.float(),
+                torch.empty_like(S_prev),
+            ).to(S_prev.dtype)
+            return S_next, k_cache_out, v_cache_out
+
+        # Pure-PyTorch fallback (also used when memory_rank is set).
+        return self.memory_core._apply_step(
+            S_prev,
+            k_t,
+            v_t,
+            W_t,
+            E_t,
+            plasticity_t,
+            write_t,
+            erase_t,
+            k_cache_out=k_cache_out,
+            v_cache_out=v_cache_out,
+        )
+
+    def _taichi_dispatchable(self) -> bool:
+        """Return True when the Taichi runtime is usable."""
+        try:
+            from qwendopamine.models.gdn2.taichi import is_available
+        except ImportError:
+            return False
+        return bool(is_available())
 
     def extra_repr(self) -> str:
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""
@@ -1016,7 +1149,15 @@ class GatedRewardNet(nn.Module):
                 return reward_values.expand(-1, seq_len, -1)
         return reward_values
 
-    def forward(self, hidden_states: Tensor, reward_values: Tensor | None = None, past_key_values: Any = None, output_attentions: bool = False, use_cache: bool = True, **kwargs: Any) -> tuple[Tensor, None, Any]:
+    def forward(
+        self,
+        hidden_states: Tensor,
+        reward_values: Tensor | None = None,
+        past_key_values: Any = None,
+        output_attentions: bool = False,
+        use_cache: bool = True,
+        **kwargs: Any,
+    ) -> tuple[Tensor, None, Any]:
         if hidden_states.dim() == 3:
             B, L, _ = hidden_states.shape
             seq_len = L
@@ -1025,9 +1166,11 @@ class GatedRewardNet(nn.Module):
             hidden_states = hidden_states.unsqueeze(1)
             seq_len = 1
         else:
-            raise ValueError(f"Expected hidden_states dim 2 or 3, got {hidden_states.dim()}.")
-        rec_state, conv_state, value_baseline, running_mean, running_std = self._get_cache(
-            past_key_values
+            raise ValueError(
+                f"Expected hidden_states dim 2 or 3, got {hidden_states.dim()}."
+            )
+        rec_state, conv_state, value_baseline, running_mean, running_std = (
+            self._get_cache(past_key_values)
         )
         S_curr = rec_state
         V_curr = value_baseline
@@ -1079,6 +1222,7 @@ class GatedRewardNet(nn.Module):
                 new_cache["running_mean"] = running_mean
                 new_cache["running_std"] = running_std
         return out, None, new_cache
+
     def extra_repr(self) -> str:
         rank = f", memory_rank={self.memory_rank}" if self.memory_rank else ""
         return f"hidden_size={self.hidden_size}, k_stats={self.k_stats}{rank}"

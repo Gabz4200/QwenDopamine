@@ -10,8 +10,6 @@ user-requested backend string.
 
 from __future__ import annotations
 
-import torch
-
 # Module-level single-warning guard for CPU fallback
 _WARNED_FALLBACKS: set[str] = set()
 
@@ -24,8 +22,11 @@ def _warn_fallback_once(reason: str) -> None:
         warnings.warn(f"[gdn2] Using pure PyTorch fallback: {reason}", stacklevel=3)
 
 
+
+
 GDN2_BACKENDS = (
     "auto",
+    "taichi",
     "torch",
     "torch-chunk",
     "torch-recurrent",
@@ -42,6 +43,14 @@ _DEFAULT_BACKEND = "auto"
 _DEFAULT_COMPILE_BACKEND = False
 
 
+def _taichi_ok() -> bool:
+    try:
+        from qwendopamine.models.gdn2.taichi import is_available
+        return bool(is_available())
+    except (ImportError, RuntimeError):
+        return False
+
+
 def resolve_gdn2_backend(
     requested: str,
     *,
@@ -50,34 +59,34 @@ def resolve_gdn2_backend(
 ) -> str:
     r"""Resolve the concrete GDN-2 execution backend for a forward call.
 
-    ``"auto"`` picks a sensible default: Triton/FLA on CUDA (and the fused
-    recurrent path for short inference), pure torch elsewhere (chunk for
-    training/long sequences, recurrent for single-token/short inference decode).
-    Forcing any other value disables automatic selection entirely.
+    The Taichi backend is the single hardware-accelerated engine; it JIT
+    compiles to native CPU code on CPU and to GPU shaders on CUDA, so the
+    same source runs everywhere. ``"auto"`` selects Taichi when available
+    and otherwise falls back to the chunkwise / recurrent pure-PyTorch
+    reference kernels.
     """
     if requested not in GDN2_BACKENDS:
         raise ValueError(
             f"Invalid GDN-2 backend '{requested}'. Valid backends: {list(GDN2_BACKENDS)}"
         )
     if requested != "auto":
+        # Backwards-compat aliases. The CUDA-bound triton/fla paths were
+        # replaced by Taichi; the old scalar names now route to the
+        # equivalent path.
+        if requested in ("triton", "fla"):
+            return "taichi" if _taichi_ok() else "torch-chunk"
+        if requested == "compiled":
+            return "torch-chunk"
         return requested
 
-    # Safe optional Triton/FLA ops imports
-    _HAS_TRITON_OPS = False
+    # Auto: prefer Taichi (covers both CPU and GPU via its own JIT).
     try:
-        from qwendopamine.models.gdn2.triton.chunk_gdn2 import (
-            _HAS_TRITON_FLA as _CHUNK_HAS_TRITON,
-        )
-        from qwendopamine.models.gdn2.triton.fused_recurrent_gdn2 import (
-            _HAS_TRITON_FLA as _RECURRENT_HAS_TRITON,
-        )
-
-        _HAS_TRITON_OPS = bool(_CHUNK_HAS_TRITON or _RECURRENT_HAS_TRITON)
-    except (ImportError, AttributeError):
+        from qwendopamine.models.gdn2.taichi import is_available
+        if is_available():
+            return "taichi"
+    except (ImportError, RuntimeError):
         pass
 
-    if torch.cuda.is_available() and _HAS_TRITON_OPS:
-        return "triton"
     if not training and seq_len <= _SINGLE_TOKEN_SEQ_LEN:
         return "torch-recurrent"
     if training:

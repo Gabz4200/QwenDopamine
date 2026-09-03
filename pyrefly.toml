@@ -85,6 +85,7 @@ bad-argument-count = false
 missing-import = false
 unbound-name = false
 not-callable = false
+invalid-inheritance = false
 unexpected-keyword = false
 missing-module-attribute = false
 no-matching-overload = false
@@ -141,9 +142,40 @@ bad-argument-count = false
 missing-import = false
 unbound-name = false
 not-callable = false
+invalid-inheritance = false
 unexpected-keyword = false
 missing-module-attribute = false
 no-matching-overload = false
+
+[[sub-config]]
+matches = "src/qwendopamine/models/gdn2/taichi/**"
+[sub-config.errors]
+invalid-annotation = false
+parse-error = false
+implicit-import = false
+bad-argument-type = false
+bad-assignment = false
+unsupported-operation = false
+bad-function-definition = false
+implicit-any-parameter = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false
+
+[[sub-config]]
+matches = "src/qwendopamine/models/reinforced/taichi.py"
+[sub-config.errors]
+invalid-annotation = false
+parse-error = false
+implicit-import = false
+bad-argument-type = false
+bad-assignment = false
+unsupported-operation = false
+bad-function-definition = false
+implicit-any-parameter = false
+implicit-any = false
+unannotated-return = false
+unannotated-parameter = false
 
 [[sub-config]]
 matches = "tests/**"
@@ -152,4 +184,3 @@ implicit-import = false
 implicit-any = true
 unannotated-return = false
 unannotated-parameter = false
-

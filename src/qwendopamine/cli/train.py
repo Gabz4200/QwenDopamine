@@ -40,14 +40,22 @@ def main(config: DictConfig) -> None:
     """
     print(OmegaConf.to_yaml(config))
     quantization_config = None
-    if _get_cfg(config, "quantization.enabled", "train.quantization.enabled", default=False):
+    if _get_cfg(
+        config, "quantization.enabled", "train.quantization.enabled", default=False
+    ):
         quantization_config = HFIntegration.make_quantization_config(
             method=_get_cfg(
-                config, "quantization.method", "train.quantization.method", default="int8"
+                config,
+                "quantization.method",
+                "train.quantization.method",
+                default="int8",
             )
         )
     base_model = _get_cfg(
-        config, "model.base_model", "train.model.base_model", default=DEFAULT_QWEN35_REPO
+        config,
+        "model.base_model",
+        "train.model.base_model",
+        default=DEFAULT_QWEN35_REPO,
     )
     device = _get_cfg(config, "train.device", "train.train.device", default="cpu")
     model = HFIntegration.load_model(

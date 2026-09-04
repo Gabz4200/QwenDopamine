@@ -127,9 +127,9 @@ class FamilyVisionModel(Qwen3VLVisionModel):
             grid_thw, self.config, kwargs=kwargs
         )
         hidden_states = self.patch_embed(hidden_states)
-        pos_embeds = (
-            self.pos_embed(interp_indices) * interp_weights[:, :, None]
-        ).sum(1)
+        pos_embeds = (self.pos_embed(interp_indices) * interp_weights[:, :, None]).sum(
+            1
+        )
         hidden_states = hidden_states + pos_embeds.to(hidden_states.dtype)
         rotary_pos_emb = self.rotary_pos_emb(position_ids)
 
@@ -157,7 +157,6 @@ class FamilyVisionModel(Qwen3VLVisionModel):
 
 class FamilyModelOutputWithPast(Qwen3VLModelOutputWithPast):
     """Empty pass-through for family-specific model output classes."""
-
 
 
 class FamilyTextModel(Qwen3NextModel):
@@ -238,9 +237,7 @@ class FamilyTextModel(Qwen3NextModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        for i, decoder_layer in enumerate(
-            self.layers[: self.config.num_hidden_layers]
-        ):
+        for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             hidden_states = decoder_layer(
                 hidden_states,
                 position_embeddings=position_embeddings,

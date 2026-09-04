@@ -19,26 +19,31 @@ from qwendopamine.models.blocks.reward import (
 def _lazy_grn() -> tuple[type, type]:
     from qwendopamine.models.reinforced.delta import GatedRewardNet as _GRN
     from qwendopamine.models.reinforced.delta import GatedRewardNetConfig as _GRNConfig
+
     return _GRN, _GRNConfig
 
 
 def _lazy_value_ema() -> type:
     from qwendopamine.models.reinforced.delta import ValueBaselineEMA as _V
+
     return _V
 
 
 def _lazy_adv_gate() -> type:
     from qwendopamine.models.reinforced.delta import AdvantageGate as _A
+
     return _A
 
 
 def _lazy_delta_core() -> type:
     from qwendopamine.models.reinforced.delta import DeltaMemoryCore as _D
+
     return _D
 
 
 def _lazy_reinforced() -> type:
     from qwendopamine.models.reinforced.delta import ReinforcedDeltaLayer as _R
+
     return _R
 
 

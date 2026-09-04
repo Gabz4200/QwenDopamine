@@ -25,7 +25,10 @@ def load_qwen35_tokenizer(model_name: str, **kwargs: Any) -> Any:
         try:
             tokenizer = AutoTokenizer.from_pretrained(candidate, **kwargs)
             if tokenizer is not None:
-                if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None) is not None:
+                if (
+                    getattr(tokenizer, "pad_token", None) is None
+                    and getattr(tokenizer, "eos_token", None) is not None
+                ):
                     tokenizer.pad_token = tokenizer.eos_token
                 return tokenizer
         except (OSError, ValueError) as exc:

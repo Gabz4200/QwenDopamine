@@ -99,9 +99,7 @@ class GDN2HFConfig(_BaseConfig):
         super().__init__(**kwargs)
 
     @classmethod
-    def from_gdn2_config(
-        cls, config: Any, **kwargs: Any
-    ) -> GDN2HFConfig:
+    def from_gdn2_config(cls, config: Any, **kwargs: Any) -> GDN2HFConfig:
         r"""Build a GDN2HFConfig instance from a GDN2Config or dict."""
         data: dict[str, Any] = {}
         if hasattr(config, "hidden_size"):

@@ -57,7 +57,7 @@ def compute_gdn2_intra_chunk_scores(
 ) -> torch.Tensor:
     r"""Build the causal intra-chunk output score matrix ``Aqk``:
 
-        (Aqk)_{r,i} = 1_{i<=r} q_r^T Diag(gamma_r / gamma_i) k_i
+    (Aqk)_{r,i} = 1_{i<=r} q_r^T Diag(gamma_r / gamma_i) k_i
     """
     q_gamma = gamma * q  # [B, H, C, K] = Diag(gamma_r) q_r
     scores = torch.matmul(q_gamma, kbar.transpose(-1, -2))  # [B, H, C, C]

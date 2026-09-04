@@ -57,7 +57,9 @@ def _norm(t: torch.Tensor | tuple[torch.Tensor, torch.Tensor] | None) -> float:
     if t is None:
         return 0.0
     if isinstance(t, tuple):
-        return float(sum(x.detach().float().abs().sum().item() for x in t if x is not None))
+        return float(
+            sum(x.detach().float().abs().sum().item() for x in t if x is not None)
+        )
     if not isinstance(t, torch.Tensor):
         return 0.0
     return float(t.detach().float().abs().sum().item())

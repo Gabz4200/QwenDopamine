@@ -33,7 +33,11 @@ class ConfigAdapter:
         return getattr(
             self._config,
             "hidden_size",
-            getattr(self._config, "d_model", getattr(self._config, "n_embd", _DEFAULT_HIDDEN_SIZE)),
+            getattr(
+                self._config,
+                "d_model",
+                getattr(self._config, "n_embd", _DEFAULT_HIDDEN_SIZE),
+            ),
         )
 
     @property
@@ -44,12 +48,18 @@ class ConfigAdapter:
     @property
     def max_position_embeddings(self) -> int:
         r"""Maximum sequence length with family-specific fallbacks."""
-        return getattr(self._config, "max_position_embeddings", _DEFAULT_MAX_POSITION_EMBEDDINGS)
+        return getattr(
+            self._config, "max_position_embeddings", _DEFAULT_MAX_POSITION_EMBEDDINGS
+        )
 
     @property
     def num_hidden_layers(self) -> int:
         r"""Number of transformer layers with family-specific fallbacks."""
-        return getattr(self._config, "num_hidden_layers", getattr(self._config, "n_layer", _DEFAULT_NUM_HIDDEN_LAYERS))
+        return getattr(
+            self._config,
+            "num_hidden_layers",
+            getattr(self._config, "n_layer", _DEFAULT_NUM_HIDDEN_LAYERS),
+        )
 
     def __getattr__(self, name: str) -> Any:
         r"""Forward unknown attributes to the wrapped config."""

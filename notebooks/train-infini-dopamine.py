@@ -22,7 +22,7 @@
 
 # %% [markdown.0]
 # # InfiniDopamine Multimodal Continued Pretraining (CPT)
-# 
+#
 # Continued pretraining pipeline for `InfiniDopamineForConditionalGeneration` initialized from `Qwen/Qwen3.5-0.8B`.
 # Streams and interleaves tokenized trajectory, reasoning, and world-model datasets with reward-conditioned forward passes.
 
@@ -44,7 +44,6 @@
 #   "Pillow" \
 #   "numpy" \
 #   "tqdm"
-
 
 
 # %% [code.2]
@@ -92,7 +91,7 @@ if torch.cuda.is_available():
 
 # %% [markdown.3]
 # ## Dataset Sources & Schema Mapping
-# 
+#
 # | Dataset | Source Format | Extracted Representation |
 # |---|---|---|
 # | `DylanRiden/smb-worldmodel-data` | Compressed `.npz` action arrays | Serialized 8-button action vectors |
@@ -150,25 +149,39 @@ USE_RSLORA: bool = True
 LORA_TARGET_MODULES = [
     "lm_head",
     "embed_tokens",
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj",
-    "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "in_proj_w",
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_a",
+    "in_proj_b",
+    "in_proj_w",
     "in_proj_gate",
     "output_proj",
     "merger.linear_fc1",
     "merger.linear_fc2",
-    "lm_head.dense", "lm_head.decoder",
+    "lm_head.dense",
+    "lm_head.decoder",
     "delta_layer.q_proj",
-    "delta_layer.memory_core.k_proj", "delta_layer.memory_core.v_proj",
-    "delta_layer.memory_core.w_proj", "delta_layer.memory_core.e_proj",
+    "delta_layer.memory_core.k_proj",
+    "delta_layer.memory_core.v_proj",
+    "delta_layer.memory_core.w_proj",
+    "delta_layer.memory_core.e_proj",
     "advantage_gate.advantage_proj",
     "baseline_tracker.alpha_proj",
     "reward_gate_proj",
     "reward_branch_norm",
     "reward_branch.output_proj",
     "reward_branch.delta_layer.q_proj",
-    "reward_branch.delta_layer.memory_core.k_proj", "reward_branch.delta_layer.memory_core.v_proj",
-    "reward_branch.delta_layer.memory_core.w_proj", "reward_branch.delta_layer.memory_core.e_proj",
+    "reward_branch.delta_layer.memory_core.k_proj",
+    "reward_branch.delta_layer.memory_core.v_proj",
+    "reward_branch.delta_layer.memory_core.w_proj",
+    "reward_branch.delta_layer.memory_core.e_proj",
     "reward_branch.delta_layer.baseline_tracker.alpha_proj",
     "reward_branch.delta_layer.advantage_gate.advantage_proj",
 ]
@@ -229,10 +242,12 @@ WIKITEXT_MAX_ROWS: int = 50_000
 # `USE_PARALLEL_REWARD` to opt in for every attention-only layer, or pass
 # an explicit `PARALLEL_REWARD_LAYERS` tuple to choose specific indices.
 
+
 # %% [code.6]
 def _as_obj(d: dict) -> Any:
     class _Cfg:
         pass
+
     c = _Cfg()
     for k, v in d.items():
         setattr(c, k, v)
@@ -306,26 +321,18 @@ def build_vision_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineVisionConfig:
     return InfiniDopamineVisionConfig(**cfg_kwargs)
 
 
-tokenizer = AutoTokenizer.from_pretrained(
-    BASE_MODEL_NAME, trust_remote_code=True
-)
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
 try:
-    processor = AutoProcessor.from_pretrained(
-        BASE_MODEL_NAME, trust_remote_code=True
-    )
+    processor = AutoProcessor.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 except (OSError, ValueError) as e:
     print(f"[WARN] AutoProcessor fallback to AutoTokenizer: {e}")
-    processor = AutoTokenizer.from_pretrained(
-        BASE_MODEL_NAME, trust_remote_code=True
-    )
+    processor = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
-qwen_cfg = AutoConfig.from_pretrained(
-    BASE_MODEL_NAME, trust_remote_code=True
-)
+qwen_cfg = AutoConfig.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
 text_cfg = build_text_config_from_qwen(qwen_cfg)
 vision_cfg = build_vision_config_from_qwen(qwen_cfg)
@@ -352,6 +359,7 @@ try:
 except (OSError, ValueError) as e:
     print(f"[WARN] AutoModelForCausalLM fallback to AutoModelForVision2Seq: {e}")
     from transformers import AutoModelForVision2Seq
+
     base_model = AutoModelForVision2Seq.from_pretrained(
         BASE_MODEL_NAME,
         torch_dtype=TORCH_DTYPE,
@@ -368,7 +376,9 @@ torch.cuda.empty_cache()
 
 print(f"Model type       : {model.config.model_type}")
 print(f"Total params     : {sum(p.numel() for p in model.parameters()):,}")
-print(f"Trainable params : {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+print(
+    f"Trainable params : {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
+)
 print(f"Missing keys     : {len(missing):,}")
 print(f"Unexpected keys  : {len(unexpected):,}")
 if missing:
@@ -379,7 +389,9 @@ if torch.cuda.is_available():
     for i in range(torch.cuda.device_count()):
         props = torch.cuda.get_device_properties(i)
         print(f"GPU {i}: {props.name} | {props.total_memory / 1024**3:.1f} GB")
-        print(f"  Allocated: {torch.cuda.memory_allocated(i) / 1024**3:.2f} GB | Reserved: {torch.cuda.memory_reserved(i) / 1024**3:.2f} GB")
+        print(
+            f"  Allocated: {torch.cuda.memory_allocated(i) / 1024**3:.2f} GB | Reserved: {torch.cuda.memory_reserved(i) / 1024**3:.2f} GB"
+        )
 
 
 # %% [markdown.7]
@@ -400,11 +412,12 @@ if USE_LORA:
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
+
 # Ensure ALL weights are trainable, including newly initialized ones
 # that are not present in the Qwen3.5 checkpoint.
 def ensure_all_trainable(model, missing_keys):
     """Set requires_grad=True for all newly initialized parameters.
-    
+
     InfiniDopamine contains GDN-2 / reward-net modules that are not
     present in Qwen3.5. Their weights are initialized from scratch
     and must be trained. LoRA only covers nn.Linear modules, so we
@@ -417,6 +430,7 @@ def ensure_all_trainable(model, missing_keys):
             param.requires_grad = True
             unfrozen += 1
     print(f"Unfrozen {unfrozen} newly initialized parameters for training.")
+
 
 # Unfreeze newly initialized weights after LoRA is applied.
 ensure_all_trainable(model, missing)
@@ -433,6 +447,7 @@ print("Model prepared for CPT.")
 
 # %% [markdown.9]
 # ## Dataset Formatting
+
 
 # %% [code.10]
 def _flatten_messages(messages: Any) -> str:
@@ -472,7 +487,9 @@ def format_sokoban(example: dict) -> dict:
     task = example.get("task", "")
     seed = example.get("seed", "")
     env_id = example.get("env_id", "")
-    header = " | ".join(x for x in [f"task={task}", f"seed={seed}", f"env_id={env_id}"] if x)
+    header = " | ".join(
+        x for x in [f"task={task}", f"seed={seed}", f"env_id={env_id}"] if x
+    )
     if header:
         text = f"[{header}]\n{text}"
     return {"text": text}
@@ -529,7 +546,7 @@ def format_chess_laion(example: dict) -> dict:
         movetext = " ".join(str(m) for m in moves)
     else:
         movetext = str(moves)
-    text = f"[Event \"?\"]\n[Result \"{result}\"]\n\n{movetext} {termination}"
+    text = f'[Event "?"]\n[Result "{result}"]\n\n{movetext} {termination}'
     return {"text": text}
 
 
@@ -611,9 +628,9 @@ def format_lichess(example: dict) -> dict:
     site = example.get("Site", "")
     date = example.get("UTCDate", "")
     text = (
-        f"[Event \"{event}\"]\n[Site \"{site}\"]\n"
-        f"[Date \"{date}\"]\n[White \"{white}\"]\n[Black \"{black}\"]\n"
-        f"[Result \"{result}\"]\n[ECO \"{eco}\"]\n[Opening \"{opening}\"]\n\n{movetext}"
+        f'[Event "{event}"]\n[Site "{site}"]\n'
+        f'[Date "{date}"]\n[White "{white}"]\n[Black "{black}"]\n'
+        f'[Result "{result}"]\n[ECO "{eco}"]\n[Opening "{opening}"]\n\n{movetext}'
     )
     return {"text": text}
 
@@ -636,7 +653,9 @@ def format_qwen3_distill(example: dict) -> dict:
     domain = example.get("domain", "")
     category = example.get("category", "")
     source = example.get("source", "")
-    meta = " | ".join(x for x in [f"domain={domain}", f"category={category}", f"source={source}"] if x)
+    meta = " | ".join(
+        x for x in [f"domain={domain}", f"category={category}", f"source={source}"] if x
+    )
     if meta:
         text = f"[{meta}]\n{text}"
     return {"text": text}
@@ -674,7 +693,11 @@ def format_r0b0tlab(example: dict) -> dict:
     task_type = example.get("task_type", "")
     source = example.get("source", "")
     domain = example.get("domain", "")
-    meta = " | ".join(x for x in [f"task_type={task_type}", f"source={source}", f"domain={domain}"] if x)
+    meta = " | ".join(
+        x
+        for x in [f"task_type={task_type}", f"source={source}", f"domain={domain}"]
+        if x
+    )
     if meta:
         text = f"[{meta}]\n{text}"
     return {"text": text}
@@ -709,24 +732,27 @@ def format_example(example: dict, dataset_name: str) -> dict:
         if example.get(col):
             return {"text": str(example[col])}
     text = " ".join(
-        str(v) for v in example.values()
+        str(v)
+        for v in example.values()
         if isinstance(v, (str, int, float)) and not str(v).startswith("_")
     )
     return {"text": text}
 
+
 # %% [markdown.11]
 # ## Streaming & Interleaving Pipeline
+
 
 # %% [code.12]
 def load_smb_dataset() -> IterableDataset:
     import zipfile
 
     from huggingface_hub import HfHubHTTPError, hf_hub_download
-    
+
     repo_id = "DylanRiden/smb-worldmodel-data"
     cache_dir = Path(SMB_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    
+
     try:
         zip_path = hf_hub_download(
             repo_id=repo_id,
@@ -736,16 +762,16 @@ def load_smb_dataset() -> IterableDataset:
         )
     except HfHubHTTPError as e:
         raise RuntimeError(f"Failed to download SMB dataset: {e}") from e
-    
+
     extract_dir = cache_dir / "smb_frames"
     if not extract_dir.exists():
         print(f"Extracting {zip_path} -> {extract_dir}")
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(extract_dir)
-    
+
     npz_files = sorted(extract_dir.rglob("*.npz"))
     print(f"Found {len(npz_files)} SMB .npz files")
-    
+
     def _gen():
         for npz_path in npz_files:
             try:
@@ -761,16 +787,16 @@ def load_smb_dataset() -> IterableDataset:
             except (OSError, KeyError, ValueError) as e:
                 print(f"[WARN] Dataset formatting error: {e}")
                 continue
-    
+
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
 def load_maze_dataset() -> IterableDataset:
     from huggingface_hub import HfHubHTTPError, snapshot_download
-    
+
     cache_dir = Path(MAZE_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    
+
     try:
         maze_dir = snapshot_download(
             repo_id="Kalso42/WorldModelForMaze",
@@ -784,7 +810,7 @@ def load_maze_dataset() -> IterableDataset:
     if not txt_files:
         txt_files = sorted(maze_path.rglob("*.txt"))
     print(f"Found {len(txt_files)} maze .txt files")
-    
+
     def _gen():
         for tf in txt_files:
             try:
@@ -795,7 +821,7 @@ def load_maze_dataset() -> IterableDataset:
             except (OSError, UnicodeDecodeError) as e:
                 print(f"[WARN] Dataset formatting error: {e}")
                 continue
-    
+
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
@@ -818,11 +844,13 @@ def _apply_subset(ds, dataset_name: str) -> IterableDataset:
     max_rows = DATASET_SUBSET_MAP.get(dataset_name)
     if max_rows is None:
         return ds
+
     def _gen():
         for count, ex in enumerate(ds):
             yield ex
             if count >= max_rows:
                 break
+
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
@@ -831,7 +859,7 @@ def build_streaming_dataset(
     seed: int = 42,
 ) -> IterableDataset:
     streams = []
-    
+
     for name in dataset_names:
         if name == "DylanRiden/smb-worldmodel-data":
             streams.append(load_smb_dataset())
@@ -842,13 +870,15 @@ def build_streaming_dataset(
             ds = load_dataset(name, config=cfg, split=split, streaming=True)
             formatter = DATASET_FORMATTERS.get(name)
             if formatter is not None:
-                ds = ds.map(lambda ex, name=name: format_example(ex, name), batched=False)
+                ds = ds.map(
+                    lambda ex, name=name: format_example(ex, name), batched=False
+                )
             ds = _apply_subset(ds, name)
             streams.append(ds)
-    
+
     if len(streams) == 1:
         return streams[0]
-    
+
     return interleave_datasets(
         streams,
         seed=seed,
@@ -869,6 +899,7 @@ def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> dict:
 
 train_dataset = peek_streaming_dataset(CPT_DATASETS)
 
+
 # %% [code.13]
 def tokenize_fn(example: dict) -> dict:
     tok = tokenizer(
@@ -886,7 +917,9 @@ def tokenize_fn(example: dict) -> dict:
 cols_to_remove = None
 if hasattr(train_dataset, "column_names"):
     cols_to_remove = [
-        c for c in train_dataset.column_names if c not in {"text", "input_ids", "attention_mask", "labels"}
+        c
+        for c in train_dataset.column_names
+        if c not in {"text", "input_ids", "attention_mask", "labels"}
     ]
 
 from transformers import DataCollatorWithPadding
@@ -918,6 +951,7 @@ print(f"Max seq length    : {MAX_SEQ_LENGTH}")
 # and fast-weight state norm. These are logged every
 # `PARALLEL_REWARD_LOG_INTERVAL` steps so the dopamine branch stays
 # observable in TensorBoard even before reward signals become meaningful.
+
 
 # %% [code.15]
 def build_reward_values(
@@ -960,7 +994,7 @@ class CPTSFTTrainer(SFTTrainer):
         """Create optimizer with lower LR for embedding layers, per Unsloth CPT guidance."""
         if hasattr(self, "optimizer") and self.optimizer is not None:
             return self.optimizer
-        
+
         embed_param_names = {"embed_tokens", "lm_head"}
         embed_params = []
         other_params = []
@@ -971,15 +1005,18 @@ class CPTSFTTrainer(SFTTrainer):
                 embed_params.append(param)
             else:
                 other_params.append(param)
-        
+
         param_groups = [
             {"params": other_params, "lr": self.args.learning_rate},
-            {"params": embed_params, "lr": self.args.learning_rate * EMBEDDING_LR_SCALE},
+            {
+                "params": embed_params,
+                "lr": self.args.learning_rate * EMBEDDING_LR_SCALE,
+            },
         ]
-        
+
         optimizer_cls = self.get_optimizer_cls()
         return optimizer_cls(param_groups, **self.optimizer_kwargs)
-    
+
     def __init__(self, *args, reward_every_n_steps: int = 1, **kwargs):
         super().__init__(*args, **kwargs)
         self.reward_every_n_steps = max(1, int(reward_every_n_steps))
@@ -1056,9 +1093,7 @@ class CPTSFTTrainer(SFTTrainer):
             print(f"[parallel_reward WARN] {warning}")
 
 
-dummy_ids = torch.tensor(
-    [tokenizer("Hello world")["input_ids"]], device="cpu"
-)
+dummy_ids = torch.tensor([tokenizer("Hello world")["input_ids"]], device="cpu")
 dummy_mask = torch.ones_like(dummy_ids)
 dummy_rewards = torch.zeros_like(dummy_ids, dtype=TORCH_DTYPE)
 with torch.no_grad():
@@ -1114,62 +1149,96 @@ trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 # ## Checkpoint Export & Dataset Summary
 
 # %% [code.19]
-print("\n" + "="*60)
+print("\n" + "=" * 60)
 print("DATASET REPORT — CPT Mixer")
-print("="*60)
+print("=" * 60)
 
 REPORT = [
-    ("DylanRiden/smb-worldmodel-data",
-     "~118k .npz frames (repo download; approximate)",
-     "Downloaded repo, extracted smb_frames.zip, serialized 8-button action vectors to text."),
-    ("Kalso42/WorldModelForMaze",
-     "code repo + maze .txt files (approximate)",
-     "Cloned repo via snapshot_download, read maze text files under data/**/*.txt as text."),
-    ("ultrastar111/sokoban_...",
-     "train split, viewer-enabled (approximate)",
-     "Flattened messages JSON string to chat text; included task/seed/env_id metadata."),
-    ("thuml/bytesized32-world-model-cot",
-     "~301k train / ~2.9k test (approximate)",
-     "Combined prompt list + reward_model JSON + extra_info JSON into text."),
-    ("PatronusAI/world_model_corpus",
-     "~239k train, config=train (approximate)",
-     "Flattened messages chat list (tool-use traces with system prompts)."),
-    ("schema-harness/arc-agi-3-schema-traces",
-     "~50 rows, test split (approximate)",
-     "Serialized ARC benchmark metadata: task ID, status, win_levels, level0–level9 scores."),
-    ("laion/strategic_game_chess",
-     "train split (approximate)",
-     "Converted SAN Moves list + Termination + Result into PGN-like text."),
-    ("ryanmarten/OpenThoughts-1k-sample",
-     "~1k samples (approximate)",
-     "Flattened system + conversations chat into text."),
-    ("Decix/ReBel-ALFWorld-SFT-Trajectories",
-     "~426 rows (approximate)",
-     "Parsed steps JSON string, serialized observation/action transcript."),
-    ("greghavens/kimi-k3-coding-and-debugging-traces",
-     "~3.9k rows (approximate)",
-     "Flattened messages chat list with reasoning_content."),
-    ("cot-leaderboard/cot-eval-traces-2.0",
-     "~3.7M rows, test split, subsetted (approximate)",
-     "Combined passage + question + options + answer + reasoning_trace into text."),
-    ("Lichess/standard-chess-games",
-     "~7.1B rows, subsetted (approximate)",
-     "Converted movetext PGN + metadata (Event, White, Black, ECO, Opening) to text."),
-    ("lockon/ToolACE",
-     "train split (approximate)",
-     "Flattened system + conversations chat into text."),
-    ("faunix/Qwen3.8-27B-Distillation-40K",
-     "~40k rows (approximate)",
-     "Flattened messages chat list (distilled reasoning traces) + domain/category metadata."),
-    ("Glint-Research/Fable-5-traces",
-     "pi_agent config, train split (approximate)",
-     "Flattened messages + prompt + trace into text."),
-    ("Salesforce/wikitext",
-     "wikitext-103-raw-v1: ~36k train, subsetted (approximate)",
-     "Used single text column; empty rows replaced with [EMPTY_WIKITEXT_ROW]."),
-    ("r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
-     "~22.8M rows total, subsetted (approximate)",
-     "Parsed messages_json string, flattened chat into text + task_type/source/domain metadata."),
+    (
+        "DylanRiden/smb-worldmodel-data",
+        "~118k .npz frames (repo download; approximate)",
+        "Downloaded repo, extracted smb_frames.zip, serialized 8-button action vectors to text.",
+    ),
+    (
+        "Kalso42/WorldModelForMaze",
+        "code repo + maze .txt files (approximate)",
+        "Cloned repo via snapshot_download, read maze text files under data/**/*.txt as text.",
+    ),
+    (
+        "ultrastar111/sokoban_...",
+        "train split, viewer-enabled (approximate)",
+        "Flattened messages JSON string to chat text; included task/seed/env_id metadata.",
+    ),
+    (
+        "thuml/bytesized32-world-model-cot",
+        "~301k train / ~2.9k test (approximate)",
+        "Combined prompt list + reward_model JSON + extra_info JSON into text.",
+    ),
+    (
+        "PatronusAI/world_model_corpus",
+        "~239k train, config=train (approximate)",
+        "Flattened messages chat list (tool-use traces with system prompts).",
+    ),
+    (
+        "schema-harness/arc-agi-3-schema-traces",
+        "~50 rows, test split (approximate)",
+        "Serialized ARC benchmark metadata: task ID, status, win_levels, level0–level9 scores.",
+    ),
+    (
+        "laion/strategic_game_chess",
+        "train split (approximate)",
+        "Converted SAN Moves list + Termination + Result into PGN-like text.",
+    ),
+    (
+        "ryanmarten/OpenThoughts-1k-sample",
+        "~1k samples (approximate)",
+        "Flattened system + conversations chat into text.",
+    ),
+    (
+        "Decix/ReBel-ALFWorld-SFT-Trajectories",
+        "~426 rows (approximate)",
+        "Parsed steps JSON string, serialized observation/action transcript.",
+    ),
+    (
+        "greghavens/kimi-k3-coding-and-debugging-traces",
+        "~3.9k rows (approximate)",
+        "Flattened messages chat list with reasoning_content.",
+    ),
+    (
+        "cot-leaderboard/cot-eval-traces-2.0",
+        "~3.7M rows, test split, subsetted (approximate)",
+        "Combined passage + question + options + answer + reasoning_trace into text.",
+    ),
+    (
+        "Lichess/standard-chess-games",
+        "~7.1B rows, subsetted (approximate)",
+        "Converted movetext PGN + metadata (Event, White, Black, ECO, Opening) to text.",
+    ),
+    (
+        "lockon/ToolACE",
+        "train split (approximate)",
+        "Flattened system + conversations chat into text.",
+    ),
+    (
+        "faunix/Qwen3.8-27B-Distillation-40K",
+        "~40k rows (approximate)",
+        "Flattened messages chat list (distilled reasoning traces) + domain/category metadata.",
+    ),
+    (
+        "Glint-Research/Fable-5-traces",
+        "pi_agent config, train split (approximate)",
+        "Flattened messages + prompt + trace into text.",
+    ),
+    (
+        "Salesforce/wikitext",
+        "wikitext-103-raw-v1: ~36k train, subsetted (approximate)",
+        "Used single text column; empty rows replaced with [EMPTY_WIKITEXT_ROW].",
+    ),
+    (
+        "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
+        "~22.8M rows total, subsetted (approximate)",
+        "Parsed messages_json string, flattened chat into text + task_type/source/domain metadata.",
+    ),
 ]
 
 for name, size, usage in REPORT:
@@ -1177,6 +1246,6 @@ for name, size, usage in REPORT:
     print(f"  Size  : {size}")
     print(f"  Usage : {usage}")
 
-print("\n" + "="*60)
+print("\n" + "=" * 60)
 print(f"Total datasets in mixer: {len(REPORT)}")
-print("="*60)
+print("=" * 60)

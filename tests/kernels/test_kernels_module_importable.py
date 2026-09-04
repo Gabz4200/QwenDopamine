@@ -22,9 +22,7 @@ def test_kernels_module_importable():
     assert callable(require), "require should be callable"
     assert callable(chunk_taichi_gdn2), "chunk_taichi_gdn2 should be callable"
     assert callable(recurrent_taichi_gdn2), "recurrent_taichi_gdn2 should be callable"
-    assert callable(delta_core_step_out), (
-        "delta_core_step_out should be callable"
-    )
+    assert callable(delta_core_step_out), "delta_core_step_out should be callable"
 
     # Verify is_available returns a bool
     assert isinstance(_is_avail(), bool), "is_available() should return bool"

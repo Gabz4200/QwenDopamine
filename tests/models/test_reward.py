@@ -95,7 +95,9 @@ def test_when_learnable_fourier_features_forward_with_include_input_true_then_ou
 def test_when_learnable_fourier_features_forward_with_include_input_false_then_outputs_expected_shape() -> (
     None
 ):
-    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1, include_input=False)
+    lff = LearnableFourierFeatures(
+        pos_dim=4, f_dim=16, h_dim=32, d_dim=64, g_dim=1, include_input=False
+    )
     pos = torch.randn(2, 5, 1, 4)
     out = lff(pos)
     assert out.shape == (2, 5, 64)
@@ -134,7 +136,9 @@ def test_when_reward_statistics_extractor_forward_then_outputs_six_stats() -> No
     assert not torch.isnan(stats).any()
 
 
-def test_when_reward_statistics_extractor_forward_with_2d_rewards_then_processes_correctly() -> None:
+def test_when_reward_statistics_extractor_forward_with_2d_rewards_then_processes_correctly() -> (
+    None
+):
     extractor = RewardStatisticsExtractor()
     rewards = torch.tensor([[0.5, 0.2, 0.9, 0.1, 0.4], [0.3, 0.7, 0.1, 0.8, 0.5]])
     stats = extractor(rewards, batch_size=2, seq_len=5)
@@ -162,7 +166,9 @@ def test_when_reward_statistics_extractor_forward_with_constant_rewards_then_pro
     assert not torch.isnan(stats).any()
 
 
-def test_when_reward_statistics_extractor_device_or_dtype_mismatched_then_auto_aligns() -> None:
+def test_when_reward_statistics_extractor_device_or_dtype_mismatched_then_auto_aligns() -> (
+    None
+):
     extractor = RewardStatisticsExtractor()
     rewards = torch.randn(2, 3, 2, dtype=torch.float32)
     extractor.to(dtype=torch.bfloat16)
@@ -192,7 +198,9 @@ def test_when_reward_fourier_encoder_forward_then_outputs_expected_shape() -> No
     assert not torch.isnan(cond).any()
 
 
-def test_when_reward_fourier_encoder_forward_with_custom_d_dim_then_outputs_correct_shape() -> None:
+def test_when_reward_fourier_encoder_forward_with_custom_d_dim_then_outputs_correct_shape() -> (
+    None
+):
     encoder = RewardFourierEncoder(f_dim=32, h_dim=64, d_dim=128)
     stats = torch.randn(2, 5, 6)
     cond = encoder(stats)
@@ -269,7 +277,9 @@ def test_when_reward_film_device_or_dtype_mismatched_then_auto_aligns() -> None:
     assert not torch.isnan(output).any()
 
 
-def test_when_reward_film_backward_called_then_gradients_flow_to_inputs_and_params() -> None:
+def test_when_reward_film_backward_called_then_gradients_flow_to_inputs_and_params() -> (
+    None
+):
     film = RewardFiLM(dim=16, hidden_dim=16)
     x = torch.randn(2, 3, 16, requires_grad=True)
     cond = torch.randn(2, 3, 16, requires_grad=True)
@@ -306,7 +316,9 @@ def test_when_chained_reward_components_then_produces_expected_output() -> None:
     assert not torch.isnan(out).any()
 
 
-def test_when_chained_reward_components_with_2d_rewards_then_processes_correctly() -> None:
+def test_when_chained_reward_components_with_2d_rewards_then_processes_correctly() -> (
+    None
+):
     extractor = RewardStatisticsExtractor()
     fourier = RewardFourierEncoder(d_dim=32)
     film = RewardFiLM(dim=32, hidden_dim=32)
@@ -322,7 +334,9 @@ def test_when_chained_reward_components_with_2d_rewards_then_processes_correctly
     assert not torch.isnan(output).any()
 
 
-def test_when_chained_reward_components_with_3d_multi_rewards_then_computes_correctly() -> None:
+def test_when_chained_reward_components_with_3d_multi_rewards_then_computes_correctly() -> (
+    None
+):
     extractor = RewardStatisticsExtractor()
     fourier = RewardFourierEncoder(d_dim=32)
     film = RewardFiLM(dim=32, hidden_dim=32)
@@ -338,7 +352,9 @@ def test_when_chained_reward_components_with_3d_multi_rewards_then_computes_corr
     assert not torch.isnan(output).any()
 
 
-def test_when_chained_reward_components_with_constant_rewards_then_produces_valid_output() -> None:
+def test_when_chained_reward_components_with_constant_rewards_then_produces_valid_output() -> (
+    None
+):
     extractor = RewardStatisticsExtractor()
     fourier = RewardFourierEncoder(d_dim=16)
     film = RewardFiLM(dim=16, hidden_dim=16)
@@ -354,7 +370,9 @@ def test_when_chained_reward_components_with_constant_rewards_then_produces_vali
     assert not torch.isnan(output).any()
 
 
-def test_when_chained_reward_components_device_or_dtype_mismatched_then_auto_aligns() -> None:
+def test_when_chained_reward_components_device_or_dtype_mismatched_then_auto_aligns() -> (
+    None
+):
     extractor = RewardStatisticsExtractor()
     fourier = RewardFourierEncoder(d_dim=16)
     film = RewardFiLM(dim=16, hidden_dim=16)
@@ -526,9 +544,7 @@ def test_when_learnable_fourier_features_invalid_dropout_then_raises_error() -> 
 
 def test_when_learnable_fourier_features_dropout_in_train_vs_eval_mode() -> None:
     torch.manual_seed(42)
-    lff = LearnableFourierFeatures(
-        pos_dim=4, f_dim=16, h_dim=32, d_dim=64, dropout=0.5
-    )
+    lff = LearnableFourierFeatures(pos_dim=4, f_dim=16, h_dim=32, d_dim=64, dropout=0.5)
     pos = torch.randn(2, 5, 1, 4)
 
     lff.train()
@@ -542,7 +558,9 @@ def test_when_learnable_fourier_features_dropout_in_train_vs_eval_mode() -> None
     assert torch.allclose(eval1, eval2)
 
 
-def test_when_token_wise_film_dropout_in_train_mode_then_regularizes_conditioning() -> None:
+def test_when_token_wise_film_dropout_in_train_mode_then_regularizes_conditioning() -> (
+    None
+):
     torch.manual_seed(42)
     film = TokenWiseFiLM(dim=16, dropout=0.5, identity_init=False)
     x = torch.randn(2, 5, 16)
@@ -559,7 +577,9 @@ def test_when_token_wise_film_dropout_in_train_mode_then_regularizes_conditionin
     assert torch.allclose(eval1, eval2)
 
 
-def test_when_reward_statistics_extractor_unnormalized_with_float16_then_preserves_dtype() -> None:
+def test_when_reward_statistics_extractor_unnormalized_with_float16_then_preserves_dtype() -> (
+    None
+):
     r"""Verify that RewardStatisticsExtractor preserves float16/bfloat16 dtype even when normalize=False."""
     extractor = RewardStatisticsExtractor(normalize=False)
     rewards_fp16 = torch.randn(2, 4, 8, dtype=torch.float16)
@@ -571,7 +591,9 @@ def test_when_reward_statistics_extractor_unnormalized_with_float16_then_preserv
     assert not torch.isnan(stats).any()
 
 
-def test_when_gated_reward_net_step_by_step_with_conv_cache_then_preserves_temporal_state() -> None:
+def test_when_gated_reward_net_step_by_step_with_conv_cache_then_preserves_temporal_state() -> (
+    None
+):
     r"""Verify that GatedRewardNet step-by-step decoding tracks conv state across sequence steps."""
     from qwendopamine.models.reinforced import (
         GatedRewardNet,
@@ -661,7 +683,9 @@ def test_when_gated_reward_net_value_baseline_persists_across_steps() -> None:
     assert past_cache["value_baseline"].abs().sum() > 0.0
 
 
-def test_when_gated_reward_net_cache_is_none_then_value_baseline_initialized_to_zeros() -> None:
+def test_when_gated_reward_net_cache_is_none_then_value_baseline_initialized_to_zeros() -> (
+    None
+):
     r"""Without a cached baseline the layer should start from a zero vector so
     the first step sees a fresh EMA tracker.
     """
@@ -688,7 +712,9 @@ def test_when_gated_reward_net_cache_is_none_then_value_baseline_initialized_to_
     assert running_std is None
 
 
-def test_when_gated_reward_net_uses_low_rank_memory_then_step_by_step_matches_full() -> None:
+def test_when_gated_reward_net_uses_low_rank_memory_then_step_by_step_matches_full() -> (
+    None
+):
     r"""Low-rank memory must still satisfy the recurrent-invariant test
     (full forward = concatenation of step-by-step forward outputs).
     """
@@ -947,9 +973,7 @@ def test_when_normalize_does_not_clip_outliers() -> None:
     std = torch.ones(1, 1)
     # A value that would have been clipped at ±5 (had we kept a clip).
     r = torch.tensor([[[1000.0]]])
-    out, _, _ = normalize_reward_for_advantage(
-        r, mean, std, alpha=0.0, training=True
-    )
+    out, _, _ = normalize_reward_for_advantage(r, mean, std, alpha=0.0, training=True)
     # No clip: the output equals (r - 0) / (1 + eps) ≈ 1000.
     assert out.abs().item() > 100.0
 
@@ -1054,3 +1078,32 @@ def test_when_gated_reward_net_normalize_disabled_then_no_running_stats_in_cache
     assert out.shape == (1, 4, 16)
     assert "running_mean" not in new_cache
     assert "running_std" not in new_cache
+
+
+def test_when_reward_statistics_extractor_normalize_2d_LK_shape_then_returns_broadcasted() -> (
+    None
+):
+    import torch
+
+    from qwendopamine.models.blocks.reward.extractors import RewardStatisticsExtractor
+
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.randn(2, 4)
+    normalized = extractor._normalize_2d(rewards, batch_size=2, seq_len=4)
+    assert isinstance(normalized, torch.Tensor)
+
+
+def test_when_reward_statistics_extractor_normalize_2d_unrecognised_shape_then_raises() -> (
+    None
+):
+    import torch
+
+    from qwendopamine.models.blocks.reward.extractors import RewardStatisticsExtractor
+
+    extractor = RewardStatisticsExtractor()
+    rewards = torch.randn(7, 11)
+    try:
+        extractor._normalize_2d(rewards, batch_size=2, seq_len=4)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass

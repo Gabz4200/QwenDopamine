@@ -114,9 +114,7 @@ def test_delta_core_step_python_op_backward_produces_finite_grads() -> None:
     write = torch.rand(B, D, requires_grad=True)
     erase = torch.rand(B, D, requires_grad=True)
     next_state = torch.empty_like(state)
-    out = delta_core_step_out(
-        state, k, v, omega_w, omega_e, write, erase, next_state
-    )
+    out = delta_core_step_out(state, k, v, omega_w, omega_e, write, erase, next_state)
     out.sum().backward()
     for name, t in [
         ("state", state),

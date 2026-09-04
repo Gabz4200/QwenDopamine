@@ -82,3 +82,23 @@ def test_when_move_to_device_with_non_tensor_then_passes_through() -> None:
     device = torch.device("cpu")
     result = move_to_device(batch, device)
     assert result == batch
+
+
+def test_when_move_to_device_dict_has_none_value_then_none_preserved() -> None:
+    import torch
+
+    from qwendopamine.utils import move_to_device
+
+    d = {"a": torch.tensor([1.0]), "b": None}
+    result = move_to_device(d, torch.device("cpu"))
+    assert result["b"] is None
+
+
+def test_when_move_to_device_list_has_none_then_none_preserved() -> None:
+    import torch
+
+    from qwendopamine.utils import move_to_device
+
+    l = [torch.tensor([1.0]), None]
+    result = move_to_device(l, torch.device("cpu"))
+    assert result[1] is None

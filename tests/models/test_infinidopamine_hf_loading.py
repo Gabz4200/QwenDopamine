@@ -37,9 +37,7 @@ def _get_qwen35_08b_config_and_state_dict() -> tuple[Any, dict[str, torch.Tensor
         RuntimeError,
         ValueError,
     ) as exc:  # pragma: no cover
-        pytest.skip(
-            f"Skipping remote Qwen3.5-0.8B test due to network/HF issue: {exc}"
-        )
+        pytest.skip(f"Skipping remote Qwen3.5-0.8B test due to network/HF issue: {exc}")
 
     with torch.device("meta"):
         ref_model = Qwen3_5ForConditionalGeneration(hf_config)
@@ -49,7 +47,9 @@ def _get_qwen35_08b_config_and_state_dict() -> tuple[Any, dict[str, torch.Tensor
 
 
 @pytest.mark.slow
-def test_when_infinidopamine_full_model_loads_qwen35_08b_weights_then_no_weights_left_behind() -> None:
+def test_when_infinidopamine_full_model_loads_qwen35_08b_weights_then_no_weights_left_behind() -> (
+    None
+):
     r"""Ensure InfiniDopamineForConditionalGeneration consumes all weights from Qwen3.5-0.8B."""
     hf_config, ref_state_dict = _get_qwen35_08b_config_and_state_dict()
 
@@ -70,7 +70,9 @@ def test_when_infinidopamine_full_model_loads_qwen35_08b_weights_then_no_weights
 
 
 @pytest.mark.slow
-def test_when_infinidopamine_causal_lm_loads_qwen35_08b_weights_then_all_lm_weights_consumed() -> None:
+def test_when_infinidopamine_causal_lm_loads_qwen35_08b_weights_then_all_lm_weights_consumed() -> (
+    None
+):
     r"""Ensure InfiniDopamineForCausalLM consumes all language model weights from Qwen3.5-0.8B."""
     hf_config, ref_state_dict = _get_qwen35_08b_config_and_state_dict()
 
@@ -90,7 +92,9 @@ def test_when_infinidopamine_causal_lm_loads_qwen35_08b_weights_then_all_lm_weig
 
 
 @pytest.mark.slow
-def test_when_infinidopamine_text_model_loads_qwen35_08b_weights_then_all_layers_matched() -> None:
+def test_when_infinidopamine_text_model_loads_qwen35_08b_weights_then_all_layers_matched() -> (
+    None
+):
     r"""Ensure InfiniDopamineTextModel consumes all 24 layers and embeddings from Qwen3.5-0.8B."""
     hf_config, ref_state_dict = _get_qwen35_08b_config_and_state_dict()
 
@@ -109,7 +113,9 @@ def test_when_infinidopamine_text_model_loads_qwen35_08b_weights_then_all_layers
 
 
 @pytest.mark.slow
-def test_when_infinidopamine_loaded_with_qwen35_weights_then_extra_infinidopamine_weights_initialized() -> None:
+def test_when_infinidopamine_loaded_with_qwen35_weights_then_extra_infinidopamine_weights_initialized() -> (
+    None
+):
     r"""Ensure extra InfiniDopamine weights (betas, write gate, reward gate) are present and valid."""
     hf_config, ref_state_dict = _get_qwen35_08b_config_and_state_dict()
 
@@ -141,7 +147,9 @@ def test_when_infinidopamine_loaded_with_qwen35_weights_then_extra_infinidopamin
 
 
 @pytest.mark.slow
-def test_when_infinidopamine_forward_executed_after_qwen35_08b_loading_then_produces_valid_logits() -> None:
+def test_when_infinidopamine_forward_executed_after_qwen35_08b_loading_then_produces_valid_logits() -> (
+    None
+):
     r"""Test a mini forward pass on CPU with scaled down dimensions to verify post-load execution."""
     hf_config, _ = _get_qwen35_08b_config_and_state_dict()
 

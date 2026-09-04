@@ -83,7 +83,9 @@ def test_when_map_gguf_name_to_hf_called_then_maps_expected_keys() -> None:
     assert _map_gguf_name_to_hf("unknown.tensor.name") is None
 
 
-def test_when_composite_multimodal_config_passed_to_causal_lm_then_unwraps_text_config() -> None:
+def test_when_composite_multimodal_config_passed_to_causal_lm_then_unwraps_text_config() -> (
+    None
+):
     r"""Ensure Qwen3_5ForCausalLM and InfiniDopamineForCausalLM unwrap text_config if given a composite config."""
     from types import SimpleNamespace
 
@@ -154,7 +156,9 @@ def test_when_load_qwen35_tokenizer_all_candidates_fail_then_raises_runtime_erro
         load_qwen35_tokenizer("nonexistent/invalid-model-name")
 
 
-def test_when_register_infinidopamine_hf_called_then_autoconfig_and_automodel_resolve() -> None:
+def test_when_register_infinidopamine_hf_called_then_autoconfig_and_automodel_resolve() -> (
+    None
+):
     from transformers import AutoModelForCausalLM
 
     from qwendopamine.models.infinidopamine import (
@@ -185,7 +189,9 @@ def test_when_register_infinidopamine_hf_called_then_autoconfig_and_automodel_re
     assert isinstance(model, InfiniDopamineForCausalLM)
 
 
-def test_when_build_infinidopamine_helpers_called_then_instantiates_working_causal_lm() -> None:
+def test_when_build_infinidopamine_helpers_called_then_instantiates_working_causal_lm() -> (
+    None
+):
     from qwendopamine.models.infinidopamine import (
         InfiniDopamineForCausalLM,
         InfiniDopamineTextConfig,
@@ -215,7 +221,9 @@ def test_when_build_infinidopamine_helpers_called_then_instantiates_working_caus
     assert outputs.logits.shape == (2, 8, 500)
 
 
-def test_when_prepare_model_for_trl_training_called_then_configures_gradient_checkpointing_and_cache() -> None:
+def test_when_prepare_model_for_trl_training_called_then_configures_gradient_checkpointing_and_cache() -> (
+    None
+):
     from qwendopamine.models.infinidopamine import (
         InfiniDopamineForCausalLM,
         InfiniDopamineTextConfig,

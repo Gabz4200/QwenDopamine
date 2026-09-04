@@ -37,7 +37,9 @@ def test_when_rmsnorm_forward_with_large_fp16_inputs_then_does_not_overflow() ->
     assert output.dtype == torch.float16
     assert not torch.isnan(output).any()
     assert not torch.isinf(output).any()
-    assert torch.allclose(output, torch.ones_like(output, dtype=torch.float16), atol=1e-2)
+    assert torch.allclose(
+        output, torch.ones_like(output, dtype=torch.float16), atol=1e-2
+    )
 
 
 def test_when_rmsnorm_gated_with_gate_then_applies_silu_gating() -> None:

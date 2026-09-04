@@ -69,9 +69,7 @@ def test_delta_core_step_backward_matches_reference(B, D):
     (state_ref, k_ref, v_ref, ow_ref, oe_ref, W_ref, E_ref) = _make_inputs(B, D)
 
     ns_ta = torch.empty_like(state_ta)
-    out_ta = delta_core_step_out(
-        state_ta, k_ta, v_ta, ow_ta, oe_ta, W_ta, E_ta, ns_ta
-    )
+    out_ta = delta_core_step_out(state_ta, k_ta, v_ta, ow_ta, oe_ta, W_ta, E_ta, ns_ta)
     out_ref = _ref_step(state_ref, k_ref, v_ref, ow_ref, oe_ref, W_ref, E_ref)
 
     torch.testing.assert_close(out_ta, out_ref, atol=1e-5, rtol=1e-5)

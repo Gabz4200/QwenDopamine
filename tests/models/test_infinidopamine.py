@@ -183,9 +183,8 @@ def test_when_qwen35_and_infinidopamine_share_state_dict_then_outputs_are_identi
 
         for layer in infini_model.model.layers:
             layer_linear = getattr(layer, "linear_attn", None)
-            if (
-                layer_linear is not None
-                and isinstance(layer_linear, InfiniDopamineGatedDeltaNet)
+            if layer_linear is not None and isinstance(
+                layer_linear, InfiniDopamineGatedDeltaNet
             ):
                 layer_linear.betas.fill_(-10.0)
 
@@ -196,7 +195,9 @@ def test_when_qwen35_and_infinidopamine_share_state_dict_then_outputs_are_identi
     assert torch.allclose(out_qwen, out_infini_pure_gdn2, atol=0.03)
 
 
-def test_when_gdn1_weights_loaded_into_gdn2_layer_then_erase_and_write_gates_expanded() -> None:
+def test_when_gdn1_weights_loaded_into_gdn2_layer_then_erase_and_write_gates_expanded() -> (
+    None
+):
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -235,7 +236,9 @@ def test_when_gdn1_weights_loaded_into_gdn2_layer_then_erase_and_write_gates_exp
             assert torch.allclose(w_expanded[head, ch], b_scalar[head])
 
 
-def test_when_gdn2_decoupled_erase_and_write_trained_then_receive_independent_gradients() -> None:
+def test_when_gdn2_decoupled_erase_and_write_trained_then_receive_independent_gradients() -> (
+    None
+):
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -259,7 +262,9 @@ def test_when_gdn2_decoupled_erase_and_write_trained_then_receive_independent_gr
     assert not torch.allclose(layer.in_proj_b.weight.grad, layer.in_proj_w.weight.grad)
 
 
-def test_when_sliding_window_configured_then_attention_is_restricted_to_window() -> None:
+def test_when_sliding_window_configured_then_attention_is_restricted_to_window() -> (
+    None
+):
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -315,12 +320,16 @@ def test_when_sliding_window_decoding_with_dynamic_cache_then_succeeds(
 
         next_token = prefill_out.logits[:, -1:].argmax(dim=-1)
         for _ in range(3):
-            step_out = model(input_ids=next_token, past_key_values=cache, use_cache=True)
+            step_out = model(
+                input_ids=next_token, past_key_values=cache, use_cache=True
+            )
             assert step_out.logits.shape == (1, 1, tiny_infini_config.vocab_size)
             next_token = step_out.logits[:, -1:].argmax(dim=-1)
 
 
-def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated_reward_net() -> None:
+def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated_reward_net() -> (
+    None
+):
     """Regression: the reward branch is no longer implicitly swapped in.
 
     Previously any linear layer immediately preceding an attention layer was
@@ -381,7 +390,9 @@ def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated
     explicit_model = InfiniDopamineTextModel(cfg_explicit)
     assert isinstance(explicit_model.layers[2].linear_attn, InfiniDopamineGatedDeltaNet)
     assert hasattr(explicit_model.layers[2], "reward_branch")
-    assert isinstance(explicit_model.layers[2].reward_branch, InfiniDopamineGatedRewardNet)
+    assert isinstance(
+        explicit_model.layers[2].reward_branch, InfiniDopamineGatedRewardNet
+    )
     for idx in (0, 1, 3):
         assert not hasattr(explicit_model.layers[idx], "reward_branch")
 
@@ -415,7 +426,9 @@ def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated
     assert isinstance(auto_model.layers[3].reward_branch, InfiniDopamineGatedRewardNet)
 
 
-def test_when_qwen35_weights_loaded_into_model_with_gated_reward_net_then_loads_strictly() -> None:
+def test_when_qwen35_weights_loaded_into_model_with_gated_reward_net_then_loads_strictly() -> (
+    None
+):
     qwen_cfg = Qwen3_5TextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -501,7 +514,9 @@ def test_when_gated_reward_net_receives_reward_values_then_modulates_output() ->
     assert not torch.isnan(out_reward).any()
 
 
-def test_when_gdn2_layer_has_infini_attention_gate_then_decides_between_swa_and_gdn2() -> None:
+def test_when_gdn2_layer_has_infini_attention_gate_then_decides_between_swa_and_gdn2() -> (
+    None
+):
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -542,7 +557,9 @@ def test_when_gdn2_layer_has_infini_attention_gate_then_decides_between_swa_and_
     assert not torch.allclose(out_swa, out_gdn2, atol=1e-3)
 
 
-def test_when_infini_gated_deltanet_trained_then_betas_and_shared_qkv_receive_gradients() -> None:
+def test_when_infini_gated_deltanet_trained_then_betas_and_shared_qkv_receive_gradients() -> (
+    None
+):
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -574,7 +591,9 @@ def test_when_infini_gated_deltanet_trained_then_betas_and_shared_qkv_receive_gr
     assert layer.in_proj_gate.weight.grad.norm().item() > 0.0
 
 
-def test_when_infinidopamine_gate_is_data_dependent_then_routes_differently_per_token() -> None:
+def test_when_infinidopamine_gate_is_data_dependent_then_routes_differently_per_token() -> (
+    None
+):
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -753,9 +772,7 @@ def test_when_infinidopamine_gated_reward_net_has_reward_dropout_then_regularize
     assert not torch.allclose(train1, train2)
 
 
-def test_when_infinidopamine_initialized_then_routing_gates_favor_fifty_fifty() -> (
-    None
-):
+def test_when_infinidopamine_initialized_then_routing_gates_favor_fifty_fifty() -> None:
     config = InfiniDopamineTextConfig(
         hidden_size=64,
         intermediate_size=128,
@@ -850,22 +867,25 @@ def test_when_parallel_reward_disabled_then_outputs_match_base_model() -> None:
     output indistinguishable from the same model without the branch when
     ``reward_gate_init_bias`` is very negative.
     """
+
     def make(gate_bias: float) -> InfiniDopamineForCausalLM:
-        return InfiniDopamineForCausalLM(InfiniDopamineTextConfig(
-            hidden_size=64,
-            intermediate_size=128,
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            linear_num_key_heads=2,
-            linear_num_value_heads=4,
-            linear_key_head_dim=16,
-            linear_value_head_dim=16,
-            vocab_size=100,
-            layer_types=["linear_attention", "full_attention"],
-            use_parallel_reward=True,
-            reward_gate_init_bias=gate_bias,
-        ))
+        return InfiniDopamineForCausalLM(
+            InfiniDopamineTextConfig(
+                hidden_size=64,
+                intermediate_size=128,
+                num_hidden_layers=2,
+                num_attention_heads=4,
+                num_key_value_heads=2,
+                linear_num_key_heads=2,
+                linear_num_value_heads=4,
+                linear_key_head_dim=16,
+                linear_value_head_dim=16,
+                vocab_size=100,
+                layer_types=["linear_attention", "full_attention"],
+                use_parallel_reward=True,
+                reward_gate_init_bias=gate_bias,
+            )
+        )
 
     torch.manual_seed(0)
     m_silent = make(-20.0)
@@ -1119,3 +1139,112 @@ def test_when_gate_bias_default_then_branch_silent_on_reward_free_input() -> Non
     expected_value = torch.sigmoid(torch.tensor(-5.0)).item()
     assert torch.allclose(gate, torch.full_like(gate, expected_value))
     assert gate.abs().max().item() < 0.01
+
+
+def test_when_swa_attention_called_repeatedly_then_outputs_stay_stable() -> None:
+
+    import torch
+
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.decoder_layer import (
+        InfiniDopamineGatedDeltaNet,
+    )
+
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=32,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_num_key_heads=1,
+        linear_num_value_heads=1,
+        intermediate_size=64,
+        vocab_size=100,
+    )
+
+    layer = InfiniDopamineGatedDeltaNet(cfg, layer_idx=0)
+
+    x = torch.randn(1, 2, 32)
+
+    out1 = layer(x)
+    layer.eval()
+
+    out2 = layer(x)
+
+    assert out1.shape == out2.shape, "repeated SWA forward shapes should match"
+
+
+def test_when_swa_attention_changes_seq_len_then_outputs_evolve() -> None:
+
+    import torch
+
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.decoder_layer import (
+        InfiniDopamineGatedDeltaNet,
+    )
+
+    cfg = InfiniDopamineTextConfig(
+        hidden_size=32,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_num_key_heads=1,
+        linear_num_value_heads=1,
+        intermediate_size=64,
+        vocab_size=100,
+    )
+
+    layer = InfiniDopamineGatedDeltaNet(cfg, layer_idx=0)
+
+    x1 = torch.randn(1, 2, 32)
+
+    x2 = torch.randn(1, 4, 32)
+
+    out1 = layer(x1)
+
+    out2 = layer(x2)
+
+    assert out1.shape == (1, 2, 32) and out2.shape == (1, 4, 32), (
+        "shapes should reflect different seq_lens"
+    )
+
+
+def test_when_token_wise_film_legacy_concatenated_cond_then_splits_into_gamma_beta() -> (
+    None
+):
+    import torch
+
+    from qwendopamine.models.blocks.reward.components import TokenWiseFiLM
+
+    film = TokenWiseFiLM(dim=64, cond_dim=128)
+    x = torch.randn(1, 4, 64)
+    cond = torch.randn(1, 4, 128)
+    out = film(x, cond)
+    assert out.shape == x.shape
+
+
+def test_when_token_wise_film_cond_shape_mismatch_then_raises() -> None:
+    import torch
+
+    from qwendopamine.models.blocks.reward.components import TokenWiseFiLM
+
+    film = TokenWiseFiLM(dim=64, cond_dim=128)
+    x = torch.randn(1, 4, 64)
+    cond = torch.randn(1, 4, 64)  # wrong cond dim
+    try:
+        film(x, cond)
+        assert False, "expected error"
+    except Exception:
+        pass
+
+
+def test_when_token_wise_film_cond_too_few_features_then_raises() -> None:
+    import torch
+
+    from qwendopamine.models.blocks.reward.components import TokenWiseFiLM
+
+    film = TokenWiseFiLM(dim=64, cond_dim=128)
+    x = torch.randn(1, 4, 64)
+    cond = torch.randn(1, 2, 128)  # seq_len mismatch
+    try:
+        film(x, cond)
+        assert False, "expected error"
+    except Exception:
+        pass

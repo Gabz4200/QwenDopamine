@@ -40,6 +40,7 @@ from qwendopamine.models.gdn2.recurrence.recurrent import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_gdn2_layer(hidden_size: int = 64, num_heads: int = 2, head_dim: int = 32):
     return GatedDeltaNet2(
         hidden_size=hidden_size,
@@ -229,8 +230,14 @@ def test_when_gated_delta_2_step_then_matches_recurrent_single_step() -> None:
     w_seq = w_t.unsqueeze(1)
     g_seq = torch.log(a_t).unsqueeze(1)
     out_seq, S_next_seq = torch_recurrent_gdn2(
-        q=q_seq, k=k_seq, v=v_seq, g=g_seq, b=b_seq, w=w_seq,
-        initial_state=S, output_final_state=True,
+        q=q_seq,
+        k=k_seq,
+        v=v_seq,
+        g=g_seq,
+        b=b_seq,
+        w=w_seq,
+        initial_state=S,
+        output_final_state=True,
     )
 
     assert S_next_seq is not None
@@ -255,12 +262,25 @@ def test_when_torch_chunk_gdn2_then_matches_recurrent() -> None:
     init = torch.randn(b, h, d_k, d_v) * 0.1
 
     out_rec, state_rec = torch_recurrent_gdn2(
-        q=q, k=k, v=v, g=g, b=b_gate, w=w_gate,
-        initial_state=init, output_final_state=True,
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        b=b_gate,
+        w=w_gate,
+        initial_state=init,
+        output_final_state=True,
     )
     out_chk, state_chk = torch_chunk_gdn2(
-        q=q, k=k, v=v, g=g, b=b_gate, w=w_gate,
-        initial_state=init, output_final_state=True, chunk_size=8,
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        b=b_gate,
+        w=w_gate,
+        initial_state=init,
+        output_final_state=True,
+        chunk_size=8,
     )
     assert state_rec is not None
     assert torch.allclose(out_rec, out_chk, atol=1e-5)
@@ -375,7 +395,9 @@ def test_when_index_first_axis_then_selects_correct_elements() -> None:
     from qwendopamine.models.gdn2.recurrence.packing import index_first_axis
 
     x = torch.randn(2, 2, 64)  # [batch, seq, dim]
-    indices = torch.tensor([0, 2, 3])  # select first token of batch 0, first of batch 1, second of batch 1
+    indices = torch.tensor(
+        [0, 2, 3]
+    )  # select first token of batch 0, first of batch 1, second of batch 1
     out = index_first_axis(x, indices)
     assert out.shape == (3, 64)
     assert torch.allclose(out[0], x[0, 0])

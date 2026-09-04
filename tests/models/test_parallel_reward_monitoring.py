@@ -64,7 +64,9 @@ def test_collect_metrics_reads_cache_state() -> None:
 
 
 def test_maybe_warn_branch_ratio_returns_warning() -> None:
-    assert maybe_warn_branch_ratio({"parallel_reward/branch_ratio": 0.5}, 0.1) is not None
+    assert (
+        maybe_warn_branch_ratio({"parallel_reward/branch_ratio": 0.5}, 0.1) is not None
+    )
     assert maybe_warn_branch_ratio({"parallel_reward/branch_ratio": 0.01}, 0.1) is None
     assert maybe_warn_branch_ratio({}, 0.1) is None
     assert maybe_warn_branch_ratio({"parallel_reward/branch_ratio": 0.5}, 0.0) is None

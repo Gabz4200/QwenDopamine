@@ -74,3 +74,18 @@ def test_build_reference_model_returns_nn_module() -> None:
     )
     model = build_reference_model(config, device_map="cpu")
     assert isinstance(model, nn.Module)
+
+
+def test_research_decoder_rejects_string_block_types() -> None:
+    import types
+
+    from qwendopamine.models.model_factory import build_model
+
+    cfg = types.SimpleNamespace(
+        hidden_size=32, vocab_size=100, num_hidden_layers=1, block_types=["bad_type"]
+    )
+    try:
+        build_model(cfg)
+        assert False, "expected TypeError"
+    except (TypeError, KeyError):
+        pass

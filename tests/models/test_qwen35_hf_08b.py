@@ -24,7 +24,13 @@ def test_when_qwen35_08b_prompted_then_predicts_correct_next_token() -> None:
             low_cpu_mem_usage=True,
             dtype=torch.float16,
         )
-    except (OSError, RuntimeError, ValueError, ImportError, AttributeError) as exc:  # pragma: no cover
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        ImportError,
+        AttributeError,
+    ) as exc:  # pragma: no cover
         pytest.skip(f"Skipping Hugging Face weights test due to loading failure: {exc}")
 
     prompt = "The capital of France is"

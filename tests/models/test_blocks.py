@@ -172,7 +172,9 @@ def test_when_build_model_with_composite_text_config_then_unwraps_and_returns_co
     assert isinstance(model, Qwen3_5ForCausalLM)
 
 
-def test_when_build_model_with_unknown_type_then_falls_back_to_research_decoder() -> None:
+def test_when_build_model_with_unknown_type_then_falls_back_to_research_decoder() -> (
+    None
+):
     unknown_cfg = types.SimpleNamespace(
         hidden_size=32,
         vocab_size=100,

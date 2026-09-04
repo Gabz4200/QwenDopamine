@@ -98,6 +98,14 @@ class FamilyVisionModel(Qwen3VLVisionModel):
 
     def __init__(self, config: Any, *inputs: Any, **kwargs: Any) -> None:
         super().__init__(config, *inputs, **kwargs)
+        # We deliberately do NOT call ``self.post_init()`` here.
+        # Upstream ``Qwen3VLVisionModel`` skips it too: the vision
+        # module has no weight-initialisation hooks of its own, and
+        # any custom subclass that *does* need ``post_init`` should
+        # call it explicitly so the intent is visible at the call
+        # site. ``FamilyModel.__init__`` (the text+vision parent)
+        # *does* call ``post_init``; that one runs once on the
+        # full multimodal model.
         self._delete_vision_attributes()
 
     def _delete_vision_attributes(self) -> None:
@@ -125,13 +133,19 @@ class FamilyVisionModel(Qwen3VLVisionModel):
         cu_seqlens, max_seqlen = get_vision_attention_seqlens(
             grid_thw, self.config, kwargs=kwargs
         )
+        # Patch-embed + interpolated positional-embedding add. The
+        # ``interp_weights`` reduce a small per-patch weight tensor
+        # (one weight per side of the grid) into a single position
+        # embedding vector.
         hidden_states = self.patch_embed(hidden_states)
         pos_embeds = (self.pos_embed(interp_indices) * interp_weights[:, :, None]).sum(
             1
         )
         hidden_states = hidden_states + pos_embeds.to(hidden_states.dtype)
-        rotary_pos_emb = self.rotary_pos_emb(position_ids)
 
+        # Build per-token RoPE position embeddings and split into
+        # (cos, sin) halves consumed by every attention block.
+        rotary_pos_emb = self.rotary_pos_emb(position_ids)
         seq_len, _ = hidden_states.size()
         hidden_states = hidden_states.reshape(seq_len, -1)
         rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
@@ -197,10 +211,15 @@ class FamilyTextModel(Qwen3NextModel):
             past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            if past_key_values is not None:
+            if past_key_values is not None and hasattr(
+                past_key_values, "get_seq_length"
+            ):
+                # ``DynamicCache`` (the common case) supports
+                # ``get_seq_length``; a custom cache without that
+                # method is treated as having zero past tokens.
                 try:
                     past_seen_tokens = past_key_values.get_seq_length()
-                except ValueError:
+                except (ValueError, NotImplementedError):
                     past_seen_tokens = 0
             else:
                 past_seen_tokens = 0

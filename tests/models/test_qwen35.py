@@ -122,3 +122,58 @@ def test_when_invalid_input_ids_type_then_raises_error(
 
     with pytest.raises((TypeError, RuntimeError)):
         model(input_ids=invalid_inputs)
+
+
+def test_when_left_padded_input_then_unpadded_prefix_matches(
+    tiny_qwen35_config: Qwen3_5TextConfig,
+) -> None:
+    """Left-padded input sequences must produce the same hidden state at the
+    first non-pad position as the unpadded counterpart.
+
+    This is the regression test for the review issue 1.6 (left-padded
+    conv-state handling on the cached single-step decode path). The
+    layer must not leak the pad-id conv kernel state into the first
+    real-token update.
+
+    We exercise the Qwen3_5GatedDeltaNet forward path on (a) a
+    left-padded input with an attention_mask marking the pad columns,
+    and (b) the same input with the pad columns stripped. The first
+    real-token output of the padded run must equal the first-token
+    output of the unpadded run.
+    """
+    from qwendopamine.models.qwen35 import Qwen3_5GatedDeltaNet
+
+    config = tiny_qwen35_config
+    layer = Qwen3_5GatedDeltaNet(config, layer_idx=0)
+    layer.eval()
+    pad_id = config.vocab_size - 1
+    seq_len = 8
+    pad = 3
+    torch.manual_seed(0)
+    real_ids = torch.randint(0, pad_id, (1, seq_len - pad))
+    full_ids = torch.cat(
+        [torch.full((1, pad), pad_id, dtype=real_ids.dtype), real_ids], dim=1
+    )
+    # Build hidden states by linear projection through the model's own
+    # embedding-free input projection: we don't have an embedding on
+    # the bare mixer, so we materialise random embeddings of the right
+    # dimensionality.
+    embed = torch.nn.Embedding(config.vocab_size, config.hidden_size)
+    with torch.no_grad():
+        real_emb = embed(real_ids)
+        full_emb = embed(full_ids)
+
+    with torch.no_grad():
+        # Unpadded baseline.
+        baseline = layer(real_emb, attention_mask=None)
+        # Left-padded run with the attention_mask flagging the
+        # leading pad positions. The layer is expected to apply
+        # ``apply_mask_to_padding_states`` which zeros hidden states
+        # at pad positions and lets the recurrence continue from
+        # the first real token.
+        attention_mask = torch.tensor([[0] * pad + [1] * (seq_len - pad)])
+        padded = layer(full_emb, attention_mask=attention_mask)
+
+    assert torch.allclose(padded[0, pad], baseline[0, 0], atol=1e-5), (
+        "Left-padded run diverged from unpadded baseline at first real token"
+    )

@@ -65,29 +65,45 @@ def _initialise() -> None:
         _INITIALISED = True
 
 
-def is_available() -> bool:
-    r"""is_available() -> bool
+def is_available(initialize: bool = True) -> bool:
+    r"""is_available(initialize: bool = True) -> bool
 
     Return True if the Taichi runtime could be initialised.
+
+    Args:
+        initialize (bool): When True (default), lazily initialise the
+            Taichi runtime if it has not been initialised yet. When
+            False, return the cached availability without
+            initialising. This is the safe query for callers that
+            only want to *probe* without paying the initialisation
+            cost (e.g. tests that monkey-patch the arch after the
+            first call).
 
     Returns:
         bool: ``True`` when Taichi imported and a backend was selected,
         ``False`` otherwise.
     """
-    _initialise()
+    if initialize:
+        _initialise()
     return _HAS_TAICHI and _ARCH != "unavailable"
 
 
-def taichi_arch() -> str:
-    r"""taichi_arch() -> str
+def taichi_arch(initialize: bool = True) -> str:
+    r"""taichi_arch(initialize: bool = True) -> str
 
     Return the active Taichi backend string.
+
+    Args:
+        initialize (bool): When True (default), lazily initialise if
+            needed. When False, return the cached arch without
+            triggering a Taichi ``init`` call.
 
     Returns:
         str: Resolved backend (``"cpu"``, ``"cuda"``, ``"gpu"``, or
         ``"unavailable"``).
     """
-    _initialise()
+    if initialize:
+        _initialise()
     return _ARCH
 
 

@@ -49,6 +49,21 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
     Args:
         config (Qwen3_5Config | Qwen3_5TextConfig): Qwen3.5 configuration.
         layer_idx (int): Layer index for cache disambiguation.
+
+    Dimension convention (paper + upstream Qwen3Next):
+
+      - ``hidden_size``         : model width ``D``
+      - ``num_v_heads``         : number of value heads ``H_v``
+      - ``num_k_heads``         : number of key heads ``H_k``
+      - ``head_k_dim``          : per-key-head dim ``d_k``
+      - ``head_v_dim``          : per-value-head dim ``d_v``
+      - ``key_dim = H_k * d_k``  (concatenated keys)
+      - ``value_dim = H_v * d_v``  (concatenated values)
+
+    The upstream ``Qwen3NextGatedDeltaNet`` flattens ``b`` and ``g`` to
+    one gate per head (``H_v``). The Qwen3.5 fork inherits that
+    parameterisation; it is **not** the per-channel paper convention
+    used by the GDN-2 reference and the GatedDeltaNet2 module.
     """
 
     def __init__(
@@ -59,8 +74,19 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         del self.in_proj_qkvz
         del self.in_proj_ba
 
+        # QKV_SPLIT tells the forward how to slice the fused QKV
+        # projection. Keep the order and sizes in lockstep with
+        # ``self.in_proj_qkv``'s ``out_features``; mismatches here
+        # produce silently-garbage output rather than a clean error.
+        self.QKV_SPLIT: tuple[int, int, int] = (
+            self.key_dim,
+            self.key_dim,
+            self.value_dim,
+        )
         self.in_proj_qkv = nn.Linear(
-            self.hidden_size, self.key_dim * 2 + self.value_dim, bias=False
+            self.hidden_size,
+            self.QKV_SPLIT[0] + self.QKV_SPLIT[1] + self.QKV_SPLIT[2],
+            bias=False,
         )
         self.in_proj_z = nn.Linear(self.hidden_size, self.value_dim, bias=False)
         self.in_proj_b = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
@@ -72,10 +98,13 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         No-op required by HF checkpoint loading.
 
         Raises:
-            AttributeError: Always — this layer uses fused projections that
-            do not need reordering.
+            NotImplementedError: Always — this layer uses fused
+                projections that do not need reordering.
         """
-        raise AttributeError("Not needed for Qwen3.5 Series")
+        raise NotImplementedError(
+            "Qwen3.5GatedDeltaNet uses fused QKV projections; no "
+            "checkpoint reordering is required."
+        )
 
     def forward(
         self,
@@ -148,11 +177,7 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         mixed_qkv = mixed_qkv.transpose(1, 2)
         query, key, value = torch.split(
             mixed_qkv,
-            [
-                self.key_dim,
-                self.key_dim,
-                self.value_dim,
-            ],
+            list(self.QKV_SPLIT),
             dim=-1,
         )
 
@@ -255,10 +280,19 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
         self.hidden_size = config.hidden_size
         layer_types: Any = config.layer_types
         self.block_type = layer_types[layer_idx]
+        # Qwen3Next supports additional block types (``sliding_attention``
+        # and any future ones). We only specialise the two we know how
+        # to run; anything else must be handled upstream or this
+        # layer construction is invalid.
         if self.block_type == "linear_attention":
             self.linear_attn = Qwen3_5GatedDeltaNet(config, layer_idx)
         elif self.block_type == "full_attention":
             self.self_attn = Qwen3_5Attention(config, layer_idx)
+        else:
+            raise NotImplementedError(
+                f"Qwen3.5DecoderLayer does not support block_type={self.block_type!r}. "
+                "Supported: 'linear_attention', 'full_attention'."
+            )
         self.mlp = Qwen3_5MLP(config, config.intermediate_size)
         self.input_layernorm = Qwen3_5RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
@@ -312,6 +346,13 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
                 past_key_values=past_key_values,
                 position_embeddings=position_embeddings,
                 **kwargs,
+            )
+        else:
+            # The constructor raises NotImplementedError for unknown
+            # block types, so reaching this branch means a subclass
+            # mutated ``self.block_type`` post-init. Fail loudly.
+            raise NotImplementedError(
+                f"Unexpected block_type={self.block_type!r} at forward time."
             )
 
         hidden_states = residual + hidden_states

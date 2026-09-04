@@ -33,6 +33,7 @@ _logger = logging.getLogger(__name__)
 
 _LOCK = threading.RLock()
 _DETECTED: list[str] | None = None
+_DETECTED_HASH: int = 0
 _ACTIVE: torch.device | None = None
 
 
@@ -64,6 +65,28 @@ def _taichi_arch_safe() -> str | None:
         return None
 
 
+def _device_count_signature() -> int:
+    """Hash the visible accelerator counts so the cache can invalidate."""
+    try:
+        cuda = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    except Exception:  # noqa: BLE001
+        cuda = 0
+    try:
+        xpu = (
+            torch.xpu.device_count()
+            if hasattr(torch, "xpu") and torch.xpu.is_available()
+            else 0
+        )
+    except Exception:  # noqa: BLE001
+        xpu = 0
+    mps = (
+        1
+        if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+        else 0
+    )
+    return hash((cuda, xpu, mps))
+
+
 def detect_available_devices() -> list[str]:
     """Return the list of available accelerator names, ordered by preference.
 
@@ -72,11 +95,16 @@ def detect_available_devices() -> list[str]:
     preference order: the first element is the one
     :func:`default_device` will pick.
 
-    The result is cached after the first call.
+    The result is cached after the first call. The cache invalidates
+    automatically if the visible-accelerator-count signature changes
+    between calls (e.g. ``CUDA_VISIBLE_DEVICES`` was edited after the
+    first call, or a process spawned a sub-process with a different
+    device map).
     """
-    global _DETECTED
+    global _DETECTED, _DETECTED_HASH
     with _LOCK:
-        if _DETECTED is not None:
+        current_sig = _device_count_signature()
+        if _DETECTED is not None and _DETECTED_HASH == current_sig:
             return list(_DETECTED)
         available: list[str] = []
         try:
@@ -106,6 +134,7 @@ def detect_available_devices() -> list[str]:
                 available.append("opengl")
         available.append("cpu")
         _DETECTED = available
+        _DETECTED_HASH = current_sig
         return list(_DETECTED)
 
 
@@ -191,9 +220,10 @@ def reset_cache() -> None:
     Useful in tests that monkey-patch ``torch.cuda.is_available`` or
     the Taichi arch between runs.
     """
-    global _DETECTED, _ACTIVE
+    global _DETECTED, _DETECTED_HASH, _ACTIVE
     with _LOCK:
         _DETECTED = None
+        _DETECTED_HASH = 0
         _ACTIVE = None
 
 

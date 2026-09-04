@@ -110,8 +110,16 @@ def test_when_fp32_decay_then_forward_is_finite_and_shape_preserved() -> None:
     assert torch.isfinite(out).all()
 
 
-@pytest.mark.parametrize("chunk_size", [1, 8, 33])
-@pytest.mark.parametrize("seq_len", [8, 41])
+@pytest.mark.parametrize(
+    "chunk_size",
+    [1, 8, 33],
+    ids=["single_token_chunk", "sub_block_chunk", "uneven_chunk"],
+)
+@pytest.mark.parametrize(
+    "seq_len",
+    [8, 41],
+    ids=["short_seq", "non_chunk_multiple_seq"],
+)
 def test_when_chunk_and_recurrent_then_match_across_chunk_sizes(
     chunk_size: int, seq_len: int
 ) -> None:

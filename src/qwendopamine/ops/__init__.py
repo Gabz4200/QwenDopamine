@@ -21,10 +21,11 @@ fallback when Taichi is unavailable (e.g. ``taichi`` not installed).
 from __future__ import annotations
 
 from qwendopamine.ops.gdn2 import chunk_taichi_gdn2, recurrent_taichi_gdn2
-from qwendopamine.ops.reward import delta_core_step_out
+from qwendopamine.ops.reward import delta_core_step, delta_core_step_out
 
 __all__ = [
     "chunk_taichi_gdn2",
+    "delta_core_step",
     "delta_core_step_out",
     "recurrent_taichi_gdn2",
 ]

@@ -4,7 +4,7 @@ Provides reward-conditioned fast-weight components that are orthogonal to any
 specific attention primitive (GDN-2, SWA, etc.).
 """
 
-from qwendopamine.models.reinforced.delta import (
+from .delta import (
     AdvantageGate,
     DeltaMemoryCore,
     GatedRewardNet,

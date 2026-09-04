@@ -57,7 +57,7 @@ def main(config: DictConfig) -> None:
         "train.model.base_model",
         default=DEFAULT_QWEN35_REPO,
     )
-    device = _get_cfg(config, "train.device", "train.train.device", default="cpu")
+    device = _get_cfg(config, "train.device", "model.device", "device", default="cpu")
     model = HFIntegration.load_model(
         base_model,
         quantization_config=quantization_config,

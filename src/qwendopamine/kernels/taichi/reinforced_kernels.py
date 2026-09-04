@@ -28,6 +28,23 @@ Shape contract (backward, per-batch):
     dk, dv         [B, D]
     d_omega_w_eff  [B, D]
     d_omega_e_eff  [B, D]
+
+Module structure
+----------------
+The file is organised top-down from low-level to public-facing:
+
+  1. ``_make_effective_gate`` — helper: contract ``omega`` with the
+     per-channel gate into the 2D effective-gate buffer.
+  2. ``_build_delta_core_step_kernel`` / ``launch_delta_core_step`` —
+     the per-token forward Taichi kernel + its launcher.
+  3. ``_build_delta_core_step_bwd_kernel`` / ``launch_delta_core_step_bwd`` —
+     the per-token adjoint Taichi kernel + its launcher.
+  4. ``_DeltaCoreStepFunction`` / ``_ChunkwiseDeltaCoreStepFunction`` —
+     the ``torch.autograd.Function`` wrappers that record the
+     per-step adjoints and expose a single op boundary.
+  5. ``delta_core_step_out`` / ``delta_core_step`` / ``chunkwise_delta_core_step_out`` —
+     the public Python API. Use these from application code; the
+     Function classes are private to the kernels module.
 """
 
 from typing import Any
@@ -278,14 +295,14 @@ class _DeltaCoreStepFunction(torch.autograd.Function):
         omega_e_eff = _make_effective_gate(omega_e, erase)
         out = torch.empty_like(state)
         launch_delta_core_step(
-            state,
-            k,
-            v,
-            omega_w,
-            omega_e,
-            erase,
-            write,
-            out,
+            state=state,
+            k=k,
+            v=v,
+            omega_w=omega_w,
+            omega_e=omega_e,
+            erase=erase,
+            write=write,
+            next_state=out,
         )
         if next_state is not None and next_state.data_ptr() != out.data_ptr():
             next_state.copy_(out)
@@ -323,41 +340,40 @@ class _DeltaCoreStepFunction(torch.autograd.Function):
         d_omega_w_eff = torch.zeros_like(omega_w_eff)
         d_omega_e_eff = torch.zeros_like(omega_e_eff)
         launch_delta_core_step_bwd(
-            state.contiguous(),
-            k.contiguous(),
-            v.contiguous(),
-            omega_w_eff.contiguous(),
-            omega_e_eff.contiguous(),
-            grad_next_state.contiguous(),
-            dstate,
-            dk,
-            dv,
-            d_omega_w_eff,
-            d_omega_e_eff,
+            state=state.contiguous(),
+            k=k.contiguous(),
+            v=v.contiguous(),
+            omega_w_eff=omega_w_eff.contiguous(),
+            omega_e_eff=omega_e_eff.contiguous(),
+            dnext_state=grad_next_state.contiguous(),
+            dstate=dstate,
+            dk=dk,
+            dv=dv,
+            d_omega_w_eff=d_omega_w_eff,
+            d_omega_e_eff=d_omega_e_eff,
         )
         # Product-rule distribution from the effective 2D gates back
         # to the per-batch scalar ``omega_w`` and per-channel
         # ``write``. Avoid division (numerically fragile when the
         # gate is zero).
-        #   omega_w_eff = omega_w * write  (per-channel)
-        #   d_omega_w   = sum_d d_omega_w_eff[d] * write[d]  (per-batch scalar)
-        #   d_write     = d_omega_w_eff * omega_w             (per-channel)
         if omega_w.dim() == 1:
             ow_for_dist = omega_w.unsqueeze(-1)  # [B, 1]
         else:
+            # ``[B, T]`` and ``[B, T, 1]`` are both already broadcastable
+            # to ``[B, T, D]`` so we leave them as-is.
             ow_for_dist = omega_w
+        d_omega_w = (d_omega_w_eff * write).sum(dim=-1, keepdim=True)
+        if omega_w.dim() == 1:
+            d_omega_w = d_omega_w.squeeze(-1)
         if omega_e.dim() == 1:
             oe_for_dist = omega_e.unsqueeze(-1)
         else:
             oe_for_dist = omega_e
-        d_omega_w = (d_omega_w_eff * write).sum(dim=-1, keepdim=True)
         d_omega_e = (d_omega_e_eff * erase).sum(dim=-1, keepdim=True)
-        d_write = d_omega_w_eff * ow_for_dist
-        d_erase = d_omega_e_eff * oe_for_dist
-        if omega_w.dim() == 1:
-            d_omega_w = d_omega_w.squeeze(-1)
         if omega_e.dim() == 1:
             d_omega_e = d_omega_e.squeeze(-1)
+        d_write = d_omega_w_eff * ow_for_dist
+        d_erase = d_omega_e_eff * oe_for_dist
         return dstate, dk, dv, d_omega_w, d_omega_e, d_write, d_erase, None
 
 
@@ -371,11 +387,47 @@ def delta_core_step_out(
     erase: torch.Tensor,
     next_state: torch.Tensor,
 ) -> torch.Tensor:
-    """Differentiable Reinforced Delta state update.
+    """Differentiable Reinforced Delta state update (in-place).
 
-    Returns the new state ``next_state`` with gradients flowing
-    through the per-token Taichi adjoint kernel.
+    Writes the result into ``next_state`` and returns it. Gradients
+    flow through the per-token Taichi adjoint kernel.
+
+    Contract:
+      - ``next_state`` must be allocated and have the same shape and
+        dtype as the autograd-produced output.
+      - ``state`` is not mutated.
     """
+    return _DeltaCoreStepFunction.apply(
+        state,
+        k,
+        v,
+        omega_w,
+        omega_e,
+        write,
+        erase,
+        next_state,
+    )
+
+
+def delta_core_step(
+    state: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_w: torch.Tensor,
+    omega_e: torch.Tensor,
+    write: torch.Tensor,
+    erase: torch.Tensor,
+) -> torch.Tensor:
+    """Differentiable Reinforced Delta state update (functional).
+
+    Allocates a fresh ``next_state`` and returns it. Gradients flow
+    through the per-token Taichi adjoint kernel.
+
+    This is the in-graph functional form used by autograd and
+    ``torch.compile``; the in-place :func:`delta_core_step_out`
+    exists for the per-step hot path that wants to avoid an allocation.
+    """
+    next_state = torch.empty_like(state)
     return _DeltaCoreStepFunction.apply(
         state,
         k,
@@ -569,9 +621,9 @@ class _ChunkwiseDeltaCoreStepFunction(torch.autograd.Function):
         d_omega_e = (d_oe_eff * erase).sum(dim=-1, keepdim=True)
         d_write = d_ow_eff * ow_for_dist
         d_erase = d_oe_eff * oe_for_dist
-        if omega_w.dim() == 2:
+        if omega_w.dim() in (1, 2):
             d_omega_w = d_omega_w.squeeze(-1)
-        if omega_e.dim() == 2:
+        if omega_e.dim() in (1, 2):
             d_omega_e = d_omega_e.squeeze(-1)
         return (
             dstate_in,
@@ -629,6 +681,7 @@ def chunkwise_delta_core_step_out(
 
 __all__ = [
     "chunkwise_delta_core_step_out",
+    "delta_core_step",
     "delta_core_step_out",
     "launch_chunk_bwd_per_bh",
     "launch_delta_core_step",

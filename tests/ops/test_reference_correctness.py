@@ -180,3 +180,40 @@ def test_reward_reference_step_zero_omega_e_preserves_state() -> None:
     omega_e = torch.zeros(B, 1)
     S_next = reward_reference_step(state, k, v, omega_w, omega_e)
     assert torch.allclose(S_next, state, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Independent oracle: cross-check the canonical reference against a
+# hand-looped re-implementation.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "B,H,K,V",
+    [(1, 1, 2, 2), (2, 3, 4, 5), (1, 2, 8, 8)],
+    ids=["tiny", "mid", "larger_KV"],
+)
+def test_gdn2_oracle_matches_canonical_step(B: int, H: int, K: int, V: int) -> None:
+    """The hand-looped ``gdn2_oracle_step`` must agree with the
+    ``einsum``-based ``gdn2_reference_step`` within fp32 tolerance.
+
+    The two implementations share no logic — the oracle uses explicit
+    Python ``for`` loops over the B/H/K/V axes, the canonical uses
+    ``torch.einsum``. A passing comparison proves the spec is
+    correctly captured, not just that two different ``einsum``
+    formulations agree.
+    """
+    from qwendopamine.ops.references import gdn2_oracle_step
+
+    torch.manual_seed(0)
+    S = torch.randn(B, H, K, V)
+    q_t = torch.randn(B, H, K)
+    k_t = torch.randn(B, H, K)
+    v_t = torch.randn(B, H, V)
+    b_t = torch.rand(B, H, K)
+    w_t = torch.rand(B, H, V)
+    a_t = torch.rand(B, H, K)
+
+    y_oracle, S_next_oracle = gdn2_oracle_step(S.clone(), q_t, k_t, v_t, b_t, w_t, a_t)
+    y_canon, S_next_canon = gdn2_reference_step(S.clone(), q_t, k_t, v_t, b_t, w_t, a_t)
+
+    torch.testing.assert_close(y_oracle, y_canon, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(S_next_oracle, S_next_canon, atol=1e-5, rtol=1e-5)

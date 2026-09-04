@@ -242,3 +242,28 @@ def test_opcheck_battery(op_name: str, with_state: bool) -> None:
 
     for example in examples:
         opcheck(op, example, {})
+
+
+@pytest.mark.skipif(
+    not is_available(),
+    reason="Taichi runtime is not available on this machine",
+)
+def test_recurrent_taichi_gdn2_runs_in_no_grad_mode() -> None:
+    """Smoke test that the Taichi-backed GDN-2 recurrent op runs in no_grad.
+
+    Regression for review 5.3: the production inference path runs under
+    ``torch.no_grad()`` and the Taichi kernel must not raise. The
+    torch-fallback path is exercised by
+    ``test_fallback_when_taichi_unavailable`` above.
+    """
+    B, T, H, K, V = 1, 2, 2, 4, 4
+    torch.manual_seed(0)
+    q = torch.randn(B, T, H, K)
+    k = torch.randn(B, T, H, K)
+    v = torch.randn(B, T, H, V)
+    g = torch.zeros(B, T, H, K)
+    b = torch.rand(B, T, H, K)
+    w = torch.rand(B, T, H, V)
+    with torch.no_grad():
+        out, _ = recurrent_taichi_gdn2(q, k, v, g, b, w, initial_state=None)
+    assert out.shape == (B, T, H, V)

@@ -109,6 +109,22 @@ class GatedDeltaNet2(nn.Module):
     Returns:
         y : ``[B, T, H, V]`` — mixed output.
         S : ``[B, H, K, V]`` — updated recurrent state.
+
+    Dtype contract:
+        The recurrent state ``S`` is **always** carried in the caller's
+        input dtype; the Taichi kernel and the torch reference both
+        upcast internally to float32 for accumulation and cast back on
+        return. The kernel's internal dtype is therefore decoupled
+        from ``S``'s external dtype — ``S`` is ``state.dtype`` on every
+        public boundary.
+
+    GQA support:
+        ``num_v_heads`` is exposed in the constructor and may differ
+        from ``num_heads`` to enable grouped-query attention. When
+        ``num_v_heads > num_heads`` the ``Q``, ``K``, ``b`` and ``g``
+        projections are repeated per value-head group; ``V`` and
+        ``w`` remain per-value-head. The check
+        ``num_v_heads % num_heads == 0`` runs at construction.
     """
 
     def __init__(
@@ -198,8 +214,11 @@ class GatedDeltaNet2(nn.Module):
 
         # Optional torch.compile backend. Best-effort: if induction fails (e.g.
         # generic non-CPU/cuda devices), we transparently fall back to the plain
-        # chunk kernel so the signature stays identical.
+        # chunk kernel so the signature stays identical. The exception is
+        # captured on ``self.compile_error`` so the user can introspect why
+        # the compile failed without grepping logs.
         self._compiled_chunk: Any = None
+        self.compile_error: BaseException | None = None
         if self.compile_backend:
             try:
                 self._compiled_chunk = torch.compile(torch_chunk_gdn2, dynamic=True)
@@ -211,6 +230,7 @@ class GatedDeltaNet2(nn.Module):
             ) as e:  # compile is purely optional
                 _warn_fallback_once(f"torch.compile unavailable ({e})")
                 self._compiled_chunk = None
+                self.compile_error = e
 
     # ------------------------------------------------------------------
     # Initialization helpers
@@ -292,7 +312,9 @@ class GatedDeltaNet2(nn.Module):
         self.o_proj = nn.Linear(self.value_dim, self.hidden_size, bias=False)
 
     def _initialize_weights(self, module: nn.Module) -> None:
-        if getattr(module, "_is_hf_initialized", False):
+        from ._init_guard import is_already_initialised, mark_initialised
+
+        if is_already_initialised(module):
             return
         if isinstance(module, nn.Linear):
             nn.init.xavier_uniform_(module.weight, gain=2**-2.5)
@@ -304,7 +326,7 @@ class GatedDeltaNet2(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, RMSNormGated):
             nn.init.ones_(module.weight)
-        cast(Any, module)._is_hf_initialized = True
+        mark_initialised(module)
 
     # ------------------------------------------------------------------
     # State initialization
@@ -312,7 +334,12 @@ class GatedDeltaNet2(nn.Module):
     def init_state(
         self, batch_size: int, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
-        """Initialize the O(1) recurrent memory matrix S_0.
+        """Initialise the O(1) recurrent memory matrix ``S_0``.
+
+        Experimental API for autoregressive decoding outside the
+        ``forward`` path (greedy generation, beam search, custom
+        cache implementations). The production training/inference
+        path uses :meth:`forward` and never calls this directly.
 
         Args:
             batch_size: Number of sequences in the batch.

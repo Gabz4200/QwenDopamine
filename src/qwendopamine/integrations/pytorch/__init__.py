@@ -43,7 +43,6 @@ register_all_autograd = autograd.register_all_autograd
 chunk_gdn2_op = custom_ops.chunk_gdn2_op
 chunk_gdn2_with_state_op = custom_ops.chunk_gdn2_with_state_op
 delta_core_step_op = custom_ops.delta_core_step_op
-is_accelerator_kernels_registered = custom_ops.is_accelerator_kernels_registered
 is_registered = custom_ops.is_registered
 recurrent_gdn2_op = custom_ops.recurrent_gdn2_op
 recurrent_gdn2_with_state_op = custom_ops.recurrent_gdn2_with_state_op
@@ -55,7 +54,6 @@ __all__ = [
     "chunk_gdn2_with_state_op",
     "delta_core_step_op",
     "devices",
-    "is_accelerator_kernels_registered",
     "is_autograd_registered",
     "is_registered",
     "recurrent_gdn2_op",

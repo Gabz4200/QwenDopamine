@@ -22,11 +22,15 @@ from qwendopamine.kernels.taichi.gdn2_api import (
     chunk_taichi_gdn2,
     recurrent_taichi_gdn2,
 )
-from qwendopamine.kernels.taichi.reinforced_kernels import delta_core_step_out
+from qwendopamine.kernels.taichi.reinforced_kernels import (
+    delta_core_step,
+    delta_core_step_out,
+)
 from qwendopamine.kernels.taichi.runtime import is_available, require, taichi_arch
 
 __all__ = [
     "chunk_taichi_gdn2",
+    "delta_core_step",
     "delta_core_step_out",
     "is_available",
     "recurrent_taichi_gdn2",

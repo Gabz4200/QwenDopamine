@@ -167,9 +167,13 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         No-op required by HF checkpoint loading.
 
         Raises:
-            AttributeError: Always — this layer uses fused projections.
+            NotImplementedError: Always — this layer uses fused
+                projections that do not need reordering.
         """
-        raise AttributeError("Not needed for InfiniDopamine Series")
+        raise NotImplementedError(
+            "InfiniDopamineGatedDeltaNet uses fused QKV projections; "
+            "no checkpoint reordering is required."
+        )
 
     def forward(
         self,

@@ -20,7 +20,7 @@ Shapes:
     w_t   : ``[B, H, V]``   (write gate)
     a_t   : ``[B, H, K]``   (decay = exp(g))
 
-The forward (paper Eq. 10) is
+    The forward (paper Eq. 10) is
 
 .. math::
 
@@ -31,11 +31,48 @@ The forward (paper Eq. 10) is
 implemented here in two readable forms: a single-step version
 (:func:`gdn2_reference_step`) and a sequence version
 (:func:`gdn2_reference_sequence`) that loops over time.
+
+Channel convention for ``b`` and ``w``
+---------------------------------------
+The paper treats ``b`` and ``w`` as one gate per **key/value dim** —
+``b`` has shape ``[B, H, K]`` and is applied element-wise on the
+``k_t`` index of the state; ``w`` has shape ``[B, H, V]`` and is
+applied on the ``v_t`` index. We follow that convention here.
+
+**Note on the upstream ``Qwen3NextGatedDeltaNet``**: the upstream
+HF implementation flattens this to one gate per head
+(``b`` is ``[B, H]`` shared across K, ``w`` is ``[B, H, V]`` for the
+value dim). That is a **coarser** parameterisation. The Qwen3.5
+fork inherits the upstream shape; the GDN-2 reference (this module)
+and the GatedDeltaNet2 module use the per-channel paper convention.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
+
+
+@dataclass(frozen=True)
+class GDN2StepGrads:
+    """Per-step gradient tuple for :func:`gdn2_reference_step_with_grad`.
+
+    Using a frozen dataclass instead of a dict catches typo'd key
+    access at type-check time and keeps the field shape contract
+    visible at the call site.
+
+    Attributes:
+        dS: ``[B, H, K, V]`` gradient with respect to the prior state.
+        dk: ``[B, H, K]`` gradient with respect to the key.
+        dv: ``[B, H, V]`` gradient with respect to the value.
+        db: ``[B, H, K]`` gradient with respect to the erase gate.
+    """
+
+    dS: torch.Tensor
+    dk: torch.Tensor
+    dv: torch.Tensor
+    db: torch.Tensor
 
 
 def _maybe_l2norm(x: torch.Tensor) -> torch.Tensor:
@@ -108,10 +145,13 @@ def gdn2_reference_step_with_grad(
     w_t: torch.Tensor,
     a_t: torch.Tensor,
     dy_t: torch.Tensor,
-) -> dict[str, torch.Tensor]:
+) -> GDN2StepGrads:
     """Hand-derived per-step VJP for :func:`gdn2_reference_step`.
 
     Useful for ``torch.autograd.gradcheck``-style tests.
+
+    Returns:
+        GDN2StepGrads: per-step gradient dataclass.
     """
     _, S_next = gdn2_reference_step(S, q_t, k_t, v_t, b_t, w_t, a_t)
 
@@ -134,15 +174,11 @@ def gdn2_reference_step_with_grad(
     dk = dk + de * b_t
     # da (column-wise) is not a parameter in this op; if a is the g_t
     # tensor, callers compute d_g separately.
-    return {
-        "dS": dS,
-        "dk": dk,
-        "dv": dv,
-        "db": db,
-    }
+    return GDN2StepGrads(dS=dS, dk=dk, dv=dv, db=db)
 
 
 __all__ = [
+    "GDN2StepGrads",
     "gdn2_reference_sequence",
     "gdn2_reference_step",
     "gdn2_reference_step_with_grad",

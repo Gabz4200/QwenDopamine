@@ -22,8 +22,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("use_l2norm", [True, False])
-@pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
+_GDN2_TEST_SHAPES = [
+    (1, 4, 1, 4, 4),
+    (2, 8, 2, 4, 4),
+    (1, 16, 3, 8, 8),
+]
+_GDN2_TEST_SHAPE_IDS = [
+    "B1_T4_H1_K4_V4",
+    "B2_T8_H2_K4_V4",
+    "B1_T16_H3_K8_V8",
+]
+
+
+@pytest.mark.parametrize("use_l2norm", [True, False], ids=["l2norm_on", "l2norm_off"])
+@pytest.mark.parametrize("shape", _GDN2_TEST_SHAPES, ids=_GDN2_TEST_SHAPE_IDS)
 def test_recurrent_matches_reference(shape, use_l2norm) -> None:
     B, T, H, K, V = shape
     torch.manual_seed(0)
@@ -63,7 +75,7 @@ def test_recurrent_matches_reference(shape, use_l2norm) -> None:
     torch.testing.assert_close(ta_state, ref_state, atol=1e-4, rtol=1e-4)
 
 
-@pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
+@pytest.mark.parametrize("shape", _GDN2_TEST_SHAPES, ids=_GDN2_TEST_SHAPE_IDS)
 def test_recurrent_does_not_mutate_caller_buffers(shape) -> None:
     B, T, H, K, V = shape
     torch.manual_seed(0)
@@ -130,7 +142,7 @@ def test_recurrent_matches_gated_delta_2_step_per_token() -> None:
     torch.testing.assert_close(ta_state, state, atol=1e-5, rtol=1e-5)
 
 
-@pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
+@pytest.mark.parametrize("shape", _GDN2_TEST_SHAPES, ids=_GDN2_TEST_SHAPE_IDS)
 def test_chunk_matches_recurrent(shape) -> None:
     """Chunkwise output stays close to the recurrent reference.
 

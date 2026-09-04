@@ -57,7 +57,7 @@ ops below do **not** select a backend.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
@@ -196,39 +196,6 @@ def _delta_core_step_body(
 # moves them to the active device if needed, runs the op body, and
 # moves the result back to the caller's device. This is the policy
 # described in the module docstring.
-_CALLER_DEVICE = "__caller_device__"
-
-
-def _caller_device_kwargs(
-    tensors: Sequence[torch.Tensor | None],
-) -> dict[str, torch.device]:
-    """Capture the caller's device so we can return results there.
-
-    ``None`` entries (e.g. ``initial_state=None``) are skipped.
-    """
-    devices: dict[str, torch.device] = {}
-    for i, t in enumerate(tensors):
-        if t is not None and isinstance(t, torch.Tensor):
-            devices[f"{_CALLER_DEVICE}{i}"] = t.device
-    return devices
-
-
-def _restore_device(
-    out: torch.Tensor | list[torch.Tensor],
-    caller_devices: dict[str, torch.device],
-) -> torch.Tensor | list[torch.Tensor]:
-    """Move ``out`` back to the caller's device.
-
-    Works for a single Tensor, a list[Tensor], or a list[Tensor, Tensor].
-    """
-    if not caller_devices:
-        return out
-    target = next(iter(caller_devices.values()))
-    if isinstance(out, list):
-        return [t.to(target) if isinstance(t, torch.Tensor) else t for t in out]
-    if isinstance(out, torch.Tensor):
-        return out.to(target)
-    return out
 
 
 def _route_to_active_device(
@@ -509,6 +476,17 @@ def _delta_core_step_fake(
     return torch.empty_like(state)
 
 
+# Op-destination asymmetry note:
+# The Taichi ``delta_core_step_out`` in
+# :mod:`qwendopamine.ops.reward` is the **in-place** variant: it writes
+# the result into a caller-supplied ``next_state`` buffer. The
+# registered ``delta_core_step_op`` above is the **functional**
+# variant used by autograd and ``torch.compile``: it allocates a fresh
+# tensor and never mutates any input. Callers that need the
+# in-place form should go through :mod:`qwendopamine.ops.reward`
+# directly, not through the custom-op registry.
+
+
 # ---------------------------------------------------------------------------
 # Per-accelerator kernel registration
 # ---------------------------------------------------------------------------
@@ -578,11 +556,6 @@ def register_accelerator_kernels() -> None:
 
 
 _ACCEL_REGISTERED: bool = False
-
-
-def is_accelerator_kernels_registered() -> bool:
-    """Return True if the per-accelerator kernels have been registered."""
-    return _ACCEL_REGISTERED
 
 
 def _register_one(
@@ -765,7 +738,6 @@ __all__ = [
     "chunk_gdn2_op",
     "chunk_gdn2_with_state_op",
     "delta_core_step_op",
-    "is_accelerator_kernels_registered",
     "is_registered",
     "recurrent_gdn2_op",
     "recurrent_gdn2_with_state_op",

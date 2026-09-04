@@ -6,7 +6,11 @@ Symbol re-exports of ``transformers`` itself happen at the call site, not here.
 
 from __future__ import annotations
 
+import logging as _logging
+
 import torch as _torch
+
+_logger = _logging.getLogger(__name__)
 
 
 def expand_position_ids_to_multimodal(
@@ -48,11 +52,17 @@ def unwrap_gated_delta_rule_fns() -> None:
     Some ``transformers`` builds wrap these functions with decorators that are
     incompatible with CPU execution or custom autograd. This helper removes the
     wrappers in-place so callers can use the raw implementations.
+
+    No-op when CUDA is available (the wrapped functions are designed for
+    GPU dispatch). On CPU, every unwrap is logged at INFO level so the
+    user can see why the upstream kernels are bypassed.
     """
     import torch as _torch
 
     if _torch.cuda.is_available():
         return
+
+    import types as _types
 
     import transformers.models.qwen3_next.modeling_qwen3_next as _q3n
     from transformers.models.qwen3_next.modeling_qwen3_next import (
@@ -76,10 +86,20 @@ def unwrap_gated_delta_rule_fns() -> None:
     ]:
         if _fn is None:
             continue
-        while hasattr(_fn, "__wrapped__"):
+        # Guard against non-callable ``__wrapped__`` (e.g. a property or
+        # a string attribute) so the loop never goes infinite or
+        # mis-resolves to an unrelated attribute.
+        while hasattr(_fn, "__wrapped__") and isinstance(
+            _fn.__wrapped__, _types.FunctionType
+        ):
             _fn = _fn.__wrapped__
         if hasattr(_q3n, _name):
             setattr(_q3n, _name, _fn)
+            _logger.info(
+                "Unwrapped %s on qwen3_next (CPU environment; upstream "
+                "wrapper is incompatible with this build).",
+                _name,
+            )
 
 
 __all__ = [

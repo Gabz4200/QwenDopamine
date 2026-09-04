@@ -66,7 +66,12 @@ def _normalize_weights_to_state_dict(
     r"""Normalize ``weights`` into a plain ``state_dict``."""
     if isinstance(weights, nn.Module):
         return weights.state_dict()
-    return dict(weights)
+    raw = dict(weights)
+    if not all(isinstance(k, str) for k in raw):
+        raise TypeError(
+            f"weight dict keys must be str; got {[type(k).__name__ for k in raw if not isinstance(k, str)][:1]}"
+        )
+    return raw
 
 
 class InfiniDopaminePreTrainedModel(FamilyPreTrainedModel):
@@ -263,26 +268,29 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
         """Return a :class:`InfiniDopamineTextModel`."""
         return InfiniDopamineTextModel(config)
 
+    def _accumulate_aux_losses(self, loss: torch.Tensor | None) -> torch.Tensor | None:
+        """Fold all enabled auxiliary losses (gate reg, parallel reward reg) into ``loss``.
+
+        Single source of truth used by both the causal and the
+        conditional post-processing paths. Returns the new total loss
+        (``loss`` unchanged when no aux losses are enabled, the model
+        is in eval mode, or no labelled loss was produced).
+        """
+        if loss is None or not self.training:
+            return loss
+        gate_weight = getattr(self.config, "gate_loss_weight", 0.0)
+        if gate_weight > 0.0:
+            target = getattr(self.config, "gate_target_balance", 0.5)
+            loss = loss + gate_weight * self.get_gate_regularization_loss(target=target)
+        if getattr(self.config, "use_parallel_reward", False):
+            pr_weight = getattr(self.config, "parallel_reward_gate_loss_weight", 0.0)
+            if pr_weight > 0.0:
+                loss = loss + pr_weight * self.get_parallel_reward_gate_loss()
+        return loss
+
     def _apply_causal_lm_postprocessing(self, outputs: CausalLMOutputWithPast) -> None:
         """Add gate regularization and parallel-reward losses to ``outputs.loss``."""
-        loss: torch.Tensor | None = getattr(outputs, "loss", None)
-        if (
-            loss is not None
-            and self.training
-            and getattr(self.config, "gate_loss_weight", 0.0) > 0.0
-        ):
-            target = getattr(self.config, "gate_target_balance", 0.5)
-            gate_loss = self.get_gate_regularization_loss(target=target)
-            outputs.loss = loss + self.config.gate_loss_weight * gate_loss
-            loss = outputs.loss
-        if (
-            loss is not None
-            and self.training
-            and getattr(self.config, "use_parallel_reward", False)
-        ):
-            weight = getattr(self.config, "parallel_reward_gate_loss_weight", 0.0)
-            if weight > 0.0:
-                outputs.loss = loss + weight * self.get_parallel_reward_gate_loss()
+        outputs.loss = self._accumulate_aux_losses(getattr(outputs, "loss", None))
 
     def get_parallel_reward_gate_loss(self) -> torch.Tensor:
         r"""get_parallel_reward_gate_loss() -> torch.Tensor
@@ -388,15 +396,20 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
         loss: torch.Tensor | None,
         outputs: Any,
     ) -> None:
-        """Add gate regularization loss to ``outputs.loss``."""
-        if (
-            loss is not None
-            and self.training
-            and getattr(self.config, "gate_loss_weight", 0.0) > 0.0
-        ):
-            target = getattr(self.config, "gate_target_balance", 0.5)
-            gate_loss = self.model.get_gate_regularization_loss(target=target)
-            outputs.loss = loss + self.config.gate_loss_weight * gate_loss
+        """Add gate regularization loss to ``outputs.loss``.
+
+        The conditional path delegates ``get_gate_regularization_loss``
+        to the inner text tower (which has access to the per-layer
+        state). The parallel-reward loss is not applied here because
+        the conditional path is not yet wired to the per-layer parallel
+        branch.
+        """
+        if loss is not None and self.training:
+            weight = getattr(self.config, "gate_loss_weight", 0.0)
+            if weight > 0.0:
+                target = getattr(self.config, "gate_target_balance", 0.5)
+                gate_loss = self.model.get_gate_regularization_loss(target=target)
+                outputs.loss = loss + weight * gate_loss
 
     def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
         r"""get_gate_regularization_loss(target=0.5) -> torch.Tensor

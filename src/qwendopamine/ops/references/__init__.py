@@ -18,6 +18,7 @@ Use these for:
 
 from __future__ import annotations
 
+from qwendopamine.ops.references.gdn2_oracle import gdn2_oracle_step
 from qwendopamine.ops.references.gdn2_reference import (
     gdn2_reference_sequence,
     gdn2_reference_step,
@@ -29,6 +30,7 @@ from qwendopamine.ops.references.reward_reference import (
 )
 
 __all__ = [
+    "gdn2_oracle_step",
     "gdn2_reference_sequence",
     "gdn2_reference_step",
     "gdn2_reference_step_with_grad",

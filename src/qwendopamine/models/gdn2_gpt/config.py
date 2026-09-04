@@ -101,58 +101,57 @@ class GDN2GPTConfig:
         Returns:
             GDN2GPTConfig: Configured instance.
         """
+        # Common fields shared by every preset. Per-preset entries
+        # below only need to specify what differs from the defaults.
+        common: dict[str, Any] = {
+            "vocab_size": 50257,
+            "padded_vocab_size": 50257,
+            "norm_eps": 1e-5,
+        }
         presets: dict[str, dict[str, Any]] = {
             "1B": {
+                **common,
                 "name": "1B",
                 "block_size": 2048,
-                "vocab_size": 50257,
-                "padded_vocab_size": 50257,
                 "n_layer": 24,
                 "n_head": 16,
                 "n_embd": 2048,
                 "head_size": 128,
                 "n_query_groups": 8,
                 "intermediate_size": 5504,
-                "norm_eps": 1e-5,
             },
             "1B_mha": {
+                **common,
                 "name": "1B_mha",
                 "block_size": 2048,
-                "vocab_size": 50257,
-                "padded_vocab_size": 50257,
                 "n_layer": 24,
                 "n_head": 16,
                 "n_embd": 2048,
                 "head_size": 128,
                 "n_query_groups": 16,
                 "intermediate_size": 5504,
-                "norm_eps": 1e-5,
             },
             "small": {
+                **common,
                 "name": "small",
                 "block_size": 512,
-                "vocab_size": 50257,
-                "padded_vocab_size": 50257,
                 "n_layer": 6,
                 "n_head": 8,
                 "n_embd": 512,
                 "head_size": 64,
                 "n_query_groups": 8,
                 "intermediate_size": 1376,
-                "norm_eps": 1e-5,
             },
             "tiny": {
+                **common,
                 "name": "tiny",
                 "block_size": 256,
-                "vocab_size": 50257,
-                "padded_vocab_size": 50257,
                 "n_layer": 4,
                 "n_head": 4,
                 "n_embd": 256,
                 "head_size": 64,
                 "n_query_groups": 4,
                 "intermediate_size": 688,
-                "norm_eps": 1e-5,
             },
         }
         if name not in presets:

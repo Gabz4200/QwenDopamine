@@ -10,16 +10,32 @@ user-requested backend string.
 
 from __future__ import annotations
 
-# Module-level single-warning guard for CPU fallback
+import logging
+
+# Module-level single-warning guard for CPU fallback. Keyed on the
+# reason string so the same fallback reason only fires the first time.
 _WARNED_FALLBACKS: set[str] = set()
+
+_logger = logging.getLogger(__name__)
 
 
 def _warn_fallback_once(reason: str) -> None:
-    if reason not in _WARNED_FALLBACKS:
-        _WARNED_FALLBACKS.add(reason)
-        import warnings
+    """Warn once per process per fallback reason.
 
-        warnings.warn(f"[gdn2] Using pure PyTorch fallback: {reason}", stacklevel=3)
+    Logs at WARNING level through the module's named logger (visible
+    in standard logging configuration) and also emits a Python
+    ``warnings.warn`` for users who don't configure logging. The
+    stacklevel is set so the warning points at the call site.
+    """
+    if reason in _WARNED_FALLBACKS:
+        return
+    _WARNED_FALLBACKS.add(reason)
+    import warnings
+
+    msg = f"[gdn2] Using pure PyTorch fallback: {reason}"
+    _logger_once = logging.getLogger("qwendopamine.gdn2")
+    _logger_once.warning(msg)
+    warnings.warn(msg, stacklevel=3)
 
 
 GDN2_BACKENDS = (

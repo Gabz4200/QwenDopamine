@@ -11,7 +11,7 @@ attention, MLP, and GDN-2 layers.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import torch
 from torch import nn
@@ -97,7 +97,9 @@ class GDN2Host(nn.Module):
         self.apply(self._init_weights)
 
     def _init_weights(self, module: nn.Module) -> None:
-        if getattr(module, "_is_hf_initialized", False):
+        from ._init_guard import is_already_initialised, mark_initialised
+
+        if is_already_initialised(module):
             return
         if isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
@@ -107,7 +109,7 @@ class GDN2Host(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, RMSNorm):
             module.reset_parameters()
-        cast(Any, module)._is_hf_initialized = True
+        mark_initialised(module)
 
     def forward(
         self, input_ids: torch.Tensor, past_key_values: Any | None = None

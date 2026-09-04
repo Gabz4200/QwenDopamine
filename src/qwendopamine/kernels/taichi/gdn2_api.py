@@ -445,6 +445,13 @@ def _chunk_taichi_gdn2_inner(
     the Taichi adjoint to consume in reverse order). The remaining
     saved tensors are the per-token q/k/v/alpha/b/w used by the
     per-token VJP ``launch_recurrent_step_bwd``.
+
+    The forward output is the **chunkwise** result (WY transform, not
+    per-token replay). The per-token ``states`` are captured via a
+    single extra per-token pass that writes only into ``states``, not
+    into ``out``. This keeps the chunkwise Taichi kernel as the
+    production forward engine and avoids the ``O(T)`` forward
+    replay that the previous implementation did.
     """
     _rt.require()
     B, T, H, K = q.shape
@@ -534,16 +541,20 @@ def _chunk_taichi_gdn2_inner(
             out_inter = torch.matmul(q_gamma, state)
             aqk = compute_gdn2_intra_chunk_scores(q_c, gamma, kbar)
             out[:, :, start:end] = out_inter + torch.matmul(aqk, delta)
-            state = gamma[:, :, -1:, :].transpose(-1, -2) * (
-                state + torch.matmul(kbar.transpose(-1, -2), delta)
-            )
+            # S_{end} = gamma[-1] * S_{start} + kbar^T @ delta
+            # (rank-1 term carries no decay factor; ``kbar`` is already
+            # scaled by ``gamma`` and ``delta`` already absorbs the WY
+            # rotation, so applying ``gamma`` again would double-count
+            # the channel-wise decay on the rank-1 contribution).
+            rank_one = torch.matmul(kbar.transpose(-1, -2), delta)
+            state = gamma[:, :, -1:, :].transpose(-1, -2) * state + rank_one
 
     # Capture per-token states for the Taichi adjoint. The chunkwise
-    # forward only produces the per-chunk entry/exit states, so we
-    # replay the per-token recurrent kernel here. This adds T launches
-    # but keeps the chunkwise Taichi kernel as the production engine
-    # and lets the bwd path reuse the per-token VJP we already
-    # verified against the canonical reference.
+    # forward only produces the per-chunk entry/exit states, so we run
+    # a single per-token pass that writes ONLY into ``states`` (not
+    # into ``out``). This preserves the chunkwise Taichi forward
+    # output above and lets the bwd path reuse the per-token VJP we
+    # already verified against the canonical reference.
     for t in range(T):
         _kernels.launch_recurrent_step(
             state=states[t].contiguous(),
@@ -554,7 +565,10 @@ def _chunk_taichi_gdn2_inner(
             b=b[:, :, t, :].contiguous(),
             w=w[:, :, t, :].contiguous(),
             next_state=states[t + 1].contiguous(),
-            y=out[:, :, t, :].contiguous(),
+            # The per-token kernel also writes ``y`` (the output). We
+            # discard it: the chunkwise output above is the production
+            # value, this kernel call is state-only.
+            y=out.new_empty(B, H, V, dtype=torch.float32, device=q.device),
         )
 
     out = rearrange(out, "b h t d -> b t h d")
@@ -578,11 +592,13 @@ def chunk_taichi_gdn2(
 
     Forward dispatches each full chunk to a per-(batch, head) Taichi
     kernel. Tail chunks that don't fill ``chunk_size`` run in PyTorch
-    because the Taichi path templates ``C`` at compile time. Backward
-    defers to the differentiable torch reference for gradient
-    computation, so training flows end-to-end through the public API
-    even though the gradient kernel itself is pure torch (the forward
-    numerics are still Taichi).
+    because the Taichi path templates ``C`` at compile time. The
+    returned output is the chunkwise result, not a per-token replay.
+    Backward consumes the per-token states captured during the
+    forward and runs the per-token adjoint kernel in reverse, so
+    training flows end-to-end through the public API even though the
+    gradient kernel itself is per-token (the forward numerics are
+    still Taichi).
     """
     _rt.require()
     if use_qk_l2norm_in_kernel:

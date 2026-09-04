@@ -74,6 +74,9 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         self.hidden_dropout = getattr(
             config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
         )
+        self._swa_mask_cache: dict[
+            tuple[int, int, torch.device, torch.dtype], torch.Tensor
+        ] = {}
         self.in_proj_qkv = nn.Linear(
             self.hidden_size, self.key_dim * 2 + self.value_dim, bias=False
         )
@@ -91,6 +94,28 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         self.last_gate: torch.Tensor | None = None
 
         self._register_load_state_dict_pre_hook(self._convert_gdn1_weights_hook)
+
+    def _get_swa_mask(
+        self,
+        seq_len: int,
+        sliding_window: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Return a sliding-window causal mask, caching by (seq_len, sliding_window, device, dtype)."""
+        key = (seq_len, sliding_window, device, dtype)
+        cached = self._swa_mask_cache.get(key)
+        if cached is None or cached.shape[0] < seq_len:
+            mask = torch.full(
+                (seq_len, seq_len), float("-inf"), device=device, dtype=dtype
+            )
+            mask = torch.triu(mask, diagonal=1)
+            for i in range(seq_len):
+                lo = max(0, i - sliding_window + 1)
+                mask[i, :lo] = float("-inf")
+            self._swa_mask_cache[key] = mask
+            return mask
+        return cached[:seq_len, :seq_len]
 
     def _convert_gdn1_weights_hook(
         self, state_dict: dict[str, Any], prefix: str, *args: Any, **kwargs: Any

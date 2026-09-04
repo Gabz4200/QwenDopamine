@@ -260,7 +260,7 @@ def build_text_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineTextConfig:
     if isinstance(src, dict):
         src = _as_obj(src)
 
-    cfg_kwargs = dict(  # noqa: C408  # noqa: C408
+    cfg_kwargs = dict(  # noqa: C408
         vocab_size=getattr(src, "vocab_size", 248320),
         hidden_size=getattr(src, "hidden_size", 1024),
         intermediate_size=getattr(src, "intermediate_size", 3584),
@@ -304,7 +304,7 @@ def build_vision_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineVisionConfig:
     if isinstance(src, dict):
         src = _as_obj(src)
 
-    cfg_kwargs = dict(  # noqa: C408  # noqa: C408
+    cfg_kwargs = dict(  # noqa: C408
         hidden_size=getattr(src, "hidden_size", 1280),
         in_channels=getattr(src, "in_channels", 3),
         intermediate_size=getattr(src, "intermediate_size", 3072),

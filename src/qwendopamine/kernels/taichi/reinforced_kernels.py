@@ -28,23 +28,6 @@ Shape contract (backward, per-batch):
     dk, dv         [B, D]
     d_omega_w_eff  [B, D]
     d_omega_e_eff  [B, D]
-
-Module structure
-----------------
-The file is organised top-down from low-level to public-facing:
-
-  1. ``_make_effective_gate`` — helper: contract ``omega`` with the
-     per-channel gate into the 2D effective-gate buffer.
-  2. ``_build_delta_core_step_kernel`` / ``launch_delta_core_step`` —
-     the per-token forward Taichi kernel + its launcher.
-  3. ``_build_delta_core_step_bwd_kernel`` / ``launch_delta_core_step_bwd`` —
-     the per-token adjoint Taichi kernel + its launcher.
-  4. ``_DeltaCoreStepFunction`` / ``_ChunkwiseDeltaCoreStepFunction`` —
-     the ``torch.autograd.Function`` wrappers that record the
-     per-step adjoints and expose a single op boundary.
-  5. ``delta_core_step_out`` / ``delta_core_step`` / ``chunkwise_delta_core_step_out`` —
-     the public Python API. Use these from application code; the
-     Function classes are private to the kernels module.
 """
 
 from typing import Any

@@ -33,26 +33,6 @@ When stacked across the time axis, the saved ``S_t`` at every step makes
 the recurrence backpropagation a clean linear sweep. The backward kernel
 below recomputes the small forward intermediates (``S_dec``, ``v_write``)
 from the saved inputs to avoid storing extra scratch.
-
-Module structure
-----------------
-The file is organised top-down from low-level to public-facing:
-
-  1. ``_build_recurrent_step_kernel`` / ``launch_recurrent_step`` —
-     the per-token forward Taichi kernel + its launcher.
-  2. ``_build_recurrent_step_bwd_kernel`` / ``launch_recurrent_step_bwd`` —
-     the per-token adjoint Taichi kernel + its launcher. The chunkwise
-     adjoint is implemented as a Python loop that replays the per-token
-     adjoint in reverse, which is mathematically correct and reuses the
-     kernel that has been validated against the canonical reference.
-  3. ``_build_chunk_fwd_bh_kernel`` / ``launch_chunk_fwd_per_bh`` —
-     the chunkwise per-(batch, head) forward kernel (templated on
-     chunk size at compile time).
-  4. ``launch_chunk_bwd_per_bh`` — the chunkwise backward dispatcher.
-
-The autograd ``Function`` classes that orchestrate the kernels live in
-:mod:`qwendopamine.kernels.taichi.gdn2_api`; the kernels here are pure
-Taichi launchers with no autograd state.
 """
 
 from typing import Any

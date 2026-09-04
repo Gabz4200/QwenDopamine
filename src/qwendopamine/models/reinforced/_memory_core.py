@@ -156,37 +156,12 @@ class DeltaMemoryCore(nn.Module):
         omega_E: Tensor,
     ) -> tuple[Tensor, Tensor]:
         U, V = factors
-        # Equivalent to ((1 - ωE) ⊙ (U V^T)) + (ωW ⊙ e k^T)
-        # Apply channel-wise decay to U: U' = (1 - ωE) ⊙ U
+        # Apply channel-wise decay: U' = (1 - omega_E) * U
         U_new = (1.0 - omega_E) * U
-        # Increment V along rank by the residual error projection on k_t:
-        # ΔV = (ωW ⊙ e) k_t^T then U_new = U_new + (ωW ⊙ e) k_t^T @ V
-        # We use the equivalent low-rank form by:
-        # S_new = U_new V^T + (ωW ⊙ e) k_t^T
-        # The first term keeps the rank r; the second term is rank 1.
-        # To preserve low rank, we fold the rank-1 update into U_new and V.
-        # We use a small truncation: store the rank-1 update as
-        # V_new = V + k_t r_t^T, U_new = U_new + (ωW ⊙ e - U_new V^T k_t / norm)
-        # Simpler and exact: add the rank-1 update as a new column by
-        # keeping the matrix form internally. Since d=4096 and r=64, we
-        # pay one extra d×r tensor per step. Cost is O(B d r).
+        # Absorb the rank-1 (omega_W ⊙ e) k^T update into V: V_new = V + (omega_W ⊙ e) ⊗ k.
         w_e = omega_W.squeeze(-1) * e_t  # (B, d)
-        # New V column (per batch): k_t scaled per row. Shape (B, d, 1).
         v_col = k_t.unsqueeze(-1)  # (B, d, 1)
-        # If the rank budget is exceeded we project the rank-1 update back
-        # into the existing rank-r subspace via a least-squares fold.
-        # We accept the rank increase by concatenating the column to V
-        # and, when V exceeds the budget r, perform an orthonormal QR
-        # truncation back to r. r is fixed; for stability we instead use
-        # the identity that S_new = U_new V^T + w_e k_t^T can be rewritten
-        # exactly by absorbing k_t into V: V_new = V + k_t a^T where a is
-        # chosen so that the contribution of the new column matches.
-        # Here we use the standard "delta-rule low-rank" trick: we
-        # represent the residual rank-1 outer product by adding k_t into V
-        # weighted by w_e, which gives the correct S_new.
         V_new = V + v_col * w_e.unsqueeze(-1)
-        # If we exceed rank r, project V_new back to the leading r columns
-        # via a randomized range finder to bound cost.
         if V_new.size(-1) > self.memory_rank:  # pyrefly: ignore[unsupported-operation]
             V_new = V_new[..., : self.memory_rank]  # pyrefly: ignore[unsupported-operation]
         return U_new, V_new

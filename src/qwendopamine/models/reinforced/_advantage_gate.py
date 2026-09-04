@@ -69,17 +69,10 @@ class AdvantageGate(nn.Module):
         self.erase_proj = nn.Linear(k_stats, 1)
 
         with torch.no_grad():
-            # Single scalar branch (legacy / coupled mode).
             self.advantage_proj.bias.zero_()
             self.advantage_proj.weight.zero_()
-            # plasticity_t = σ(|A_t|) at init: bias = 0 keeps the start
-            # of training near 0.5 (no special prior). Trainers can
-            # override the bias if a different default is desired.
             self.plasticity_proj.bias.zero_()
             self.plasticity_proj.weight.zero_()
-            # write / erase both start neutral: σ(b)=0.5 at b=0, which
-            # also makes the write / erase branches effectively inert on
-            # init so the legacy check still passes.
             self.write_proj.bias.zero_()
             self.write_proj.weight.zero_()
             self.erase_proj.bias.zero_()

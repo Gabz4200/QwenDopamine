@@ -476,26 +476,12 @@ def _delta_core_step_fake(
     return torch.empty_like(state)
 
 
-# Op-destination asymmetry note:
-# The Taichi ``delta_core_step_out`` in
-# :mod:`qwendopamine.ops.reward` is the **in-place** variant: it writes
-# the result into a caller-supplied ``next_state`` buffer. The
-# registered ``delta_core_step_op`` above is the **functional**
-# variant used by autograd and ``torch.compile``: it allocates a fresh
-# tensor and never mutates any input. Callers that need the
-# in-place form should go through :mod:`qwendopamine.ops.reward`
-# directly, not through the custom-op registry.
-
-
 # ---------------------------------------------------------------------------
 # Per-accelerator kernel registration
 # ---------------------------------------------------------------------------
-# Register a per-device kernel for every accelerator the host
-# exposes. The kernel migrates the inputs to the active device, runs
-# the same body the CPU kernel uses, and returns the result on the
-# active device (PyTorch's standard dispatcher returns the result
-# on the device the kernel produced it on, so callers see the
-# accelerator-native output without a migration).
+# Register a per-device kernel for every accelerator the host exposes.
+# Inputs migrate to the active device, the body runs, and the result is
+# returned on the producing device (PyTorch dispatcher behavior).
 def register_accelerator_kernels() -> None:
     """Register one kernel per available accelerator device type.
 

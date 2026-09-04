@@ -123,8 +123,6 @@ class ReinforcedDeltaLayer(nn.Module):
         self.stats_normalizer = LearnableSoftsign(
             per_channel=True, num_channels=k_stats
         )
-
-        # RL components
         self.baseline_tracker = ValueBaselineEMA(
             d_model, k_stats, init_alpha=init_alpha
         )
@@ -133,8 +131,6 @@ class ReinforcedDeltaLayer(nn.Module):
             dropout=advantage_dropout,
             legacy_coupled=advantage_legacy_coupled,
         )
-
-        # Core memory
         self.memory_core = DeltaMemoryCore(
             d_model=d_model,
             use_short_conv=use_short_conv,
@@ -142,12 +138,10 @@ class ReinforcedDeltaLayer(nn.Module):
             conv_bias=conv_bias,
             memory_rank=memory_rank,
         )
-
-        # Query projection and FiLM conditioning
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
-        self.reward_encoder = reward_encoder  # Returns (gamma, beta) from R_stats
+        self.reward_encoder = reward_encoder
 
-        # Small-gain init for stability (keeps FiLM near identity at start)
+        # Small-gain init keeps FiLM near identity at start.
         torch.nn.init.xavier_uniform_(self.q_proj.weight, gain=2**-2.5)
 
     def _initial_state(
@@ -192,17 +186,12 @@ class ReinforcedDeltaLayer(nn.Module):
         if V_prev is None:
             V_prev = torch.zeros(B, self.k_stats, device=x.device, dtype=x.dtype)
 
-        # 1. Reward Statistics Extraction & Normalization
         R_stats = self.stats_extractor(
             reward_values, batch_size=B, seq_len=1
         )  # (B, 1, k_stats)
         R_stats = self.stats_normalizer(R_stats).squeeze(1)  # (B, k_stats)
 
-        # 2. RL: Baseline Tracking & Advantage Gate
         V_t, A_t = self.baseline_tracker(x, R_stats, V_prev)  # (B, k_stats) each
-        # The gate is split into plasticity, write, and erase so negative
-        # advantage actively erases memory (instead of merely freezing it)
-        # and large-magnitude advantage increases plasticity.
         gate_out = self.advantage_gate(A_t)
         if self.advantage_legacy_coupled:
             (omega_t,) = gate_out
@@ -212,14 +201,12 @@ class ReinforcedDeltaLayer(nn.Module):
         else:
             plasticity_t, write_t, erase_t = gate_out
 
-        # 3. FiLM Conditioning on Query (using normalized R_stats)
         q_t = self.q_proj(x)  # (B, d)
         gamma_t, beta_t = self.reward_encoder(R_stats)  # (B, d) each
         q_prime_t = gamma_t * q_t + beta_t  # (B, d)
 
-        # 4. Memory Update. The Taichi path is only valid for the dense
-        # state (memory_rank is None); for the low-rank path we fall
-        # back to the pure-PyTorch DeltaMemoryCore.
+        # Taichi path is only valid for the dense state (memory_rank is None);
+        # low-rank falls back to the pure-PyTorch DeltaMemoryCore.
         S_next, k_cache_out, v_cache_out = self._step_with_or_without_taichi(
             x=x,
             S_prev=S_prev,
@@ -230,7 +217,6 @@ class ReinforcedDeltaLayer(nn.Module):
             v_cache=v_cache,
         )
 
-        # 5. Readout with FiLM-modulated Query
         q_prime_unsig = q_prime_t.unsqueeze(-1)  # (B, d, 1)
         if self.memory_rank is None:
             assert isinstance(S_next, Tensor)
@@ -238,7 +224,6 @@ class ReinforcedDeltaLayer(nn.Module):
         else:
             assert isinstance(S_next, tuple)
             U, V = S_next
-            # (U V^T) q = U (V^T q)
             Vt_q = torch.bmm(V.transpose(1, 2), q_prime_unsig).squeeze(-1)  # (B, r)
             o_t = torch.bmm(U, Vt_q.unsqueeze(-1)).squeeze(-1)  # (B, d)
 

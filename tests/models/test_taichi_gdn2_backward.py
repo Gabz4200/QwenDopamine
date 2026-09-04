@@ -26,7 +26,11 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _make_inputs(B, T, H, K, V):
+def _make_inputs(
+    B, T, H, K, V
+) -> tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+]:
     torch.manual_seed(0)
     q = torch.randn(B, T, H, K, dtype=torch.float32).requires_grad_(True)
     k = torch.randn(B, T, H, K, dtype=torch.float32).requires_grad_(True)
@@ -38,7 +42,7 @@ def _make_inputs(B, T, H, K, V):
 
 
 @pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
-def test_recurrent_backward_matches_reference(shape):
+def test_recurrent_backward_matches_reference(shape) -> None:
     """Gradient of the Taichi recurrent path matches the torch reference."""
     B, T, H, K, V = shape
     q_ta, k_ta, v_ta, g_ta, b_ta, w_ta = _make_inputs(B, T, H, K, V)
@@ -69,7 +73,7 @@ def test_recurrent_backward_matches_reference(shape):
 
 
 @pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4)])
-def test_recurrent_training_step(shape):
+def test_recurrent_training_step(shape) -> None:
     """End-to-end: forward + backward + optimizer step converges."""
     B, T, H, K, V = shape
     q, k, v, g, b, w = _make_inputs(B, T, H, K, V)
@@ -88,7 +92,7 @@ def test_recurrent_training_step(shape):
 
 
 @pytest.mark.parametrize("shape", [(1, 8, 1, 4, 4), (1, 16, 1, 4, 4)])
-def test_chunk_backward_matches_reference(shape):
+def test_chunk_backward_matches_reference(shape) -> None:
     """Gradient of the Taichi chunkwise path matches the torch reference.
 
     The Taichi chunkwise forward's numerical contract matches the torch

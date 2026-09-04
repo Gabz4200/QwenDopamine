@@ -417,7 +417,8 @@ class TokenWiseFiLM(nn.Module):
                 f"or backward-compatible {2 * self.dim}, got {cond.size(-1)}."
             )
 
-        return x * gamma + beta
+        result: torch.Tensor = x * gamma + beta
+        return result
 
     def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         """Align ``cond`` to the same rank as ``x`` for broadcasting."""

@@ -68,7 +68,7 @@ class GDN2HFBlock(nn.Module):
             tuple[torch.Tensor, torch.Tensor | None, Any]:
             ``(hidden_states, attentions, past_key_values)``.
         """
-        return self.mixer(
+        result: tuple[torch.Tensor, torch.Tensor | None, Any] = self.mixer(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
@@ -76,6 +76,7 @@ class GDN2HFBlock(nn.Module):
             output_attentions=output_attentions,
             **kwargs,
         )
+        return result
 
 
 __all__ = ["GDN2HFBlock"]

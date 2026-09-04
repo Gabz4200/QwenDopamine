@@ -65,7 +65,11 @@ taichi_skip = pytest.mark.skipif(
 )
 
 
-def _rand_inputs(B, H, K, V, *, seed: int = 0):
+def _rand_inputs(
+    B, H, K, V, *, seed: int = 0
+) -> tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+]:
     torch.manual_seed(seed)
     return (
         torch.randn(B, H, K),
@@ -83,7 +87,7 @@ def _rand_inputs(B, H, K, V, *, seed: int = 0):
 
 
 @pytest.mark.parametrize("B,H,K,V", SHAPES_SINGLE)
-def test_torch_recurrent_single_step_matches_canonical(B, H, K, V):
+def test_torch_recurrent_single_step_matches_canonical(B, H, K, V) -> None:
     """Local torch ``gated_delta_2_step`` matches the canonical step."""
     torch.manual_seed(0)
     S = torch.randn(B, H, K, V)
@@ -124,7 +128,7 @@ def test_torch_recurrent_single_step_matches_canonical(B, H, K, V):
 
 
 @pytest.mark.parametrize("B,T,H,K,V", SHAPES_SEQ)
-def test_torch_recurrent_sequence_matches_canonical(B, T, H, K, V):
+def test_torch_recurrent_sequence_matches_canonical(B, T, H, K, V) -> None:
     """``torch_recurrent_gdn2`` matches the canonical sequence forward.
 
     ``torch_recurrent_gdn2`` always applies a ``d_k**-0.5`` scale on
@@ -182,7 +186,7 @@ def test_torch_recurrent_sequence_matches_canonical(B, T, H, K, V):
 
 
 @pytest.mark.parametrize("B,H,K,V", SHAPES_SINGLE)
-def test_torch_recurrent_per_step_grad_matches_canonical(B, H, K, V):
+def test_torch_recurrent_per_step_grad_matches_canonical(B, H, K, V) -> None:
     """Per-token VJP from torch autograd matches the hand-derived one.
 
     The torch autograd path runs through
@@ -265,7 +269,7 @@ def test_torch_recurrent_per_step_grad_matches_canonical(B, H, K, V):
 
 @taichi_skip
 @pytest.mark.parametrize("B,T,H,K,V", SHAPES_SEQ)
-def test_taichi_recurrent_forward_matches_canonical(B, T, H, K, V):
+def test_taichi_recurrent_forward_matches_canonical(B, T, H, K, V) -> None:
     """Taichi recurrent forward matches the canonical sequence forward."""
     torch.manual_seed(3)
     q = torch.randn(B, T, H, K)
@@ -313,7 +317,7 @@ def test_taichi_recurrent_forward_matches_canonical(B, T, H, K, V):
 
 @taichi_skip
 @pytest.mark.parametrize("B,H,K,V", SHAPES_SINGLE)
-def test_taichi_recurrent_per_step_backward_matches_canonical(B, H, K, V):
+def test_taichi_recurrent_per_step_backward_matches_canonical(B, H, K, V) -> None:
     """Taichi per-step VJP matches the canonical per-step VJP.
 
     The Taichi path is a single token wrapped in the autograd Function
@@ -410,7 +414,7 @@ def test_taichi_recurrent_per_step_backward_matches_canonical(B, H, K, V):
 
 @taichi_skip
 @pytest.mark.parametrize("B,T,H,K,V", SHAPES_SEQ)
-def test_taichi_chunkwise_forward_matches_canonical(B, T, H, K, V):
+def test_taichi_chunkwise_forward_matches_canonical(B, T, H, K, V) -> None:
     """Taichi chunkwise forward matches the canonical sequence forward.
 
     The local Taichi chunkwise kernel has a known float32 precision

@@ -44,7 +44,9 @@ SHAPES_SINGLE = [(1, 4), (2, 6), (1, 8)]
 SHAPES_SEQ = [(1, 4), (2, 6), (1, 8)]
 
 
-def _rand_inputs(B: int, D: int, *, seed: int = 0):
+def _rand_inputs(
+    B: int, D: int, *, seed: int = 0
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Random per-step inputs (state, k, v) + per-channel effective gates.
 
     The canonical reference operates on the pre-multiplied per-channel
@@ -74,7 +76,7 @@ def _rand_inputs(B: int, D: int, *, seed: int = 0):
 
 
 @pytest.mark.parametrize("B,D", SHAPES_SINGLE)
-def test_torch_single_step_matches_canonical(B, D):
+def test_torch_single_step_matches_canonical(B, D) -> None:
     """Local torch ``DeltaMemoryCore._update_dense`` matches the canonical step."""
     S, k, v, omega_w_eff, omega_e_eff = _rand_inputs(B, D)
     # The canonical contract: per-channel effective gates [B, D]. The
@@ -103,7 +105,7 @@ def test_torch_single_step_matches_canonical(B, D):
 
 
 @pytest.mark.parametrize("B,D", SHAPES_SINGLE)
-def test_torch_per_step_grad_matches_canonical(B, D):
+def test_torch_per_step_grad_matches_canonical(B, D) -> None:
     """Per-step VJP from torch autograd matches the hand-derived one.
 
     The torch reference uses per-channel ``ow_t`` / ``oe_t`` of shape
@@ -171,7 +173,7 @@ def test_torch_per_step_grad_matches_canonical(B, D):
 
 
 @pytest.mark.parametrize("B,D", SHAPES_SEQ)
-def test_torch_sequence_matches_canonical(B, D):
+def test_torch_sequence_matches_canonical(B, D) -> None:
     """Sequential canonical loop matches torch ref loop."""
     T = 3
     S0 = torch.zeros(B, D, D)
@@ -227,7 +229,7 @@ def _make_layer_taichi(use_taichi: bool, d_model: int = 8) -> ReinforcedDeltaLay
 
 @pytest.mark.skipif(not is_available(), reason="Taichi runtime not available")
 @pytest.mark.parametrize("B,D", SHAPES_SINGLE)
-def test_taichi_per_step_forward_matches_canonical(B, D):
+def test_taichi_per_step_forward_matches_canonical(B, D) -> None:
     """Taichi per-step forward matches the canonical single-step.
 
     Pass per-batch scalar ``omega_w`` / ``omega_e`` of shape ``[B, 1]``
@@ -276,7 +278,7 @@ def test_taichi_per_step_forward_matches_canonical(B, D):
 
 @pytest.mark.skipif(not is_available(), reason="Taichi runtime not available")
 @pytest.mark.parametrize("B,D", SHAPES_SINGLE)
-def test_taichi_per_step_backward_matches_canonical(B, D):
+def test_taichi_per_step_backward_matches_canonical(B, D) -> None:
     """Taichi per-step VJP matches the canonical hand-derived VJP.
 
     Composition: ``omega_w_eff = omega_w * write`` (per-channel). The
@@ -390,7 +392,7 @@ def test_taichi_per_step_backward_matches_canonical(B, D):
 # ---------------------------------------------------------------------------
 
 
-def test_torch_recurrent_sequence_matches_canonical_sequence():
+def test_torch_recurrent_sequence_matches_canonical_sequence() -> None:
     """``ReinforcedDeltaLayer`` (torch path, no Taichi) recurrent loop
     matches the canonical sequential loop over a 3-token sequence.
     """

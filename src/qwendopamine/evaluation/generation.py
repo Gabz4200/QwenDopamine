@@ -48,7 +48,8 @@ def generate_text(
         )
 
     out_tokens = outputs[0] if include_prompt else outputs[0][input_ids.shape[1] :]
-    return tokenizer.decode(out_tokens, skip_special_tokens=True)
+    result: str = tokenizer.decode(out_tokens, skip_special_tokens=True)
+    return result
 
 
 __all__ = ["generate_text"]

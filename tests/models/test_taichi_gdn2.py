@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.parametrize("use_l2norm", [True, False])
 @pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
-def test_recurrent_matches_reference(shape, use_l2norm):
+def test_recurrent_matches_reference(shape, use_l2norm) -> None:
     B, T, H, K, V = shape
     torch.manual_seed(0)
     q = torch.randn(B, T, H, K)
@@ -64,7 +64,7 @@ def test_recurrent_matches_reference(shape, use_l2norm):
 
 
 @pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
-def test_recurrent_does_not_mutate_caller_buffers(shape):
+def test_recurrent_does_not_mutate_caller_buffers(shape) -> None:
     B, T, H, K, V = shape
     torch.manual_seed(0)
     q = torch.randn(B, T, H, K)
@@ -89,7 +89,7 @@ def test_recurrent_does_not_mutate_caller_buffers(shape):
     assert init.sum().item() == init_sum_before
 
 
-def test_recurrent_matches_gated_delta_2_step_per_token():
+def test_recurrent_matches_gated_delta_2_step_per_token() -> None:
     B, H, K, V = 2, 3, 4, 4
     T = 6
     torch.manual_seed(1)
@@ -131,7 +131,7 @@ def test_recurrent_matches_gated_delta_2_step_per_token():
 
 
 @pytest.mark.parametrize("shape", [(1, 4, 1, 4, 4), (2, 8, 2, 4, 4), (1, 16, 3, 8, 8)])
-def test_chunk_matches_recurrent(shape):
+def test_chunk_matches_recurrent(shape) -> None:
     """Chunkwise output stays close to the recurrent reference.
 
     The naive WY solve in this Taichi implementation has a known float32

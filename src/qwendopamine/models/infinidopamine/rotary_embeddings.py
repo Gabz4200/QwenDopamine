@@ -44,8 +44,9 @@ class InfiniDopamineTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
             where ``inv_freq`` has shape ``[dim]``.
         """
         _ = kwargs
-        base = config.rope_parameters["rope_theta"]
-        partial_rotary_factor = config.rope_parameters.get("partial_rotary_factor", 1.0)
+        rope_parameters: Any = config.rope_parameters
+        base = rope_parameters["rope_theta"]
+        partial_rotary_factor = rope_parameters.get("partial_rotary_factor", 1.0)
         head_dim = (
             getattr(config, "head_dim", None)
             or config.hidden_size // config.num_attention_heads
@@ -53,5 +54,8 @@ class InfiniDopamineTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
         dim = int(head_dim * partial_rotary_factor)
 
         attention_factor = 1.0  # Unused in this type of RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
+        base_value: float = base
+        inv_freq = 1.0 / (
+            base_value ** (torch.arange(0, dim, 2, dtype=torch.float) / dim)
+        )
         return inv_freq.to(device), attention_factor

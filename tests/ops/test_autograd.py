@@ -56,7 +56,13 @@ def test_reward_reference_step_gradcheck() -> None:
     omega_e = torch.zeros(B, 1, dtype=torch.float64, requires_grad=True)
 
     # gradcheck needs a scalar output; sum the S_next output.
-    def f(s, kv, v, ow, oe):
+    def f(
+        s: torch.Tensor,
+        kv: torch.Tensor,
+        v: torch.Tensor,
+        ow: torch.Tensor,
+        oe: torch.Tensor,
+    ) -> torch.Tensor:
         return reward_reference_step(s, kv, v, ow, oe).sum()
 
     torch.autograd.gradcheck(

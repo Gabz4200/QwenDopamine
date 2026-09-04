@@ -824,7 +824,8 @@ class GatedDeltaNet2(nn.Module):
         out = self.o_proj(o)
         if is_padded and indices is not None:
             out = pad_input(out.squeeze(0), indices, batch, seq_len)
-        return out
+        result: torch.Tensor = out
+        return result
 
     # ------------------------------------------------------------------
     # Forward

@@ -41,7 +41,9 @@ from qwendopamine.models.gdn2.recurrence.recurrent import (
 # ---------------------------------------------------------------------------
 
 
-def _make_gdn2_layer(hidden_size: int = 64, num_heads: int = 2, head_dim: int = 32):
+def _make_gdn2_layer(
+    hidden_size: int = 64, num_heads: int = 2, head_dim: int = 32
+) -> GatedDeltaNet2:
     return GatedDeltaNet2(
         hidden_size=hidden_size,
         num_heads=num_heads,

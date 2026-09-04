@@ -3,7 +3,7 @@
 from qwendopamine.kernels.taichi import is_available
 
 
-def test_kernels_module_importable():
+def test_kernels_module_importable() -> None:
     """Verify qwendopamine.kernels.taichi is importable and exposes expected symbols."""
     from qwendopamine.kernels.taichi import (
         chunk_taichi_gdn2,

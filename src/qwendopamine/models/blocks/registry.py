@@ -140,12 +140,13 @@ def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
     if block_type in ("gated_reward_net", "grn"):
         grn_cls, grn_config_cls = _lazy_grn()
         hidden_size = getattr(config, "hidden_size", getattr(config, "n_embd", 2048))
-        return grn_cls(
+        result: nn.Module = grn_cls(
             grn_config_cls(
                 hidden_size=hidden_size,
                 layer_idx=layer_idx,
             )
         )
+        return result
     lazy_map = {
         "value_baseline_ema": _lazy_value_ema,
         "advantage_gate": _lazy_adv_gate,
@@ -167,4 +168,5 @@ def build_block(block_type: str, config: Any, layer_idx: int) -> nn.Module:
         # also check lazy keys for error message
         all_keys = list(BLOCKS.keys()) + list(lazy_map.keys())
         raise KeyError(f"Unknown block type: {block_type}. Available: {all_keys}")
-    return BLOCKS[block_type](config, layer_idx)
+    result: nn.Module = BLOCKS[block_type](config, layer_idx)
+    return result

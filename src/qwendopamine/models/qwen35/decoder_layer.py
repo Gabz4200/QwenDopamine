@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Unpack
+from typing import Any, Unpack
 
 import torch
 import torch.nn.functional as F
@@ -51,7 +51,9 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         layer_idx (int): Layer index for cache disambiguation.
     """
 
-    def __init__(self, config: Qwen3_5Config | Qwen3_5TextConfig, layer_idx: int):
+    def __init__(
+        self, config: Qwen3_5Config | Qwen3_5TextConfig, layer_idx: int
+    ) -> None:
         super().__init__(config, layer_idx)
 
         del self.in_proj_qkvz
@@ -64,7 +66,7 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         self.in_proj_b = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
         self.in_proj_a = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
 
-    def fix_query_key_value_ordering(self):
+    def fix_query_key_value_ordering(self) -> None:
         r"""fix_query_key_value_ordering() -> None
 
         No-op required by HF checkpoint loading.
@@ -81,7 +83,7 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         cache_params: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
-    ):
+    ) -> torch.Tensor:
         r"""forward(hidden_states: torch.Tensor, cache_params: Cache | None = None, attention_mask: torch.Tensor | None = None, **kwargs: Unpack[TransformersKwargs]) -> torch.Tensor
 
         Apply Gated Delta Rule 2 recurrence to hidden states.
@@ -206,7 +208,8 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1)
 
         output = self.out_proj(core_attn_out)
-        return output
+        result: torch.Tensor = output
+        return result
 
 
 class Qwen3_5Attention(Qwen3NextAttention):
@@ -226,7 +229,7 @@ class Qwen3_5MLP(Qwen3NextMLP):
         intermediate_size (int): Feed-forward hidden dimension.
     """
 
-    def __init__(self, config: Qwen3_5Config, intermediate_size: int):
+    def __init__(self, config: Qwen3_5Config, intermediate_size: int) -> None:
         super().__init__(config, intermediate_size)
         self.intermediate_size = intermediate_size
 
@@ -247,10 +250,11 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
         layer_idx (int): Layer index.
     """
 
-    def __init__(self, config: Qwen3_5TextConfig, layer_idx: int):
+    def __init__(self, config: Qwen3_5TextConfig, layer_idx: int) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.block_type = config.layer_types[layer_idx]
+        layer_types: Any = config.layer_types
+        self.block_type = layer_types[layer_idx]
         if self.block_type == "linear_attention":
             self.linear_attn = Qwen3_5GatedDeltaNet(config, layer_idx)
         elif self.block_type == "full_attention":
@@ -270,7 +274,7 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> torch.FloatTensor:
         r"""forward(hidden_states: torch.Tensor, position_embeddings=None, attention_mask=None, position_ids=None, past_key_values=None, **kwargs) -> torch.FloatTensor
 
@@ -318,4 +322,5 @@ class Qwen3_5DecoderLayer(GradientCheckpointingLayer):
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
-        return hidden_states
+        result: torch.FloatTensor = hidden_states
+        return result

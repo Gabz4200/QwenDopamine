@@ -353,7 +353,8 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
         output = self.out_proj(core_attn_out)
         if self.training and self.hidden_dropout > 0.0:
             output = F.dropout(output, p=self.hidden_dropout, training=True)
-        return output
+        result: torch.Tensor = output
+        return result
 
     def get_gate_regularization_loss(
         self, target: float = 0.5, hidden_states: torch.Tensor | None = None
@@ -635,7 +636,8 @@ class InfiniDopamineMLP(Qwen3NextMLP):
         down = self.down_proj(gate * up)
         if self.training and self.hidden_dropout > 0.0:
             down = F.dropout(down, p=self.hidden_dropout, training=True)
-        return down
+        result: torch.Tensor = down
+        return result
 
 
 class InfiniDopamineRMSNorm(Qwen3NextRMSNorm):
@@ -685,7 +687,8 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         self.hidden_dropout = getattr(
             config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
         )
-        self.block_type = config.layer_types[layer_idx]
+        layer_types: Any = config.layer_types
+        self.block_type = layer_types[layer_idx]
 
         if self.block_type in self._LINEAR_BLOCK_TYPES:
             self.linear_attn = InfiniDopamineGatedDeltaNet(config, layer_idx)
@@ -736,7 +739,8 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
             return layer_idx in explicit_layers
         if not getattr(config, "use_parallel_reward", False):
             return False
-        return config.layer_types[layer_idx] in cls._ATTENTION_BLOCK_TYPES
+        layer_types: Any = config.layer_types
+        return layer_types[layer_idx] in cls._ATTENTION_BLOCK_TYPES
 
     def _init_parallel_reward_branch(
         self, config: InfiniDopamineTextConfig, layer_idx: int
@@ -767,7 +771,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
         reward_values: torch.Tensor | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> torch.FloatTensor:
         r"""forward(hidden_states: torch.Tensor, position_embeddings=None, attention_mask=None, position_ids=None, past_key_values=None, reward_values=None, **kwargs) -> torch.FloatTensor
 
@@ -838,4 +842,5 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
 
         hidden_states = residual + hidden_states
 
-        return hidden_states
+        result: torch.FloatTensor = hidden_states
+        return result

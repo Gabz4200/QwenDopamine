@@ -496,19 +496,21 @@ class HFIntegration:
             )
 
         if from_gguf or model_name.endswith(".gguf"):
-            return AutoModelForCausalLM.from_pretrained(
+            gguf_result: PreTrainedModel = AutoModelForCausalLM.from_pretrained(  # type: ignore[assignment]
                 model_name,
                 quantization_config=quantization_config,
                 device_map=device_map,
                 gguf_file=model_name if model_name.endswith(".gguf") else None,
                 **kwargs,
             )
-        return AutoModelForCausalLM.from_pretrained(
+            return gguf_result
+        result2: PreTrainedModel = AutoModelForCausalLM.from_pretrained(  # type: ignore[assignment]
             model_name,
             quantization_config=quantization_config,
             device_map=device_map,
             **kwargs,
         )
+        return result2
 
     @staticmethod
     def load_tokenizer(

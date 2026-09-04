@@ -21,7 +21,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _make_inputs(B, D, requires_grad_state: bool = True):
+def _make_inputs(
+    B, D, requires_grad_state: bool = True
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
     """Build a fresh set of grad-requiring inputs for one step."""
     torch.manual_seed(0)
     state = torch.zeros(B, D, D)
@@ -36,7 +46,15 @@ def _make_inputs(B, D, requires_grad_state: bool = True):
     return state, k, v, omega_w, omega_e, write, erase
 
 
-def _ref_step(state, k, v, omega_w, omega_e, write, erase):
+def _ref_step(
+    state: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_w: torch.Tensor,
+    omega_e: torch.Tensor,
+    write: torch.Tensor,
+    erase: torch.Tensor,
+) -> torch.Tensor:
     """Pure-PyTorch reference for the per-token state update.
 
     Mirrors the math that the Taichi kernel implements
@@ -63,7 +81,7 @@ def _ref_step(state, k, v, omega_w, omega_e, write, erase):
 
 
 @pytest.mark.parametrize("B,D", [(1, 4), (2, 8), (1, 16)])
-def test_delta_core_step_backward_matches_reference(B, D):
+def test_delta_core_step_backward_matches_reference(B, D) -> None:
     """Per-step gradient matches the pure-PyTorch reference to 1e-4."""
     (state_ta, k_ta, v_ta, ow_ta, oe_ta, W_ta, E_ta) = _make_inputs(B, D)
     (state_ref, k_ref, v_ref, ow_ref, oe_ref, W_ref, E_ref) = _make_inputs(B, D)
@@ -97,7 +115,7 @@ def test_delta_core_step_backward_matches_reference(B, D):
         )
 
 
-def test_delta_core_step_training_step_converges():
+def test_delta_core_step_training_step_converges() -> None:
     """One SGD step on a tiny linear model should reduce the loss."""
     torch.manual_seed(0)
     B, D = 1, 4
@@ -138,7 +156,7 @@ def test_delta_core_step_training_step_converges():
 
 
 @pytest.mark.parametrize("B,D,T", [(1, 4, 4), (2, 8, 3)])
-def test_multi_token_recurrence_backward(B, D, T):
+def test_multi_token_recurrence_backward(B, D, T) -> None:
     """The per-step backward chains correctly across multiple tokens."""
     torch.manual_seed(0)
     state_ta = torch.zeros(B, D, D).requires_grad_(True)

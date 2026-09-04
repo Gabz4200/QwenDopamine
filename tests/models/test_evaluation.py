@@ -5,6 +5,7 @@ from __future__ import annotations
 import types
 from typing import Any
 
+import pytest
 import torch
 
 from qwendopamine.evaluation import (
@@ -176,11 +177,8 @@ def test_when_compute_perplexity_max_steps_smaller_than_loader_then_truncates() 
 def test_when_layerwise_stats_then_attempts_model_forward_to_validate_inputs() -> None:
     from qwendopamine.evaluation import layerwise_stats
 
-    try:
-        layerwise_stats(object())
-        assert False, "expected error from forward attempt"
-    except Exception:
-        pass
+    with pytest.raises((TypeError, AttributeError, ValueError, RuntimeError)):
+        layerwise_stats(object(), [])
 
 
 def test_when_compute_perplexity_with_attention_mask_only_then_uses_mask_token_count() -> (

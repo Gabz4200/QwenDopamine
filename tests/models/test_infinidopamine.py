@@ -1228,11 +1228,8 @@ def test_when_token_wise_film_cond_shape_mismatch_then_raises() -> None:
     film = TokenWiseFiLM(dim=64, cond_dim=128)
     x = torch.randn(1, 4, 64)
     cond = torch.randn(1, 4, 64)  # wrong cond dim
-    try:
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         film(x, cond)
-        assert False, "expected error"
-    except Exception:
-        pass
 
 
 def test_when_token_wise_film_cond_too_few_features_then_raises() -> None:
@@ -1243,8 +1240,5 @@ def test_when_token_wise_film_cond_too_few_features_then_raises() -> None:
     film = TokenWiseFiLM(dim=64, cond_dim=128)
     x = torch.randn(1, 4, 64)
     cond = torch.randn(1, 2, 128)  # seq_len mismatch
-    try:
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         film(x, cond)
-        assert False, "expected error"
-    except Exception:
-        pass

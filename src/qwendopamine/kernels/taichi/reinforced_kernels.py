@@ -30,6 +30,8 @@ Shape contract (backward, per-batch):
     d_omega_e_eff  [B, D]
 """
 
+from typing import Any
+
 import torch
 
 from qwendopamine.kernels.taichi import runtime as _rt
@@ -37,7 +39,7 @@ from qwendopamine.kernels.taichi import runtime as _rt
 ti = _rt.ti  # type: ignore[assignment]
 
 
-def _make_effective_gate(omega, gate):
+def _make_effective_gate(omega: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
     """Contract the public ``[B, 1]`` or ``[B]`` omega with the
     channel-wise ``gate`` of shape ``[B, D]`` into the internal
     ``[B, D]`` per-channel effective gate.
@@ -53,11 +55,11 @@ def _make_effective_gate(omega, gate):
     return (omega * gate).contiguous()
 
 
-def _build_delta_core_step_kernel():
+def _build_delta_core_step_kernel() -> Any:
     rt = _rt.require()
 
-    @rt.kernel
-    def delta_core_step(
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def delta_core_step(  # pyrefly: ignore[unannotated-return]
         state: rt.types.ndarray(),  # pyrefly: ignore[invalid-annotation]
         k: rt.types.ndarray(),  # pyrefly: ignore[invalid-annotation]
         v: rt.types.ndarray(),  # pyrefly: ignore[invalid-annotation]
@@ -88,15 +90,15 @@ def _build_delta_core_step_kernel():
 
 
 def launch_delta_core_step(
-    state,
-    k,
-    v,
-    omega_w,
-    omega_e,
-    erase,
-    write,
-    next_state,
-):
+    state: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_w: torch.Tensor,
+    omega_e: torch.Tensor,
+    erase: torch.Tensor,
+    write: torch.Tensor,
+    next_state: torch.Tensor,
+) -> None:
     """Apply one Reinforced Delta state update: state -> next_state.
 
     ``omega_w`` and ``omega_e`` are per-batch scalar weights; they may be
@@ -120,11 +122,11 @@ def launch_delta_core_step(
     )
 
 
-def _build_delta_core_step_bwd_kernel():
+def _build_delta_core_step_bwd_kernel() -> Any:
     rt = _rt.require()
 
-    @rt.kernel
-    def delta_core_step_bwd(
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def delta_core_step_bwd(  # pyrefly: ignore[unannotated-return]
         state: rt.types.ndarray(),  # pyrefly: ignore[invalid-annotation]
         k: rt.types.ndarray(),  # pyrefly: ignore[invalid-annotation]
         v: rt.types.ndarray(),  # pyrefly: ignore[invalid-annotation]
@@ -210,18 +212,18 @@ def _build_delta_core_step_bwd_kernel():
 
 
 def launch_delta_core_step_bwd(
-    state,
-    k,
-    v,
-    omega_w_eff,
-    omega_e_eff,
-    dnext_state,
-    dstate,
-    dk,
-    dv,
-    d_omega_w_eff,
-    d_omega_e_eff,
-):
+    state: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_w_eff: torch.Tensor,
+    omega_e_eff: torch.Tensor,
+    dnext_state: torch.Tensor,
+    dstate: torch.Tensor,
+    dk: torch.Tensor,
+    dv: torch.Tensor,
+    d_omega_w_eff: torch.Tensor,
+    d_omega_e_eff: torch.Tensor,
+) -> None:
     """Per-token adjoint of :func:`launch_delta_core_step`.
 
     ``omega_w_eff`` and ``omega_e_eff`` are 2D ``[B, D]`` per-channel
@@ -360,15 +362,15 @@ class _DeltaCoreStepFunction(torch.autograd.Function):
 
 
 def delta_core_step_out(
-    state,
-    k,
-    v,
-    omega_w,
-    omega_e,
-    write,
-    erase,
-    next_state,
-):
+    state: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_w: torch.Tensor,
+    omega_e: torch.Tensor,
+    write: torch.Tensor,
+    erase: torch.Tensor,
+    next_state: torch.Tensor,
+) -> torch.Tensor:
     """Differentiable Reinforced Delta state update.
 
     Returns the new state ``next_state`` with gradients flowing

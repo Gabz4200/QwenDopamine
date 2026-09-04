@@ -51,6 +51,7 @@ import datetime
 import gc
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -304,11 +305,9 @@ def build_vision_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineVisionConfig:
         src = _as_obj(src)
 
     cfg_kwargs = dict(  # noqa: C408  # noqa: C408
-        depth=getattr(src, "depth", 12),
-        hidden_size=getattr(src, "hidden_size", 768),
+        hidden_size=getattr(src, "hidden_size", 1280),
         in_channels=getattr(src, "in_channels", 3),
         intermediate_size=getattr(src, "intermediate_size", 3072),
-        model_type=getattr(src, "model_type", "qwen3_5"),
         num_heads=getattr(src, "num_heads", 12),
         num_position_embeddings=getattr(src, "num_position_embeddings", 2304),
         out_hidden_size=getattr(src, "out_hidden_size", 1024),
@@ -321,13 +320,15 @@ def build_vision_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineVisionConfig:
     return InfiniDopamineVisionConfig(**cfg_kwargs)
 
 
-tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+tokenizer: Any = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
 try:
-    processor = AutoProcessor.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+    processor: Any = AutoProcessor.from_pretrained(
+        BASE_MODEL_NAME, trust_remote_code=True
+    )
 except (OSError, ValueError) as e:
     print(f"[WARN] AutoProcessor fallback to AutoTokenizer: {e}")
     processor = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
@@ -358,7 +359,14 @@ try:
     )
 except (OSError, ValueError) as e:
     print(f"[WARN] AutoModelForCausalLM fallback to AutoModelForVision2Seq: {e}")
-    from transformers import AutoModelForVision2Seq
+    try:
+        from transformers import (
+            AutoModelForVision2Seq,  # pyrefly: ignore[missing-module-attribute]
+        )
+    except ImportError as ie:
+        raise ImportError(
+            "Neither AutoModelForCausalLM nor AutoModelForVision2Seq is available"
+        ) from ie
 
     base_model = AutoModelForVision2Seq.from_pretrained(
         BASE_MODEL_NAME,
@@ -415,7 +423,7 @@ if USE_LORA:
 
 # Ensure ALL weights are trainable, including newly initialized ones
 # that are not present in the Qwen3.5 checkpoint.
-def ensure_all_trainable(model, missing_keys):
+def ensure_all_trainable(model: Any, missing_keys: list[str]) -> None:
     """Set requires_grad=True for all newly initialized parameters.
 
     InfiniDopamine contains GDN-2 / reward-net modules that are not
@@ -565,6 +573,7 @@ def format_openthoughts(example: dict) -> dict:
 
 def format_alfworld(example: dict) -> dict:
     steps_raw = example.get("steps", "[]")
+    steps: list[Any]
     if isinstance(steps_raw, str):
         try:
             steps = json.loads(steps_raw)
@@ -682,13 +691,16 @@ def format_wikitext(example: dict) -> dict:
 
 
 def format_r0b0tlab(example: dict) -> dict:
-    raw = example.get("messages_json", "[]")
-    if isinstance(raw, str):
+    raw: list[Any] = []
+    raw_value = example.get("messages_json", "[]")
+    if isinstance(raw_value, str):
         try:
-            raw = json.loads(raw)
+            raw = json.loads(raw_value)
         except json.JSONDecodeError as e:
             print(f"[WARN] Dataset formatting error: {e}")
             raw = []
+    else:
+        raw = raw_value if isinstance(raw_value, list) else []
     text = _flatten_messages(raw)
     task_type = example.get("task_type", "")
     source = example.get("source", "")
@@ -747,7 +759,8 @@ def format_example(example: dict, dataset_name: str) -> dict:
 def load_smb_dataset() -> IterableDataset:
     import zipfile
 
-    from huggingface_hub import HfHubHTTPError, hf_hub_download
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import HfHubHTTPError
 
     repo_id = "DylanRiden/smb-worldmodel-data"
     cache_dir = Path(SMB_CACHE_DIR)
@@ -772,7 +785,7 @@ def load_smb_dataset() -> IterableDataset:
     npz_files = sorted(extract_dir.rglob("*.npz"))
     print(f"Found {len(npz_files)} SMB .npz files")
 
-    def _gen():
+    def _gen() -> Iterator[dict]:
         for npz_path in npz_files:
             try:
                 data = np.load(npz_path)
@@ -792,7 +805,8 @@ def load_smb_dataset() -> IterableDataset:
 
 
 def load_maze_dataset() -> IterableDataset:
-    from huggingface_hub import HfHubHTTPError, snapshot_download
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import HfHubHTTPError
 
     cache_dir = Path(MAZE_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -811,7 +825,7 @@ def load_maze_dataset() -> IterableDataset:
         txt_files = sorted(maze_path.rglob("*.txt"))
     print(f"Found {len(txt_files)} maze .txt files")
 
-    def _gen():
+    def _gen() -> Iterator[dict]:
         for tf in txt_files:
             try:
                 text = tf.read_text(encoding="utf-8", errors="replace")
@@ -840,12 +854,13 @@ DATASET_SUBSET_MAP = {
 }
 
 
-def _apply_subset(ds, dataset_name: str) -> IterableDataset:
+def _apply_subset(ds: Any, dataset_name: str) -> IterableDataset:
     max_rows = DATASET_SUBSET_MAP.get(dataset_name)
     if max_rows is None:
-        return ds
+        result: IterableDataset = ds
+        return result
 
-    def _gen():
+    def _gen() -> Iterator[dict]:
         for count, ex in enumerate(ds):
             yield ex
             if count >= max_rows:
@@ -871,7 +886,8 @@ def build_streaming_dataset(
             formatter = DATASET_FORMATTERS.get(name)
             if formatter is not None:
                 ds = ds.map(
-                    lambda ex, name=name: format_example(ex, name), batched=False
+                    lambda ex, name=name: format_example(ex, name),  # pyrefly: ignore[implicit-any-lambda]
+                    batched=False,
                 )
             ds = _apply_subset(ds, name)
             streams.append(ds)
@@ -879,14 +895,15 @@ def build_streaming_dataset(
     if len(streams) == 1:
         return streams[0]
 
-    return interleave_datasets(
+    result_ds: IterableDataset = interleave_datasets(
         streams,
         seed=seed,
         stopping_strategy="all_exhausted",
     )
+    return result_ds
 
 
-def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> dict:
+def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> IterableDataset:
     train_dataset = build_streaming_dataset(dataset_names, seed=seed)
     sample = next(iter(train_dataset))
     print(f"Sample keys  : {list(sample.keys())}")
@@ -894,7 +911,8 @@ def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> dict:
     print(f"Sample length: {len(str(sample.get('text', '')))}")
     del sample
     gc.collect()
-    return train_dataset
+    result: IterableDataset = train_dataset
+    return result
 
 
 train_dataset = peek_streaming_dataset(CPT_DATASETS)
@@ -914,8 +932,8 @@ def tokenize_fn(example: dict) -> dict:
     }
 
 
-cols_to_remove = None
-if hasattr(train_dataset, "column_names"):
+cols_to_remove: list[str] = []
+if hasattr(train_dataset, "column_names") and train_dataset.column_names is not None:
     cols_to_remove = [
         c
         for c in train_dataset.column_names
@@ -990,14 +1008,14 @@ def build_reward_values(
 
 
 class CPTSFTTrainer(SFTTrainer):
-    def create_optimizer(self):
+    def create_optimizer(self) -> Any:
         """Create optimizer with lower LR for embedding layers, per Unsloth CPT guidance."""
         if hasattr(self, "optimizer") and self.optimizer is not None:
             return self.optimizer
 
         embed_param_names = {"embed_tokens", "lm_head"}
-        embed_params = []
-        other_params = []
+        embed_params: list[torch.nn.Parameter] = []
+        other_params: list[torch.nn.Parameter] = []
         for name, param in self.model.named_parameters():
             if not param.requires_grad:
                 continue
@@ -1015,21 +1033,22 @@ class CPTSFTTrainer(SFTTrainer):
         ]
 
         optimizer_cls = self.get_optimizer_cls()
-        return optimizer_cls(param_groups, **self.optimizer_kwargs)
+        result: Any = optimizer_cls(param_groups, **self.optimizer_kwargs)
+        return result
 
-    def __init__(self, *args, reward_every_n_steps: int = 1, **kwargs):
+    def __init__(self, *args, reward_every_n_steps: int = 1, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.reward_every_n_steps = max(1, int(reward_every_n_steps))
         self._global_step = 0
 
     def compute_loss(
         self,
-        model,
-        inputs,
+        model: Any,
+        inputs: dict,
         return_outputs: bool = False,
-        num_items_in_batch=None,
-        **kwargs,
-    ):
+        num_items_in_batch: Any = None,
+        **kwargs: Any,
+    ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         input_ids = inputs["input_ids"].to(model.device)
         attention_mask = inputs["attention_mask"].to(model.device)
         labels = inputs.get("labels")
@@ -1055,8 +1074,10 @@ class CPTSFTTrainer(SFTTrainer):
 
         loss = outputs.loss
         if return_outputs:
-            return loss, outputs
-        return loss
+            result_tuple: tuple[torch.Tensor, Any] = (loss, outputs)
+            return result_tuple
+        result: torch.Tensor = loss
+        return result
 
     def _log_parallel_reward_metrics(self, model, outputs) -> None:
         r"""Surface parallel reward branch diagnostics on a fixed cadence.

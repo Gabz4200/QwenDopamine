@@ -41,4 +41,5 @@ class LMHead(nn.Module):
         hidden_states = self.dense(hidden_states)
         hidden_states = torch.nn.functional.silu(hidden_states)
         hidden_states = self.norm(hidden_states)
-        return self.decoder(hidden_states)
+        result: torch.Tensor = self.decoder(hidden_states)
+        return result

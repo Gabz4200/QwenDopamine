@@ -121,7 +121,8 @@ class SwiGLU(nn.Module):
         x2 = self.w2(x)
         x = F.silu(x1) * x2
         x = self.w3(x)
-        return x
+        result: torch.Tensor = x
+        return result
 
 
 class LLaMAMLP(nn.Module):
@@ -145,7 +146,8 @@ class LLaMAMLP(nn.Module):
         Returns:
             torch.Tensor: Output ``[..., n_embd]``.
         """
-        return self.swiglu(x)
+        result: torch.Tensor = self.swiglu(x)
+        return result
 
 
 class CausalSelfAttention(nn.Module):
@@ -525,7 +527,8 @@ class GDN2GPT(nn.Module):
                 )
 
         x = self.ln_f(x)
-        return self.lm_head(x)
+        result: torch.Tensor = self.lm_head(x)
+        return result
 
     def gradient_checkpointing_enable(self) -> None:
         """gradient_checkpointing_enable() -> None

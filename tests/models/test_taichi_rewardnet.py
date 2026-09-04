@@ -15,7 +15,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _spec_update(S, k, v, omega_w_eff, omega_e_eff):
+def _spec_update(
+    S: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_w_eff: torch.Tensor,
+    omega_e_eff: torch.Tensor,
+) -> torch.Tensor:
     """Hand-derived column-wise spec matching ``DeltaMemoryCore._update_dense``.
 
     The state is laid out as ``S[b, d, k]`` (row=d, col=k). The torch
@@ -34,7 +40,7 @@ def _spec_update(S, k, v, omega_w_eff, omega_e_eff):
 
 
 @pytest.mark.parametrize("B,D,T", [(1, 8, 4), (2, 8, 6), (1, 16, 3)])
-def test_delta_core_step_matches_spec(B, D, T):
+def test_delta_core_step_matches_spec(B, D, T) -> None:
     torch.manual_seed(0)
     core = DeltaMemoryCore(d_model=D, use_short_conv=False, memory_rank=None)
     core.eval()

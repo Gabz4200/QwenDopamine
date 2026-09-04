@@ -27,7 +27,7 @@ layer types, and initialization hooks.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Unpack
+from typing import Any, ClassVar
 
 import torch
 from torch import nn
@@ -64,7 +64,6 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 from transformers.utils import can_return_tuple
 from transformers.utils.generic import (
-    TransformersKwargs,
     merge_with_config_defaults,
 )
 from transformers.utils.output_capturing import capture_outputs
@@ -111,7 +110,7 @@ class FamilyVisionModel(Qwen3VLVisionModel):
         hidden_states: torch.Tensor,
         grid_thw: torch.Tensor,
         **kwargs: Any,
-    ) -> torch.Tensor:
+    ) -> BaseModelOutputWithPooling:
         interp_indices, interp_weights = get_vision_interpolation_indices_and_weights(
             grid_thw,
             num_grid_per_side=self.num_grid_per_side,
@@ -184,7 +183,7 @@ class FamilyTextModel(Qwen3NextModel):
         past_key_values: Cache | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
@@ -274,7 +273,7 @@ class FamilyModel(Qwen3VLModel):
     _no_split_modules: ClassVar[list[str]] = []
 
     def __init__(self, config: Any) -> None:
-        Qwen3NextPreTrainedModel.__init__(self, config)
+        super().__init__(config)
         self._build_model_components(config)
         self.rope_deltas = None
         self.post_init()
@@ -283,9 +282,16 @@ class FamilyModel(Qwen3VLModel):
         """Override to add family-specific model components."""
 
     def get_video_features(
-        self, **super_kwargs: Any
+        self,
+        pixel_values_videos: torch.FloatTensor,
+        video_grid_thw: torch.LongTensor | None = None,
+        **super_kwargs: Any,
     ) -> tuple[Any, ...] | BaseModelOutputWithPooling:
-        return super().get_video_features(**super_kwargs)
+        return super().get_video_features(  # type: ignore[call-arg]
+            pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+            **super_kwargs,
+        )
 
     @can_return_tuple
     def get_image_features(
@@ -319,7 +325,7 @@ class FamilyModel(Qwen3VLModel):
         image_grid_thw: torch.LongTensor | None = None,
         video_grid_thw: torch.LongTensor | None = None,
         mm_token_type_ids: torch.IntTensor | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> tuple[Any, ...] | FamilyModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
@@ -396,12 +402,13 @@ class FamilyForCausalLM(Qwen3ForCausalLM):
         super().__init__(config)
         self.model = self._build_causal_lm_model(config)
 
-    def _build_causal_lm_model(self, config: Any) -> nn.Module:
+    def _build_causal_lm_model(self, config: Any) -> nn.Module | None:
         """Override to return family-specific text model."""
 
     def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
         r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
-        return self.model.get_gate_regularization_loss(target=target)
+        result: torch.Tensor = self.model.get_gate_regularization_loss(target=target)
+        return result
 
     def forward(
         self,
@@ -416,7 +423,7 @@ class FamilyForCausalLM(Qwen3ForCausalLM):
         output_hidden_states: bool | None = None,
         return_dict: bool | None = None,
         reward_values: torch.Tensor | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> CausalLMOutputWithPast:
         outputs: CausalLMOutputWithPast = super().forward(
             input_ids=input_ids,
@@ -458,7 +465,7 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
     ]
 
     def __init__(self, config: Any) -> None:
-        FamilyPreTrainedModel.__init__(self, config)
+        super().__init__(config)
         self.model = self._build_conditional_model(config)
         self.lm_head = nn.Linear(
             config.text_config.hidden_size,
@@ -467,13 +474,20 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         )
         self.post_init()
 
-    def _build_conditional_model(self, config: Any) -> nn.Module:
+    def _build_conditional_model(self, config: Any) -> nn.Module | None:
         """Override to return family-specific model."""
 
     def get_video_features(
-        self, **super_kwargs: Any
+        self,
+        pixel_values_videos: torch.FloatTensor,
+        video_grid_thw: torch.LongTensor | None = None,
+        **super_kwargs: Any,
     ) -> tuple[Any, ...] | BaseModelOutputWithPooling:
-        return super().get_video_features(**super_kwargs)
+        return super().get_video_features(  # type: ignore[call-arg]
+            pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+            **super_kwargs,
+        )
 
     def get_image_features(
         self, **super_kwargs: Any
@@ -496,7 +510,7 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         mm_token_type_ids: torch.IntTensor | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         reward_values: torch.Tensor | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> tuple | FamilyModelOutputWithPast:
         outputs = self.model(
             input_ids=input_ids,
@@ -552,7 +566,8 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
     def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
         r"""Compute total gate balance regularization loss across all GDN-2 mixer layers."""
-        return self.model.get_gate_regularization_loss(target=target)
+        result: torch.Tensor = self.model.get_gate_regularization_loss(target=target)
+        return result
 
 
 class FamilyTextForSequenceClassification(
@@ -586,9 +601,9 @@ class FamilyForSequenceClassification(
         image_grid_thw: torch.LongTensor | None = None,
         video_grid_thw: torch.LongTensor | None = None,
         mm_token_type_ids: torch.IntTensor | None = None,
-        **kwargs: Unpack[TransformersKwargs],
+        **kwargs: Any,
     ) -> SequenceClassifierOutputWithPast:
-        return super().forward(
+        result: SequenceClassifierOutputWithPast = super().forward(  # type: ignore[assignment]
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -601,3 +616,4 @@ class FamilyForSequenceClassification(
             mm_token_type_ids=mm_token_type_ids,
             **kwargs,
         )
+        return result

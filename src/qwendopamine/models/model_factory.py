@@ -93,7 +93,8 @@ class ResearchDecoder(nn.Module):
             out = layer(hidden_states)
             hidden_states = out[0] if isinstance(out, tuple) else out
         hidden_states = self.norm(hidden_states)
-        return self.lm_head(hidden_states)
+        result: torch.Tensor = self.lm_head(hidden_states)
+        return result
 
 
 def _unwrap_text_config(config: Any) -> Any:

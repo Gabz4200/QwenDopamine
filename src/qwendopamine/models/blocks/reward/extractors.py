@@ -226,7 +226,8 @@ class RewardStatisticsExtractor(nn.Module):
         if target_dtype is not None:
             reward_stats = reward_stats.to(target_dtype)
 
-        return reward_stats
+        result: torch.Tensor = reward_stats
+        return result
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str
@@ -339,7 +340,8 @@ class RewardFourierEncoder(nn.Module):
         # LearnableFourierFeatures expects (B, L, G, pos_dim), with G == g_dim.
         cond = self.fourier(reward_stats.unsqueeze(2))
 
-        return cond
+        result: torch.Tensor = cond
+        return result
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str
@@ -510,7 +512,8 @@ class RewardFiLM(nn.Module):
         elif orig_x_dim == 2:
             output = output.squeeze(1)
 
-        return output
+        result: torch.Tensor = output
+        return result
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str

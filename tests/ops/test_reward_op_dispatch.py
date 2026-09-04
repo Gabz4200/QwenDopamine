@@ -29,7 +29,9 @@ from qwendopamine.ops.reward import delta_core_step_out
 class TestRewardOpDispatch:
     """Dispatch fallback and signature parity for Reward/Delta ops."""
 
-    def test_fallback_when_taichi_unavailable(self, monkeypatch):
+    def test_fallback_when_taichi_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When taichi is forced unavailable, ops fall back to torch path."""
         # Monkeypatch is_available to return False
         monkeypatch.setattr("qwendopamine.kernels.taichi.is_available", lambda: False)
@@ -68,7 +70,9 @@ class TestRewardOpDispatch:
             f"Expected result dtype float32, got {result.dtype}"
         )
 
-    def test_correct_shape_and_dtype_when_taichi_unavailable(self, monkeypatch):
+    def test_correct_shape_and_dtype_when_taichi_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When taichi is unavailable the op still produces a tensor of correct shape/dtype."""
         from qwendopamine.kernels.taichi import is_available as _is_avail
 
@@ -111,7 +115,7 @@ class TestRewardOpDispatch:
             f"Expected result dtype float32, got {result.dtype}"
         )
 
-    def test_signature_matches_torch_reference(self):
+    def test_signature_matches_torch_reference(self) -> None:
         """The public op signature accepts the same args as the torch reference."""
         public_sig = inspect.signature(delta_core_step_out)
         public_params = set(public_sig.parameters.keys())

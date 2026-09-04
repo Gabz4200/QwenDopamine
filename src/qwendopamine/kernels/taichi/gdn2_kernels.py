@@ -44,11 +44,11 @@ from qwendopamine.kernels.taichi import runtime as _rt
 ti: Any = _rt.ti  # type: ignore[assignment]
 
 
-def _build_recurrent_step_kernel():
+def _build_recurrent_step_kernel() -> Any:
     rt = _rt.require()
 
-    @rt.kernel
-    def recurrent_step(
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def recurrent_step(  # pyrefly: ignore[unannotated-return]
         state: rt.types.ndarray(),  # type: ignore[invalid-annotation]
         q: rt.types.ndarray(),  # type: ignore[invalid-annotation]
         k: rt.types.ndarray(),  # type: ignore[invalid-annotation]
@@ -96,11 +96,11 @@ def launch_recurrent_step(state, q, k, v, a, b, w, next_state, y) -> None:
     kernel(state, q, k, v, a, b, w, next_state, y, K, V)
 
 
-def _build_recurrent_step_bwd_kernel():
+def _build_recurrent_step_bwd_kernel() -> Any:
     rt = _rt.require()
 
-    @rt.kernel
-    def recurrent_step_bwd(
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def recurrent_step_bwd(  # pyrefly: ignore[unannotated-return]
         state_in: rt.types.ndarray(),  # type: ignore[invalid-annotation]
         state_out: rt.types.ndarray(),  # type: ignore[invalid-annotation]
         q: rt.types.ndarray(),  # type: ignore[invalid-annotation]
@@ -354,10 +354,11 @@ def launch_chunk_bwd_per_bh(
 _SCRATCH: Any = {}
 
 
-def _get_chunk_scratch(C: int, K: int, V: int):
+def _get_chunk_scratch(C: int, K: int, V: int) -> dict[str, Any]:
     key = (C, K, V)
     if key in _SCRATCH:
-        return _SCRATCH[key]
+        result: dict[str, Any] = _SCRATCH[key]
+        return result
     import numpy as np
 
     _rt.require()  # ensure taichi is initialised
@@ -370,14 +371,15 @@ def _get_chunk_scratch(C: int, K: int, V: int):
         "U": np.zeros((C, V), dtype=np.float32),
         "delta": np.zeros((C, V), dtype=np.float32),
     }
-    return _SCRATCH[key]
+    result2: dict[str, Any] = _SCRATCH[key]
+    return result2
 
 
-def _build_chunk_fwd_per_bh_kernel():
+def _build_chunk_fwd_per_bh_kernel() -> Any:
     rt = _rt.require()
 
-    @rt.kernel
-    def chunk_fwd_bh(
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def chunk_fwd_bh(  # pyrefly: ignore[unannotated-return]
         q: rt.types.ndarray(),  # type: ignore[invalid-annotation]
         k: rt.types.ndarray(),  # type: ignore[invalid-annotation]
         v: rt.types.ndarray(),  # type: ignore[invalid-annotation]
@@ -397,7 +399,7 @@ def _build_chunk_fwd_per_bh_kernel():
         scale: rt.f32,
         K: rt.i32,
         V: rt.i32,
-        C: rt.template(),
+        C: rt.template(),  # pyrefly: ignore[invalid-annotation]
     ):
         for i in ti.static(range(C)):
             g_acc = rt.f32(0.0)

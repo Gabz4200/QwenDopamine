@@ -176,9 +176,8 @@ class InfiniDopamineTextModel(FamilyTextModel):
             if hasattr(layer, "linear_attn") and hasattr(
                 layer.linear_attn, "get_gate_regularization_loss"
             ):
-                losses.append(
-                    layer.linear_attn.get_gate_regularization_loss(target=target)
-                )
+                linear_attn: Any = layer.linear_attn
+                losses.append(linear_attn.get_gate_regularization_loss(target=target))
         if not losses:
             device = next(self.parameters()).device
             return torch.tensor(0.0, device=device)
@@ -266,24 +265,24 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
 
     def _apply_causal_lm_postprocessing(self, outputs: CausalLMOutputWithPast) -> None:
         """Add gate regularization and parallel-reward losses to ``outputs.loss``."""
+        loss: torch.Tensor | None = getattr(outputs, "loss", None)
         if (
-            getattr(outputs, "loss", None) is not None
+            loss is not None
             and self.training
             and getattr(self.config, "gate_loss_weight", 0.0) > 0.0
         ):
             target = getattr(self.config, "gate_target_balance", 0.5)
             gate_loss = self.get_gate_regularization_loss(target=target)
-            outputs.loss = outputs.loss + self.config.gate_loss_weight * gate_loss
+            outputs.loss = loss + self.config.gate_loss_weight * gate_loss
+            loss = outputs.loss
         if (
-            getattr(outputs, "loss", None) is not None
+            loss is not None
             and self.training
             and getattr(self.config, "use_parallel_reward", False)
         ):
             weight = getattr(self.config, "parallel_reward_gate_loss_weight", 0.0)
             if weight > 0.0:
-                outputs.loss = (
-                    outputs.loss + weight * self.get_parallel_reward_gate_loss()
-                )
+                outputs.loss = loss + weight * self.get_parallel_reward_gate_loss()
 
     def get_parallel_reward_gate_loss(self) -> torch.Tensor:
         r"""get_parallel_reward_gate_loss() -> torch.Tensor
@@ -386,7 +385,7 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
 
     def _apply_conditional_postprocessing(
         self,
-        loss: Any,
+        loss: torch.Tensor | None,
         outputs: Any,
     ) -> None:
         """Add gate regularization loss to ``outputs.loss``."""
@@ -410,13 +409,14 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
         Returns:
             torch.Tensor: Scalar regularization loss.
         """
-        return self.model.get_gate_regularization_loss(target=target)
+        result: torch.Tensor = self.model.get_gate_regularization_loss(target=target)
+        return result
 
     def load_qwen35_weights(
         self,
         weights: dict[str, torch.Tensor] | nn.Module,
         strict: bool = True,
-    ) -> Any:
+    ) -> _IncompatibleKeys:
         r"""load_qwen35_weights(weights, strict=True) -> _IncompatibleKeys
 
         Load Qwen3.5 weights into a multimodal model, splitting into vision,

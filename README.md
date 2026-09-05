@@ -1,150 +1,127 @@
+<div align="center">
+
 # QwenDopamine
 
-QwenDopamine is a PyTorch research framework for Qwen-style LLM architectures, designed to evaluate novel recurrent memory blocks, altered state dynamics, and agentic performance enhancements.
+**A PyTorch research framework for Qwen-style LLM architectures with novel recurrent memory blocks, parallel reward branches, and Hugging Face / GGUF interoperability.**
 
-It provides a pure PyTorch training and evaluation harness paired with Hugging Face `transformers` and GGUF weight interoperability.
+[![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-%E2%89%A52.0-ee4c2c?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![uv](https://img.shields.io/badge/uv-managed-5c4ee5?style=flat-square)](https://docs.astral.sh/uv/)
+[![HF Transformers](https://img.shields.io/badge/HuggingFace-transformers-ffd21e?style=flat-square)](https://huggingface.co/docs/transformers)
+[![Taichi](https://img.shields.io/badge/Taichi-kernels-1f6feb?style=flat-square)](https://www.taichi-lang.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square)](LICENSE)
 
-## Key Features
+[Overview](#overview) • [Features](#features) • [Architecture](#architecture) • [Quick start](#quick-start) • [Python API](#python-api) • [Project layout](#project-layout) • [Testing](#testing)
 
-- **InfiniDopamine Architecture**: Hybrid long-context architecture integrating dual-stream Infini-attention (SWA + GDN-2), parallel Gated Reward Networks, and Sliding Window Attention.
-- **Dual-Stream Infini-Attention with GDN-2**: Combines local Sliding Window Attention (SWA) and Gated DeltaNet-2 ([arXiv:2605.22791](https://arxiv.org/abs/2605.22791)) via a learnable per-head gate $\beta$ ([arXiv:2404.07143](https://arxiv.org/abs/2404.07143)) over shared QKV projections.
-- **Parallel Gated Reward Networks**: A `GatedRewardNet` fast-weight branch can be added in parallel to the main mixer with a data-dependent sigmoid gate initialized near zero (`sigmoid(-5) ≈ 0.0067`), preserving the pretrained main pathway while injecting reward-modulated plasticity.
-- **Multimodal Vision Tower**: Inherits the Qwen3.5-VL vision encoder (`InfiniDopamineVisionModel`) for image+text CPT. Vision weights load directly from Qwen3.5 checkpoints via `InfiniDopamineForConditionalGeneration.load_qwen35_weights`.
-- **Continued Pre-Training from Qwen3.5**: Full parameter compatibility with pretrained Qwen3.5 checkpoints via automatic state dict pre-hooks with `strict=True` support.
-- **Dataset Mixer**: Streaming multi-dataset CPT with per-dataset schema formatters for 16+ HF datasets (SMB frames, maze traces, sokoban CoT, chess PGN, ALFWorld trajectories, etc.).
-- **CPU-First Local Environment**: Local development resolves against CPU PyTorch wheels via `uv`, isolating GPU dependencies (`flash-linear-attention`, `unsloth`) to remote/Kaggle environments to avoid Triton driver conflicts.
-- **Strict Quality Gates**: Complete behavioral test suite with `pyrefly` type checking and `ruff` linting.
+</div>
 
-## InfiniDopamine Architecture
+---
 
-`InfiniDopamine` is a tiered sequence mixing strategy. The main mixer of every
-layer is selected explicitly by `config.layer_types[layer_idx]`; no implicit
-replacement happens based on neighbouring layers. An optional reward branch
-can run in parallel to that main mixer:
+## Overview
+
+QwenDopamine re-implements Qwen-style LLM architectures. On top of a clean Qwen3.5 baseline it ships three research contributions:
+
+- **Dual-stream Infini-attention**, which mixes a Gated DeltaNet-2 (GDN-2) linear recurrent memory with a local Sliding Window Attention (SWA), gated per-head by a learnable sigmoid projection.
+- **Parallel Gated Reward Networks**, a `GatedRewardNet` fast-weight branch that runs alongside the main mixer with a near-zero init gate so pretrained backbones are preserved.
+- **Optional Taichi-accelerated kernels** behind a single public ops layer (`qwendopamine.ops`) for the GDN-2 recurrence and the Reinforced-Delta memory core.
+
+The framework runs on CPU out of the box (PyTorch CPU wheels are pinned via `uv` index), ships a pure-PyTorch training/eval harness, and loads pretrained Qwen3.5 weights with `strict=True`.
+
+> [!NOTE]
+> Research code, not a production model. Default upstream weights are `Qwen/Qwen3.5-0.8B` (see `qwendopamine.DEFAULT_QWEN35_REPO`).
+
+## Features
+
+- **Modular InfiniDopamine model** (`qwendopamine.models.infinidopamine`) with explicit per-layer mixer selection via `config.layer_types[layer_idx]`. No implicit block swaps based on neighbours.
+- **Qwen3.5 weight compatibility**: pretrained text and vision checkpoints load directly with `strict=True`. Scalar erase gates expand across channel dimensions; gating parameters initialise to neutral defaults.
+- **Multimodal vision tower** that inherits the Qwen3.5-VL encoder (`InfiniDopamineForConditionalGeneration`) for image + text continued pre-training, with a `merger` projection ready for LoRA.
+- **Public ops layer** (`qwendopamine.ops`). Models import only from here. Forwards to Taichi kernels when available, otherwise falls back to pure-PyTorch references. No code path breaks when Taichi is absent.
+- **Hydra-based training CLI** with separate config trees for `model/`, `train/`, `data/`, and `experiment/`. Schedule, freezing, and parallel-reward monitoring are first-class.
+- **GGUF / safetensors / tokenizer integration** under `qwendopamine.integrations` for reading and writing the same model across HF, GGUF, and native PyTorch formats.
+- **CPU-first local development** with `uv` lockfile, plus `[gpu]` and `[cpt]` extras for remote / notebook runs. No GPU required to read code, run the test suite, or load weights.
+
+## Architecture
 
 ```
                        ┌─────────────────────────────────────────────────────────────┐
-                       │                   InfiniDopamine Decoder Layer              │
+                       │                InfiniDopamine Decoder Layer                   │
                        └─────────────────────────────────────────────────────────────┘
                                                       │
             ┌─────────────────────────────────────────┴──────────────────────────────────────────┐
             ▼                                                                                    ▼
    ┌────────────────────┐                                                              ┌────────────────────┐
    │     Main Mixer     │                                                              │   Parallel Branch  │
-   │ (block_type based) │                                                              │ (opt-in reward)    │
+   │  (explicit per     │                                                              │   (opt-in reward)  │
+   │   layer_types[])   │                                                              │                    │
    ├────────────────────┤                                                              ├────────────────────┤
    │ linear_attention / │                                                              │ InfiniDopamine     │
-   │ gdn2 → GDN-2+SWA   │                                                              │ GatedRewardNet     │
-   │ full/sliding → SWA │                                                              │  ├─ Memory Core    │
-   │ gated_reward_net → │                                                              │  ├─ Advantage Gate │
-   │ GatedRewardNet     │                                                              │  ├─ Value Baseline │
-   └─────────┬──────────┘                                                              │  └─ FiLM Modulator │
-             │                                                                         └─────────┬──────────┘
-             ▼                                                                                   ▼
-   shared input RMSNorm                                                       RMSNorm → sigmoid(W x + b) gate
-             │                                                                  (init near 0, learned)
+   │ gdn2 → GDN-2 + SWA │                                                              │ GatedRewardNet     │
+   │ full / sliding →   │                                                              │  ├─ Memory Core    │
+   │   Sliding Window   │                                                              │  ├─ Advantage Gate │
+   │ gated_reward_net → │                                                              │  ├─ Value Baseline │
+   │   GatedRewardNet   │                                                              │  └─ FiLM Modulator │
+   └─────────┬──────────┘                                                              └─────────┬──────────┘
              │                                                                         │
-             └───────────────────────  +  gate * reward_out  ───────────────────────────┘
+             ▼                                                                         ▼
+   shared input RMSNorm                                                RMSNorm → σ(W x + b) gate (init ≈ 0)
+             │                                                                         │
+             └─────────────────────  +  α · reward_out  ─────────────────────────────────┘
 ```
 
-### 1. Dual-Stream Infini-Attention (`InfiniDopamineGatedDeltaNet`)
+The main mixer is selected explicitly by `config.layer_types[layer_idx]`. The reward branch is **never** implicitly swapped in for the main mixer; it attaches only when the layer is listed in `config.parallel_reward_layers`, or when `use_parallel_reward=True` and the layer is an attention-only layer.
 
-For standard linear recurrent layers, `InfiniDopamineGatedDeltaNet` computes two attention representations using the same $Q, K, V$ projections:
+Two key components:
 
-1. **GDN-2 Linear Recurrent Memory ($A_{\text{gdn2}}$)**: Decoupled channel-wise erase gate $\mathbf{b} \in \mathbb{R}^{H_v \times d_k}$ and write gate $\mathbf{w} \in \mathbb{R}^{H_v \times d_v}$ with chunkwise/recurrent delta updates.
-2. **Local Sliding Window Attention ($A_{\text{swa}}$)**: Scaled dot-product attention restricted to a causal sliding window ($W=1024$ by default).
+- **`InfiniDopamineGatedDeltaNet`** computes two attention representations from shared $Q, K, V$: a GDN-2 linear recurrent memory with decoupled channel-wise erase / write gates, and a local SWA over a causal window (default `W=1024`). A learnable per-head gate $\text{sigmoid}(\beta + W x_t)$ blends them, starting at $\text{sigmoid}(\beta)=0.5$ and learning per-token balance over training.
+- **`InfiniDopamineGatedRewardNet`** runs alongside the main mixer with $h_L = h_{L-1} + \text{RMSNorm}(f_\text{main}(\cdot)) + \alpha \cdot \text{RMSNorm}(f_\text{dopamine}(\cdot), r)$. The gate $\alpha = \sigma(W x + b)$ is zero-initialised with bias $-5$ so $\sigma(-5) \approx 0.0067$ at start. Reward state (`recurrent_state`, `value_baseline`, `conv_state`) is written into `DynamicCache` under reward-specific keys so the GDN-2 cache is never clobbered.
 
-Each head dynamically combines the streams using a data-dependent gating projection over input token states $x_t$ anchored by a learnable bias $\beta \in \mathbb{R}^{1 \times 1 \times H_v \times 1}$ (`betas`):
+Taichi-backed ops live in `qwendopamine.kernels.taichi` and are exposed through:
 
-$$\text{gate}_{t} = \text{sigmoid}(\beta + W_{\text{gate}} x_t)$$
-$$A_t = \text{gate}_t \odot A_{\text{swa}, t} + (1 - \text{gate}_t) \odot A_{\text{gdn2}, t}$$
+| Public op                                  | Backend                                  |
+|--------------------------------------------|------------------------------------------|
+| `qwendopamine.ops.gdn2.recurrent_taichi_gdn2`  | per-token recurrent GDN-2 (fwd + VJP)   |
+| `qwendopamine.ops.gdn2.chunk_taichi_gdn2`      | chunkwise WY-style GDN-2 forward        |
+| `qwendopamine.ops.reward.delta_core_step`      | Reinforced-Delta memory core (per-token)|
+| `qwendopamine.ops.reward.chunkwise_delta_core_step_out` | chunkwise path with replay adjoint  |
 
-Initialized with $W_{\text{gate}} = 0$ and $\beta = 0$, training begins at an exact 50/50 balance ($\text{gate}_t = 0.5$) regularized toward balance early on before dynamically routing per token as representations mature.
+See [AGENTS.md](AGENTS.md) for the full Taichi invariants (backend init in `runtime.py`, per-token replay for chunkwise adjoint, scratch buffer reuse, fp32 default).
 
-### 2. Parallel Gated Reward Net (`InfiniDopamineGatedRewardNet`)
+## Quick start
 
-The reward branch is **never** implicitly swapped in for the main mixer. It is
-attached as a parallel branch to a layer only when the layer is explicitly
-selected via `config.parallel_reward_layers` or when
-`config.use_parallel_reward=True` and the layer is an attention-only layer
-(`full_attention` / `sliding_attention`). The forward path is:
-
-$$h_L = h_{L-1} + \text{RMSNorm}(f_{\text{main}}(\text{RMSNorm}(h_{L-1})))
-        + \alpha \cdot \text{RMSNorm}(f_{\text{dopamine}}(\text{RMSNorm}(h_{L-1}), r))$$
-
-with $\alpha = \sigma(W x + b)$, $W$ zero-initialized and $b$ defaulting to
-$-5$ so $\sigma(b) \approx 0.0067$ at start. The main mixer is preserved
-exactly; the dopamine branch is a small additive correction.
-
-The branch itself contains:
-
-- `RewardStatisticsExtractor` + `LearnableSoftsign` to turn raw reward signals
-  into normalized statistics.
-- A vectorial `ValueBaselineEMA` that tracks the running expectation of the
-  reward vector.
-- An `AdvantageGate` that collapses the advantage vector into a global
-  modulation scalar $\omega_t \in (0, 2)$.
-- A `DeltaMemoryCore` performing the gated delta-rule update
-  $S_{t+1} = (1 - \omega E) \odot S_t + (\omega W) \odot (e_t k_t^T)$. The
-  $\mathbf{d} \times \mathbf{d}$ state is optional and can be replaced by a
-  low-rank `memory_rank=r` factorization (`U, V ∈ R^{B × d × r}`) to reduce
-  memory and compute.
-- FiLM-conditioned query readout: $q_t \leftarrow \gamma(r_t) \odot q_t + \beta(r_t)$.
-
-State persistence is explicit: `GatedRewardNet` returns
-`{"recurrent_state", "value_baseline", "conv_state"}` from every forward, and
-`InfiniDopamineGatedRewardNet.forward` writes them into the Hugging Face
-`DynamicCache` under reward-specific fields (`reward_recurrent_state`,
-`reward_value_baseline`, `reward_conv_states`) so the GDN-2 branch state is
-never clobbered.
-
-### 3. Qwen3.5 Weight Compatibility
-
-Pretrained Qwen3.5 weights load directly into `InfiniDopamineForConditionalGeneration` with `strict=True`:
-- Scalar erase gates expand across channel dimensions $d_k$ and $d_v$.
-- Linear projections map into both GDN-2 and GatedRewardNet memory cores.
-- Vision tower weights (`model.visual.*`) load from Qwen3.5-VL checkpoint directly.
-- Gating parameters ($\beta$) and reward conditioning weights initialize to standard neutral defaults ($\text{sigmoid}(\beta)=0.5$, $\omega_t=1.0$).
-
-### 4. Multimodal Vision Tower
-
-`InfiniDopamineForConditionalGeneration` inherits the Qwen3.5-VL vision encoder via `InfiniDopamineVisionConfig`:
-- Vision encoder processes images → spatial feature maps → `merger.linear_fc1` + `merger.linear_fc2` project into language model hidden space.
-- LoRA targets include `merger.linear_fc1` and `merger.linear_fc2` for efficient multimodal fine-tuning.
-- `AutoProcessor` from `Qwen/Qwen3.5-0.8B` handles image preprocessing.
-
-## Repository Structure
-
-- `configs/` — Hydra configuration hierarchy for models (`infinidopamine_reference.yaml`, `qwen35_reference.yaml`), training protocols, and ablation studies.
-- `src/qwendopamine/` — core Python package:
-  - `models/infinidopamine/` — modular InfiniDopamine architecture, decoder layers, and causal LM heads.
-  - `models/qwen35/` — modular Qwen3.5 baseline and weight mappings.
-  - `models/gdn2/` — pure PyTorch reference kernels (`torch_chunk_gdn2`, `torch_recurrent_gdn2`) and `GatedRewardNet`.
-  - `models/blocks/` — block registry (`BLOCKS`) and reward components.
-  - `integrations/` — Hugging Face, GGUF, safetensors, and tokenizer loaders.
-  - `training/` — training loop, learning rate schedules, freezing logic, and metrics.
-  - `evaluation/` — perplexity computation, generation, and layerwise stats.
-  - `cli/` — Hydra CLI entrypoints (`train.py`).
-- `tests/` — behavioral pytest suite covering InfiniDopamine, GDN-2, reward components, and Qwen3.5.
-
-## Setup & Usage
-
-### Local CPU Environment
+The local CPU environment is the supported dev environment. Taichi resolves to its CPU backend when no GPU is available, so no code path breaks.
 
 ```bash
-# Sync local CPU environment with dev & HF dependencies
+# Clone
+git clone https://github.com/Gabz42/QwenDopamine.git
+cd QwenDopamine
+
+# Sync CPU + dev + HF extras (default quality-gate env)
 uv sync --extra cpu --extra dev --extra hf
 
-# Run Hydra training CLI
-uv run src/qwendopamine/cli/train.py
+# Run the test suite (skip slow tests that download HF weights)
+uv run pytest -m "not slow" -v
 
-# Run quality gates & tests
-uv run pyrefly check
+# Lint + type check
 uv run ruff check .
-uv run pytest -v
+uv run pyrefly check
+
+# Train via Hydra CLI
+uv run src/qwendopamine/cli/train.py
+# or via the console script
+uv run qwendopamine
 ```
 
-### Python API Example
+Optional extras:
+
+```bash
+uv sync --extra gpu    # trl, unsloth
+uv sync --extra cpt    # notebooks, jupyterlab, jupytext, peft, Pillow
+```
+
+> [!IMPORTANT]
+> `import qwendopamine` is intentionally cheap (~0.0 s). The `qwendopamine.models` package uses PEP 562 lazy `__getattr__` and only loads model submodules on first access. Replacing this with eager imports costs ~12 s of cold start.
+
+## Python API
 
 ```python
 import torch
@@ -156,7 +133,7 @@ from qwendopamine.models.infinidopamine import (
 )
 from transformers import AutoProcessor, AutoTokenizer
 
-# 1. Build multimodal config mirroring Qwen3.5-0.8B
+# 1. Build a multimodal config mirroring Qwen3.5-0.8B
 text_cfg = InfiniDopamineTextConfig(
     hidden_size=1024,
     num_hidden_layers=24,
@@ -170,30 +147,109 @@ vision_cfg = InfiniDopamineVisionConfig(
 cfg = InfiniDopamineConfig(text_config=text_cfg, vision_config=vision_cfg)
 model = InfiniDopamineForConditionalGeneration(cfg)
 
-# 2. Load pretrained Qwen3.5 weights (includes vision tower)
+# 2. Load pretrained Qwen3.5 weights (text + vision tower)
 model.load_qwen35_weights("Qwen/Qwen3.5-0.8B", strict=True)
 
-# 3. Prepare processor + tokenizer
 processor = AutoProcessor.from_pretrained("Qwen/Qwen3.5-0.8B", trust_remote_code=True)
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-0.8B", trust_remote_code=True)
 
-# 4. Forward with optional reward_values for CPT
+# 3. Forward with optional reward_values for continued pre-training
 input_ids = torch.tensor([[10, 20, 30, 40]])
 reward_values = torch.zeros_like(input_ids, dtype=torch.float32)
 output = model(input_ids=input_ids, reward_values=reward_values)
 ```
 
-## Multimodal Continued Pretraining
+## Multimodal continued pre-training
 
-See `notebooks/train-infini-dopamine.ipynb` for the full multimodal CPT pipeline. That notebook:
+[`notebooks/train-infini-dopamine.ipynb`](notebooks/train-infini-dopamine.ipynb) (Jupytext-paired `.py` companion) is a full multimodal CPT pipeline. It:
 
-- Streams **16 datasets** with per-dataset formatters
-- Uses `interleave_datasets` for memory-efficient mixing
-- Trains with LoRA on both text and vision tower projections
-- Saves merged checkpoints and pushes to Hugging Face Hub
+- Streams 16 HF datasets with per-dataset schema formatters (SMB frames, maze traces, sokoban CoT, chess PGN, ALFWorld trajectories, etc.).
+- Uses `interleave_datasets` for memory-efficient mixing.
+- Trains with LoRA on both text and vision tower projections.
+- Saves merged checkpoints and pushes to the Hugging Face Hub.
 
-## Development Conventions
+Requires the `[cpt]` and `[hf]` extras:
 
-- Use standard Hugging Face `transformers` for tokenization, generation, KV caching (`DynamicCache`), and checkpoint publishing.
-- Use pure PyTorch for novel research blocks, altered residual connections, state dynamics, custom losses, and training loops.
+```bash
+uv sync --extra cpt --extra hf
+```
+
+> [!WARNING]
+> That notebook downloads large datasets and pushes checkpoints to the Hub. **Do not run unless asked.**
+
+## Project layout
+
+```
+QwenDopamine/
+├── src/qwendopamine/
+│   ├── models/
+│   │   ├── infinidopamine/    # InfiniDopamine architecture, decoder, multimodal model
+│   │   ├── qwen35/            # Qwen3.5 baseline + weight mappings
+│   │   ├── gdn2/              # pure-PyTorch GDN-2 references + GatedRewardNet
+│   │   ├── reinforced/        # Reinforced-Delta canonical reference
+│   │   ├── blocks/            # block registry (BLOCKS) + reward components
+│   │   └── core/              # RMSNorm, embeddings, LMHead
+│   ├── ops/                   # public ops layer (models import from here only)
+│   ├── kernels/taichi/        # Taichi-accelerated GDN-2 + Reinforced-Delta kernels
+│   ├── integrations/          # HF, GGUF, safetensors, tokenizer loaders
+│   ├── training/              # loop, schedules, freezing, metrics, parallel reward
+│   ├── evaluation/            # perplexity, generation, layerwise stats
+│   ├── cli/                   # Hydra training entrypoint
+│   ├── distributed/           # FSDP / single-GPU helpers
+│   └── utils.py
+├── configs/                   # Hydra hierarchy: model/, train/, data/, experiment/
+├── tests/                     # pytest suite (InfiniDopamine, GDN-2, reward, Qwen3.5)
+├── notebooks/                 # Jupytext-paired CPT notebook
+├── assets/                    # metric curves, images
+└── AGENTS.md                  # working notes for coding agents (architecture, invariants)
+```
+
+## Testing
+
+Pytest, config in `pyproject.toml`. Marker `slow` deselects tests that download Qwen3.5-0.8B weights.
+
+```bash
+# Full suite
+uv run pytest -v
+
+# Fast feedback (skip slow)
+uv run pytest -m "not slow" -v
+
+# Subsystem focus
+uv run pytest tests/models/test_gdn2.py -v
+uv run pytest tests/models/test_taichi_gdn2.py tests/models/test_taichi_gdn2_backward.py -v
+uv run pytest tests/models/test_reward.py tests/models/test_rewardnet_canonical_validation.py -v
+uv run pytest tests/ops/ -v
+uv run pytest tests/kernels/ -v
+```
+
+Taichi tests gate on `qwendopamine.kernels.taichi.is_available()` and skip cleanly on machines where Taichi cannot initialise (headless CI, no GPU, missing drivers). To confirm the resolved backend:
+
+```bash
+uv run python -c "from qwendopamine.kernels.taichi import taichi_arch; print(taichi_arch())"
+# expected: cpu (or cuda / gpu); 'unavailable' means the import or init failed
+```
+
+## Development conventions
+
+- Standard HF `transformers` for tokenisation, generation, `DynamicCache`, and checkpoint publishing.
+- Pure PyTorch for novel research blocks, altered residual connections, state dynamics, custom losses, and training loops.
+- `r"""..."""` docstrings on public functions, matching the existing style in `cli/train.py` and `__init__.py`.
+- No `print` for diagnostics in library code; use `tqdm` or `logging`.
+- Imports: standard library, third-party, local; let `ruff` enforce.
 - Keep `logs/`, `data/`, `checkpoints/`, `.venv/`, and `.aislop/` out of Git history.
+
+Before opening a PR, run:
+
+```bash
+uv run ruff check .
+uv run pyrefly check
+uv run pytest -m "not slow" -v
+```
+
+## References
+
+- Gated DeltaNet-2: [arXiv:2605.22791](https://arxiv.org/abs/2605.22791)
+- Infini-attention: [arXiv:2404.07143](https://arxiv.org/abs/2404.07143)
+- Hugging Face `transformers`: [docs](https://huggingface.co/docs/transformers)
+- Taichi: [taichi-lang.org](https://www.taichi-lang.org/)

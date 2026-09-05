@@ -24,7 +24,6 @@ from typing import Any, Literal, cast
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange, repeat
 from torch import nn
 from transformers.cache_utils import Cache
 
@@ -35,7 +34,6 @@ from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
 from qwendopamine.models.gdn2.recurrence.packing import (
     get_unpad_data,
     index_first_axis,
-    pad_input,
 )
 from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
 
@@ -148,55 +146,47 @@ class GatedDeltaNet2(nn.Module):
         fp32_decay: bool = _DEFAULT_FP32_DECAY,
         **kwargs: Any,
     ) -> None:
+        r"""__init__(hidden_size_or_config=2048, hidden_size=None, num_heads=None, head_dim=None, layer_idx=None, mode="chunk", expand_v=1.0, num_v_heads=None, use_short_conv=True, allow_neg_eigval=False, conv_size=4, conv_bias=False, norm_eps=1e-5, chunk_size=64, backend="auto", compile_backend=False, fp32_decay=True, **kwargs) -> None
+
+        Initialize the GDN-2 token-mixing layer.
+
+        Accepts either an explicit field-by-field invocation or a single
+        config object as the first positional argument.
+
+        Args:
+            hidden_size_or_config (int | Any): First positional. A config
+                object (anything with ``hidden_size`` or ``n_embd``) or an int.
+            hidden_size (int | None): Hidden dimension. Default: ``None``.
+            num_heads (int | None): Number of query heads. Default: ``None``.
+            head_dim (int | None): Per-head dimension. Default: ``None``.
+            layer_idx (int | None): Layer index. Default: ``None``.
+            mode (Literal): ``"chunk"`` or ``"fused_recurrent"``. Default: ``"chunk"``.
+            expand_v (float): Value head expansion. Default: ``1.0``.
+            num_v_heads (int | None): Number of value heads. Default: ``None``.
+            use_short_conv (bool): Use the short-conv pre-filter. Default: ``True``.
+            allow_neg_eigval (bool): Allow negative eigenvalues. Default: ``False``.
+            conv_size (int): Conv kernel size. Default: ``4``.
+            conv_bias (bool): Conv bias. Default: ``False``.
+            norm_eps (float): RMS norm epsilon. Default: ``1e-5``.
+            chunk_size (int): Chunk size. Default: ``64``.
+            backend (str): Backend identifier. Default: ``"auto"``.
+            compile_backend (bool): Use ``torch.compile``. Default: ``False``.
+            fp32_decay (bool): Upcast decay to float32. Default: ``True``.
+            **kwargs: Extra fields forwarded to ``build_init_kwargs``.
+        """
         super().__init__()
 
-        # Support initialization via config object or explicit parameters
-        if hasattr(hidden_size_or_config, "hidden_size") or hasattr(
-            hidden_size_or_config, "n_embd"
-        ):
-            cfg = hidden_size_or_config
-            hidden_size = getattr(
-                cfg, "hidden_size", getattr(cfg, "n_embd", _DEFAULT_HIDDEN_SIZE)
-            )
-            num_heads = getattr(
-                cfg, "num_heads", getattr(cfg, "n_head", _DEFAULT_NUM_HEADS)
-            )
-            head_dim = getattr(
-                cfg, "head_dim", getattr(cfg, "head_size", _DEFAULT_HEAD_DIM)
-            )
-            num_v_heads = getattr(
-                cfg,
-                "num_v_heads",
-                getattr(cfg, "n_query_groups", num_v_heads or num_heads),
-            )
-            conv_size = getattr(
-                cfg, "conv_size", getattr(cfg, "conv_kernel_size", conv_size)
-            )
-            norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
-            allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
-            expand_v = getattr(cfg, "expand_v", expand_v)
-            chunk_size = getattr(
-                cfg, "chunk_size", getattr(cfg, "train_chunk_size", chunk_size)
-            )
-            backend = getattr(cfg, "backend", backend)
-            compile_backend = getattr(cfg, "compile_backend", compile_backend)
-            fp32_decay = getattr(cfg, "fp32_decay", fp32_decay)
-        elif hidden_size is None:
-            hidden_size = int(hidden_size_or_config)
+        from qwendopamine.models.gdn2._init import build_init_kwargs
 
-        if backend not in _GATED_DELTA_NET_BACKENDS:
-            raise ValueError(
-                f"Invalid GDN-2 backend '{backend}'. Valid backends: {list(_GATED_DELTA_NET_BACKENDS)}"
-            )
-
-        self._init_hyperparameters(
+        resolved = build_init_kwargs(
+            hidden_size_or_config=hidden_size_or_config,
             hidden_size=hidden_size,
             num_heads=num_heads,
             head_dim=head_dim,
-            num_v_heads=num_v_heads,
             layer_idx=layer_idx,
             mode=mode,
             expand_v=expand_v,
+            num_v_heads=num_v_heads,
             use_short_conv=use_short_conv,
             allow_neg_eigval=allow_neg_eigval,
             conv_size=conv_size,
@@ -206,7 +196,9 @@ class GatedDeltaNet2(nn.Module):
             backend=backend,
             compile_backend=compile_backend,
             fp32_decay=fp32_decay,
+            **kwargs,
         )
+        self._init_hyperparameters(**resolved)
         self._init_projections()
         self._init_decay_parameters()
         self._init_output_head()
@@ -232,9 +224,6 @@ class GatedDeltaNet2(nn.Module):
                 self._compiled_chunk = None
                 self.compile_error = e
 
-    # ------------------------------------------------------------------
-    # Initialization helpers
-    # ------------------------------------------------------------------
     def _init_hyperparameters(self, **kwargs: Any) -> None:
         (self.hidden_size,) = (kwargs["hidden_size"],)
         self.num_heads = kwargs["num_heads"] or _DEFAULT_NUM_HEADS
@@ -328,9 +317,6 @@ class GatedDeltaNet2(nn.Module):
             nn.init.ones_(module.weight)
         mark_initialised(module)
 
-    # ------------------------------------------------------------------
-    # State initialization
-    # ------------------------------------------------------------------
     def init_state(
         self, batch_size: int, device: torch.device, dtype: torch.dtype
     ) -> torch.Tensor:
@@ -358,9 +344,6 @@ class GatedDeltaNet2(nn.Module):
             dtype=dtype,
         )
 
-    # ------------------------------------------------------------------
-    # Single-token auto-regressive step
-    # ------------------------------------------------------------------
     def step(
         self,
         x_t: torch.Tensor,
@@ -456,58 +439,26 @@ class GatedDeltaNet2(nn.Module):
 
         return out_t, new_state, (new_q_conv, new_k_conv, new_v_conv)
 
-    # ------------------------------------------------------------------
-    # Cache management
-    # ------------------------------------------------------------------
     def _get_cache(
         self, past_key_values: Cache | dict[str, Any] | None
     ) -> tuple[
         torch.Tensor | None,
         tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None,
     ]:
-        if past_key_values is None:
-            return None, None
+        r"""_get_cache(past_key_values: Cache | dict[str, Any] | None) -> tuple[torch.Tensor | None, tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None]
 
-        if isinstance(past_key_values, Cache):
-            layers = getattr(past_key_values, "layers", [])
-            if self.layer_idx is not None and self.layer_idx < len(layers):
-                layer_cache = layers[self.layer_idx]
+        Delegate to :func:`qwendopamine.models.gdn2._cache.get_cache`.
 
-                rec_states = getattr(layer_cache, "recurrent_states", None)
-                if rec_states is None:
-                    rec_state = getattr(layer_cache, "recurrent_state", None)
-                elif isinstance(rec_states, torch.Tensor):
-                    rec_state = rec_states
-                elif isinstance(rec_states, dict):
-                    rec_state = rec_states.get(0)
-                elif isinstance(rec_states, (list, tuple)) and len(rec_states) > 0:
-                    rec_state = rec_states[0]
-                else:
-                    rec_state = None
+        Args:
+            past_key_values (Cache | dict[str, Any] | None): The cache to read.
 
-                conv_states = getattr(layer_cache, "conv_states", None)
-                if conv_states is None:
-                    conv_state = getattr(layer_cache, "conv_state", None)
-                elif isinstance(conv_states, dict):
-                    conv_state = (
-                        conv_states.get(0),
-                        conv_states.get(1),
-                        conv_states.get(2),
-                    )
-                elif isinstance(conv_states, (list, tuple)) and len(conv_states) == 3:
-                    conv_state = (conv_states[0], conv_states[1], conv_states[2])
-                else:
-                    conv_state = None
+        Returns:
+            tuple[torch.Tensor | None, tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None]:
+            ``(recurrent_state, conv_state)``.
+        """
+        from qwendopamine.models.gdn2._cache import get_cache
 
-                return rec_state, conv_state
-            return None, None
-
-        if isinstance(past_key_values, dict):
-            rec = past_key_values.get("recurrent_state")
-            conv = past_key_values.get("conv_state")
-            return rec, conv
-
-        return None, None
+        return get_cache(self.layer_idx, past_key_values)
 
     def _update_cache(
         self,
@@ -516,81 +467,20 @@ class GatedDeltaNet2(nn.Module):
         conv_state: tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
         | None,
     ) -> None:
-        if past_key_values is None:
-            return
+        r"""_update_cache(past_key_values, recurrent_state, conv_state) -> None
 
-        if self.layer_idx is not None and isinstance(past_key_values, Cache):
-            layers = getattr(past_key_values, "layers", [])
-            if self.layer_idx < len(layers):
-                layer_cache = layers[self.layer_idx]
-                is_recurrent_layer = (
-                    isinstance(layer_cache, LinearAttentionCacheLayerMixin)
-                    or hasattr(layer_cache, "update_recurrent_state")
-                    or hasattr(layer_cache, "recurrent_states")
-                )
-                if (
-                    is_recurrent_layer
-                    and hasattr(past_key_values, "update_recurrent_state")
-                    and recurrent_state is not None
-                ):
-                    try:
-                        past_key_values.update_recurrent_state(
-                            recurrent_state, self.layer_idx
-                        )
-                    except (
-                        TypeError,
-                        ValueError,
-                        AttributeError,
-                        RuntimeError,
-                        IndexError,
-                    ) as e:
-                        from qwendopamine.models.gdn2.backend import _warn_fallback_once
+        Delegate to :func:`qwendopamine.models.gdn2._cache.update_cache`.
 
-                        _warn_fallback_once(f"update_recurrent_state failed: {e}")
-                elif recurrent_state is not None:
-                    rec_dict = getattr(layer_cache, "recurrent_states", None)
-                    if isinstance(rec_dict, dict):
-                        rec_dict[0] = recurrent_state
-                    elif hasattr(layer_cache, "recurrent_state"):
-                        layer_cache.recurrent_state = recurrent_state
+        Args:
+            past_key_values (Cache | dict[str, Any] | None): The cache to update.
+            recurrent_state (torch.Tensor | None): Updated recurrent state.
+            conv_state (tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None] | None):
+                Updated short-conv state.
+        """
+        from qwendopamine.models.gdn2._cache import update_cache
 
-                if (
-                    is_recurrent_layer
-                    and hasattr(past_key_values, "update_conv_state")
-                    and conv_state is not None
-                ):
-                    try:
-                        past_key_values.update_conv_state(
-                            cast(Any, conv_state), self.layer_idx
-                        )
-                    except (
-                        TypeError,
-                        ValueError,
-                        AttributeError,
-                        RuntimeError,
-                        IndexError,
-                    ) as e:
-                        from qwendopamine.models.gdn2.backend import _warn_fallback_once
+        update_cache(self.layer_idx, past_key_values, recurrent_state, conv_state)
 
-                        _warn_fallback_once(f"update_conv_state failed: {e}")
-                elif conv_state is not None:
-                    conv_dict = getattr(layer_cache, "conv_states", None)
-                    if isinstance(conv_dict, dict):
-                        conv_dict[0] = conv_state[0]
-                        conv_dict[1] = conv_state[1]
-                        conv_dict[2] = conv_state[2]
-                    elif hasattr(layer_cache, "conv_state"):
-                        layer_cache.conv_state = conv_state
-
-        elif isinstance(past_key_values, dict):
-            if recurrent_state is not None:
-                past_key_values["recurrent_state"] = recurrent_state
-            if conv_state is not None:
-                past_key_values["conv_state"] = conv_state
-
-    # ------------------------------------------------------------------
-    # QKV projections and gate computation
-    # ------------------------------------------------------------------
     def _compute_qkv(
         self,
         hidden_states: torch.Tensor,
@@ -610,39 +500,46 @@ class GatedDeltaNet2(nn.Module):
         torch.Tensor | None,
         torch.Tensor | None,
     ]:
-        r"""Compute q, k, v projections and decay gates from hidden states."""
-        if self.use_short_conv:
-            q, conv_state_q = self.q_conv1d(
-                x=self.q_proj(hidden_states),
-                cache=conv_state_q,
-                output_final_state=use_cache or False,
-                cu_seqlens=cu_seqlens,
-            )
-            k, conv_state_k = self.k_conv1d(
-                x=self.k_proj(hidden_states),
-                cache=conv_state_k,
-                output_final_state=use_cache or False,
-                cu_seqlens=cu_seqlens,
-            )
-            v, conv_state_v = self.v_conv1d(
-                x=self.v_proj(hidden_states),
-                cache=conv_state_v,
-                output_final_state=use_cache or False,
-                cu_seqlens=cu_seqlens,
-            )
-        else:
-            q = F.silu(self.q_proj(hidden_states))
-            k = F.silu(self.k_proj(hidden_states))
-            v = F.silu(self.v_proj(hidden_states))
+        r"""_compute_qkv(hidden_states, conv_state_q, conv_state_k, conv_state_v, use_cache, cu_seqlens) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]
 
-        g = -self.A_log.float().exp().repeat_interleave(self.head_k_dim) * F.softplus(
-            self.f_proj(hidden_states).float() + self.dt_bias
+        Delegate to :func:`qwendopamine.models.gdn2._qkv.compute_qkv`.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            conv_state_q (torch.Tensor | None): Conv cache for Q.
+            conv_state_k (torch.Tensor | None): Conv cache for K.
+            conv_state_v (torch.Tensor | None): Conv cache for V.
+            use_cache (bool): Whether to return updated conv states.
+            cu_seqlens (Any): Cumulative sequence lengths for variable-length input.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+            ``(q, k, v, g, b, w, conv_state_q, conv_state_k, conv_state_v)``.
+        """
+        from qwendopamine.models.gdn2._qkv import compute_qkv
+
+        return compute_qkv(
+            hidden_states,
+            self.q_proj,
+            self.k_proj,
+            self.v_proj,
+            self.f_proj,
+            self.b_proj,
+            self.w_proj,
+            self.q_conv1d if self.use_short_conv else None,
+            self.k_conv1d if self.use_short_conv else None,
+            self.v_conv1d if self.use_short_conv else None,
+            self.use_short_conv,
+            conv_state_q,
+            conv_state_k,
+            conv_state_v,
+            self.A_log,
+            self.dt_bias,
+            self.head_k_dim,
+            self.fp32_decay,
+            use_cache,
+            cu_seqlens,
         )
-        g = g.float() if self.fp32_decay else g.to(hidden_states.dtype)
-
-        b = self.b_proj(hidden_states).sigmoid()
-        w = self.w_proj(hidden_states).sigmoid()
-        return q, k, v, g, b, w, conv_state_q, conv_state_k, conv_state_v
 
     def _prepare_tokens(
         self,
@@ -660,27 +557,38 @@ class GatedDeltaNet2(nn.Module):
         torch.Tensor,
         torch.Tensor,
     ]:
-        r"""Rearrange projections into per-head layout and apply value-head grouping."""
-        q = rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
-        k = rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
-        g = rearrange(g, "... (h d) -> ... h d", d=self.head_k_dim)
-        v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
-        b = rearrange(b, "... (h d) -> ... h d", d=self.head_k_dim)
-        w = rearrange(w, "... (h d) -> ... h d", d=self.head_v_dim)
+        r"""_prepare_tokens(q, k, v, g, b, w) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
-        if self.num_v_heads > self.num_heads:
-            groups = self.num_v_heads // self.num_heads
-            q, k, g, b = (
-                repeat(x, "... h d -> ... (h g) d", g=groups) for x in (q, k, g, b)
-            )
+        Delegate to :func:`qwendopamine.models.gdn2._prepare.prepare_tokens`.
 
-        if self.allow_neg_eigval:
-            b = b * 2.0
-        return q, k, v, g, b, w
+        Args:
+            q (torch.Tensor): Query ``[B, T, H, K]``.
+            k (torch.Tensor): Key ``[B, T, H, K]``.
+            v (torch.Tensor): Value ``[B, T, H, V]``.
+            g (torch.Tensor): Decay ``[B, T, H, K]``.
+            b (torch.Tensor): Erase gate ``[B, T, H, K]``.
+            w (torch.Tensor): Write gate ``[B, T, H, V]``.
 
-    # ------------------------------------------------------------------
-    # Backend dispatch
-    # ------------------------------------------------------------------
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            ``(q, k, v, g, b, w)`` in per-head layout.
+        """
+        from qwendopamine.models.gdn2._prepare import prepare_tokens
+
+        return prepare_tokens(
+            q,
+            k,
+            v,
+            g,
+            b,
+            w,
+            self.head_v_dim,
+            self.head_k_dim,
+            self.num_heads,
+            self.num_v_heads,
+            self.allow_neg_eigval,
+        )
+
     def _dispatch_backend(
         self,
         backend: str,
@@ -695,13 +603,41 @@ class GatedDeltaNet2(nn.Module):
         use_cache: bool,
         cu_seqlens: Any,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        r"""Dispatch the forward pass to the selected GDN-2 backend."""
-        if backend == "taichi":
-            return self._run_taichi_backend(
-                mode, q, k, v, g, b, w, recurrent_state, use_cache
-            )
-        return self._run_torch_backend(
-            backend, mode, q, k, v, g, b, w, recurrent_state, use_cache
+        r"""_dispatch_backend(backend, mode, q, k, v, g, b, w, recurrent_state, use_cache, cu_seqlens) -> tuple[torch.Tensor, torch.Tensor | None]
+
+        Delegate to :func:`qwendopamine.models.gdn2._prepare.dispatch_backend`.
+
+        Args:
+            backend (str): Selected backend identifier.
+            mode (str): Selected mode.
+            q (torch.Tensor): Query ``[B, T, H, K]``.
+            k (torch.Tensor): Key ``[B, T, H, K]``.
+            v (torch.Tensor): Value ``[B, T, H, V]``.
+            g (torch.Tensor): Decay ``[B, T, H, K]``.
+            b (torch.Tensor): Erase gate ``[B, T, H, K]``.
+            w (torch.Tensor): Write gate ``[B, T, H, V]``.
+            recurrent_state (torch.Tensor | None): Initial state.
+            use_cache (bool): Whether to return the final state.
+            cu_seqlens (Any): Cumulative sequence lengths.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor | None]: ``(output, final_state)``.
+        """
+        from qwendopamine.models.gdn2._prepare import dispatch_backend
+
+        return dispatch_backend(
+            self,
+            backend,
+            mode,
+            q,
+            k,
+            v,
+            g,
+            b,
+            w,
+            recurrent_state,
+            use_cache,
+            cu_seqlens,
         )
 
     def _run_taichi_backend(
@@ -827,9 +763,6 @@ class GatedDeltaNet2(nn.Module):
             )
         return _chunk_call()
 
-    # ------------------------------------------------------------------
-    # Output projection
-    # ------------------------------------------------------------------
     def _compute_output(
         self,
         hidden_states: torch.Tensor,
@@ -840,23 +773,37 @@ class GatedDeltaNet2(nn.Module):
         batch: int,
         seq_len: int,
     ) -> torch.Tensor:
-        r"""Apply the output gate, normalization, projection, and optional unpadding."""
-        gate = rearrange(
-            self.g_proj(hidden_states), "... (h d) -> ... h d", d=self.head_v_dim
-        )
-        if o is None:
-            raise RuntimeError("GDN-2 backend returned None output.")
-        o = self.o_norm(o, gate)
-        o = rearrange(o, "... h d -> ... (h d)")
-        out = self.o_proj(o)
-        if is_padded and indices is not None:
-            out = pad_input(out.squeeze(0), indices, batch, seq_len)
-        result: torch.Tensor = out
-        return result
+        r"""_compute_output(hidden_states: torch.Tensor, o: torch.Tensor, g: torch.Tensor, is_padded: bool, indices: torch.Tensor | None, batch: int, seq_len: int) -> torch.Tensor
 
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
+        Delegate to :func:`qwendopamine.models.gdn2._output.compute_output`.
+
+        Args:
+            hidden_states (torch.Tensor): Input ``[B, T, D]``.
+            o (torch.Tensor): Mixer output ``[B, T, H, V]``.
+            g (torch.Tensor): Reserved (unused).
+            is_padded (bool): Whether the input was padded.
+            indices (torch.Tensor | None): Unpad indices when ``is_padded``.
+            batch (int): Batch size.
+            seq_len (int): Padded sequence length.
+
+        Returns:
+            torch.Tensor: Output ``[B, T, D]``.
+        """
+        from qwendopamine.models.gdn2._output import compute_output
+
+        return compute_output(
+            hidden_states,
+            o,
+            self.g_proj,
+            self.o_norm,
+            self.o_proj,
+            self.head_v_dim,
+            is_padded,
+            indices,
+            batch,
+            seq_len,
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -948,29 +895,6 @@ class GatedDeltaNet2(nn.Module):
             None,
             past_key_values,
         )
-
-
-def _normalise_backend(name: str) -> str:
-    if name == "torch":
-        return "torch-chunk"
-    if name == "compiled":
-        return "torch-chunk"
-    if name in ("triton", "fla"):
-        return "taichi"
-    return name
-
-
-# Backends constant accessible from block module
-_GATED_DELTA_NET_BACKENDS = (
-    "auto",
-    "taichi",
-    "torch",
-    "torch-chunk",
-    "torch-recurrent",
-    "compiled",
-    "triton",
-    "fla",
-)
 
 
 __all__ = ["GatedDeltaNet2"]

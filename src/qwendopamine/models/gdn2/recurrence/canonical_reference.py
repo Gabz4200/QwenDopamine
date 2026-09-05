@@ -146,7 +146,6 @@ def canonical_gdn2_step_with_grad(
         dw_t     : ``[B, H, V]``          ``d L / d w_t``
         da_t     : ``[B, H, K]``          ``d L / d a_t``
     """
-    # ---- forward (operational form) ----
     S_dec = a_t.unsqueeze(-1) * S
     if scale_qk:
         q_t = q_t * (q_t.shape[-1] ** -0.5)
@@ -170,18 +169,6 @@ def canonical_gdn2_step_with_grad(
     v_new = w_t * v_t - v_ret
     S_next = S_dec + k_t.unsqueeze(-1) * v_new.unsqueeze(-2)
     y_t = torch.einsum(f"{sub_state},{sub_kv}->{sub_v}", S_next, q_t)
-
-    # ---- per-token VJP (hand-derived from the operational form) ----
-    # Derivation:
-    #   y[d]   = sum_k S_next[k, d] * q[k]
-    #   v_new[d] = w[d] * v[d] - v_ret[d]
-    #   v_ret[d] = sum_k S_dec[k, d] * (b[k] * k[k])
-    #   S_dec[k, d] = a[k] * S[k, d]
-    #   S_next[k, d] = S_dec[k, d] + k[k] * v_new[d]
-    #
-    # Let G = d y / d S_next -> G[k, d] = q[k] (then d L / d S_next
-    # is the outer product of dy with the upstream w.r.t. y).
-    # Use chain rule on the per-token shape.
 
     # dL/dS_next[k, d] = dy[d] * q[k]
     dS_next = q_t.unsqueeze(-1) * dy.unsqueeze(-2)  # [B,H,K,V]

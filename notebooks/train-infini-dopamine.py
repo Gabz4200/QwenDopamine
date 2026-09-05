@@ -27,23 +27,48 @@
 # Streams and interleaves tokenized trajectory, reasoning, and world-model datasets with reward-conditioned forward passes.
 
 # %% [code.1]
-# %pip install --quiet \
-#   "unsloth>=2024.7" \
-#   "transformers>=5.0.0" \
-#   "torch>=2.9.0" \
-#   "trl>=0.12.0" \
-#   "peft>=0.7.0" \
-#   "datasets>=2.20.0" \
-#   "accelerate>=0.34.0" \
-#   "bitsandbytes>=0.43.0" \
-#   "sentencepiece" \
-#   "tokenizers" \
-#   "einops" \
-#   "tensorboard" \
-#   "git+https://github.com/Gabz4200/QwenDopamine.git" \
-#   "Pillow" \
-#   "numpy" \
-#   "tqdm"
+# Install dependencies on Kaggle. Skips if qwendopamine is already installed.
+import importlib.util
+import subprocess
+import sys
+
+if importlib.util.find_spec("qwendopamine") is None:
+    print("[setup] Installing dependencies for Kaggle runtime...")
+    _QWEIGHT = "0.2.0"
+    _WHEEL_URL = (
+        "https://github.com/Gabz4200/QwenDopamine/releases/download/"
+        f"v{_QWEIGHT}/qwendopamine-{_QWEIGHT}-py3-none-any.whl"
+    )
+    _proc = subprocess.run(
+        [
+            sys.executable, "-m", "pip", "install", "-q",
+            "accelerate>=0.34.0",
+            "bitsandbytes>=0.43.0",
+            "datasets>=2.20.0",
+            "einops>=0.7.0",
+            "huggingface-hub>=0.20.0",
+            "numpy>=1.24.0",
+            "peft>=0.7.0",
+            "Pillow>=10.0.0",
+            "sentencepiece>=0.1.99",
+            "tokenizers>=0.15.0",
+            "torch>=2.0.0",
+            "tqdm>=4.65.0",
+            "transformers>=4.40.0,<5.0.0",
+            "trl>=0.12.0",
+            "tensorboard",
+            _WHEEL_URL,
+        ],
+        check=False,
+    )
+    if _proc.returncode != 0:
+        raise RuntimeError(
+            "pip install failed. On Kaggle, ensure Internet is ON and "
+            f"that a matching wheel exists at https://github.com/Gabz4200/QwenDopamine/releases/tag/v{_QWEIGHT}."
+        )
+    print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
+else:
+    print("[setup] qwendopamine already installed; skipping pip.")
 
 
 # %% [code.2]
@@ -75,8 +100,6 @@ from qwendopamine.integrations.huggingface import HFIntegration
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
     InfiniDopamineForConditionalGeneration,
-    InfiniDopamineTextConfig,
-    InfiniDopamineVisionConfig,
 )
 
 HFIntegration.register_infinidopamine_hf()
@@ -147,36 +170,18 @@ LORA_R: int = 16
 LORA_ALPHA: int = 32
 LORA_DROPOUT: float = 0.05
 USE_RSLORA: bool = True
+# Targets resolved to nn.Linear in InfiniDopamineDecoderLayer; non-Linear
+# reward-branch modules are trained directly instead.
 LORA_TARGET_MODULES = [
     "lm_head",
-    "embed_tokens",
-    "q_proj",
-    "k_proj",
-    "v_proj",
-    "o_proj",
-    "gate_proj",
-    "up_proj",
-    "down_proj",
     "in_proj_qkv",
     "in_proj_z",
     "in_proj_a",
     "in_proj_b",
     "in_proj_w",
     "in_proj_gate",
-    "output_proj",
-    "merger.linear_fc1",
-    "merger.linear_fc2",
-    "lm_head.dense",
-    "lm_head.decoder",
-    "delta_layer.q_proj",
-    "delta_layer.memory_core.k_proj",
-    "delta_layer.memory_core.v_proj",
-    "delta_layer.memory_core.w_proj",
-    "delta_layer.memory_core.e_proj",
-    "advantage_gate.advantage_proj",
-    "baseline_tracker.alpha_proj",
+    "out_proj",
     "reward_gate_proj",
-    "reward_branch_norm",
     "reward_branch.output_proj",
     "reward_branch.delta_layer.q_proj",
     "reward_branch.delta_layer.memory_core.k_proj",
@@ -211,11 +216,16 @@ WEIGHT_DECAY: float = 0.01
 LR_SCHEDULER_TYPE: str = "cosine"
 WARMUP_STEPS: int = 100
 NUM_TRAIN_EPOCHS: int = 1
+MAX_TRAIN_STEPS: int | None = None  # None = rely on num_train_epochs with finite dataset
 LOGGING_STEPS: int = 10
 SAVE_STEPS: int = 500
 SAVE_TOTAL_LIMIT: int = 2
 
-OUTPUT_DIR: str = f"./infini-dopamine-cpt-{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}"
+_KAGGLE_WORKING: str = os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
+OUTPUT_DIR: str = os.path.join(
+    _KAGGLE_WORKING,
+    f"infini-dopamine-cpt-{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}-{os.getpid()}",
+)
 RESUME_FROM_CHECKPOINT: str | None = None
 HUB_MODEL_ID: str = os.environ.get("HUB_MODEL_ID", "")
 PUSH_TO_HUB: bool = bool(HUB_MODEL_ID)
@@ -225,7 +235,6 @@ MERGE_LORA_AFTER_TRAINING: bool = True
 SMB_CACHE_DIR: str = "./smb-cache"
 MAZE_CACHE_DIR: str = "./maze-cache"
 
-MAX_ROWS_PER_DATASET: int | None = None
 LICHESS_MAX_ROWS: int = 500_000
 COT_EVAL_MAX_ROWS: int = 100_000
 R0B0TLAB_MAX_ROWS: int = 200_000
@@ -245,79 +254,19 @@ WIKITEXT_MAX_ROWS: int = 50_000
 
 
 # %% [code.6]
-def _as_obj(d: dict) -> Any:
-    class _Cfg:
-        pass
-
-    c = _Cfg()
-    for k, v in d.items():
-        setattr(c, k, v)
-    return c
-
-
-def build_text_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineTextConfig:
-    src = getattr(qwen_cfg, "text_config", qwen_cfg)
-    if isinstance(src, dict):
-        src = _as_obj(src)
-
-    cfg_kwargs = dict(  # noqa: C408
-        vocab_size=getattr(src, "vocab_size", 248320),
-        hidden_size=getattr(src, "hidden_size", 1024),
-        intermediate_size=getattr(src, "intermediate_size", 3584),
-        num_hidden_layers=getattr(src, "num_hidden_layers", 24),
-        num_key_value_heads=getattr(src, "num_key_value_heads", 2),
-        max_position_embeddings=getattr(src, "max_position_embeddings", 262144),
-        rms_norm_eps=getattr(src, "rms_norm_eps", 1e-6),
-        rope_theta=getattr(src, "rope_theta", 10_000_000.0),
-        attention_bias=getattr(src, "attention_bias", False),
-        hidden_act=getattr(src, "hidden_act", "silu"),
-        sliding_window=getattr(src, "sliding_window", None),
-        attn_output_gate=getattr(src, "attn_output_gate", True),
-        full_attention_interval=getattr(src, "full_attention_interval", 4),
-        linear_conv_kernel_dim=getattr(src, "linear_conv_kernel_dim", 4),
-        linear_key_head_dim=getattr(src, "linear_key_head_dim", 128),
-        linear_num_key_heads=getattr(src, "linear_num_key_heads", 16),
-        linear_num_value_heads=getattr(src, "linear_num_value_heads", 16),
-        linear_value_head_dim=getattr(src, "linear_value_head_dim", 128),
-        mlp_only_layers=getattr(src, "mlp_only_layers", []),
-        mamba_ssm_dtype=getattr(src, "mamba_ssm_dtype", "float32"),
-        # Parallel GatedRewardNet branch opt-in.
-        use_parallel_reward=USE_PARALLEL_REWARD,
-        parallel_reward_layers=PARALLEL_REWARD_LAYERS,
-        reward_gate_init_bias=REWARD_GATE_INIT_BIAS,
-        reward_memory_rank=REWARD_MEMORY_RANK,
-        parallel_reward_gate_loss_weight=PARALLEL_REWARD_GATE_LOSS_WEIGHT,
-    )
-    layer_types = getattr(src, "layer_types", None)
-    if layer_types is not None:
-        cfg_kwargs["layer_types"] = layer_types
-
-    rope_parameters = getattr(src, "rope_parameters", None)
-    if rope_parameters is not None:
-        cfg_kwargs["rope_parameters"] = rope_parameters
-
-    return InfiniDopamineTextConfig(**cfg_kwargs)
-
-
-def build_vision_config_from_qwen(qwen_cfg: Any) -> InfiniDopamineVisionConfig:
-    src = getattr(qwen_cfg, "vision_config", qwen_cfg)
-    if isinstance(src, dict):
-        src = _as_obj(src)
-
-    cfg_kwargs = dict(  # noqa: C408
-        hidden_size=getattr(src, "hidden_size", 1280),
-        in_channels=getattr(src, "in_channels", 3),
-        intermediate_size=getattr(src, "intermediate_size", 3072),
-        num_heads=getattr(src, "num_heads", 12),
-        num_position_embeddings=getattr(src, "num_position_embeddings", 2304),
-        out_hidden_size=getattr(src, "out_hidden_size", 1024),
-        patch_size=getattr(src, "patch_size", 16),
-        spatial_merge_size=getattr(src, "spatial_merge_size", 2),
-        temporal_patch_size=getattr(src, "temporal_patch_size", 2),
-        hidden_act=getattr(src, "hidden_act", "gelu_pytorch_tanh"),
-        initializer_range=getattr(src, "initializer_range", 0.02),
-    )
-    return InfiniDopamineVisionConfig(**cfg_kwargs)
+def _build_infini_cfg(
+    qwen_cfg: Any,
+) -> InfiniDopamineConfig:
+    """Build ``InfiniDopamineConfig`` from the upstream Qwen3.5 HF config."""
+    hf_dict = qwen_cfg.to_dict()
+    text_dict = dict(hf_dict.get("text_config", hf_dict))
+    text_dict.setdefault("use_parallel_reward", USE_PARALLEL_REWARD)
+    text_dict.setdefault("parallel_reward_layers", PARALLEL_REWARD_LAYERS)
+    text_dict.setdefault("reward_gate_init_bias", REWARD_GATE_INIT_BIAS)
+    text_dict.setdefault("reward_memory_rank", REWARD_MEMORY_RANK)
+    text_dict.setdefault("parallel_reward_gate_loss_weight", PARALLEL_REWARD_GATE_LOSS_WEIGHT)
+    hf_dict["text_config"] = text_dict
+    return InfiniDopamineConfig(**hf_dict)
 
 
 tokenizer: Any = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
@@ -333,19 +282,11 @@ except (OSError, ValueError) as e:
     print(f"[WARN] AutoProcessor fallback to AutoTokenizer: {e}")
     processor = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
+HFIntegration.register_infinidopamine_hf()
+
 qwen_cfg = AutoConfig.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
-text_cfg = build_text_config_from_qwen(qwen_cfg)
-vision_cfg = build_vision_config_from_qwen(qwen_cfg)
-infini_cfg = InfiniDopamineConfig(
-    text_config=text_cfg,
-    vision_config=vision_cfg,
-    image_token_id=getattr(qwen_cfg, "image_token_id", 248056),
-    video_token_id=getattr(qwen_cfg, "video_token_id", 248057),
-    vision_start_token_id=getattr(qwen_cfg, "vision_start_token_id", 248053),
-    vision_end_token_id=getattr(qwen_cfg, "vision_end_token_id", 248054),
-)
-
+infini_cfg = _build_infini_cfg(qwen_cfg)
 model = InfiniDopamineForConditionalGeneration(infini_cfg)
 
 print("Loading base model weights...")
@@ -356,6 +297,7 @@ try:
         device_map="cpu",
         trust_remote_code=True,
         low_cpu_mem_usage=True,
+        load_in_4bit=LOAD_IN_4BIT,
     )
 except (OSError, ValueError) as e:
     print(f"[WARN] AutoModelForCausalLM fallback to AutoModelForVision2Seq: {e}")
@@ -374,6 +316,7 @@ except (OSError, ValueError) as e:
         device_map="cpu",
         trust_remote_code=True,
         low_cpu_mem_usage=True,
+        load_in_4bit=LOAD_IN_4BIT,
     )
 
 missing, unexpected = model.load_qwen35_weights(base_model, strict=False)
@@ -406,42 +349,54 @@ if torch.cuda.is_available():
 # ## PEFT / LoRA Configuration
 
 # %% [code.8]
-lora_cfg = None
-if USE_LORA:
-    lora_cfg = LoraConfig(
-        r=LORA_R,
-        lora_alpha=LORA_ALPHA,
-        target_modules=LORA_TARGET_MODULES,
-        lora_dropout=LORA_DROPOUT,
-        use_rslora=USE_RSLORA,
-        bias="none",
-        task_type=TaskType.CAUSAL_LM,
-    )
-    model = get_peft_model(model, lora_cfg)
-    model.print_trainable_parameters()
-
-
-# Ensure ALL weights are trainable, including newly initialized ones
-# that are not present in the Qwen3.5 checkpoint.
 def ensure_all_trainable(model: Any, missing_keys: list[str]) -> None:
-    """Set requires_grad=True for all newly initialized parameters.
-
-    InfiniDopamine contains GDN-2 / reward-net modules that are not
-    present in Qwen3.5. Their weights are initialized from scratch
-    and must be trained. LoRA only covers nn.Linear modules, so we
-    explicitly unfreeze any missing non-linear parameters too.
-    """
+    """Unfreeze newly initialized params so they are trainable."""
     missing_set = set(missing_keys)
     unfrozen = 0
     for name, param in model.named_parameters():
         if name in missing_set and not param.requires_grad:
             param.requires_grad = True
             unfrozen += 1
-    print(f"Unfrozen {unfrozen} newly initialized parameters for training.")
+    if unfrozen:
+        print(f"Unfrozen {unfrozen} newly initialized parameters.")
 
 
-# Unfreeze newly initialized weights after LoRA is applied.
-ensure_all_trainable(model, missing)
+def re_unfreeze_reward_branch(model: Any) -> int:
+    """Re-unfreeze non-Linear reward_branch params PEFT froze."""
+    unfrozen = 0
+    for name, param in model.named_parameters():
+        if not param.requires_grad and "reward_branch" in name and "lora" not in name.lower():
+            param.requires_grad = True
+            unfrozen += 1
+    if unfrozen:
+        print(f"Re-unfrozen {unfrozen} direct-trained reward_branch parameters after PEFT wrap.")
+    return unfrozen
+
+
+lora_cfg = None
+if USE_LORA:
+    # PEFT LoRA only targets nn.Linear; embed_tokens is nn.Embedding.
+    lora_targets = [m for m in LORA_TARGET_MODULES if m != "embed_tokens"]
+
+    # Unfreeze fresh weights (e.g. parallel reward branch) BEFORE PEFT wraps.
+    if missing:
+        ensure_all_trainable(model, missing)
+
+    lora_cfg = LoraConfig(
+        r=LORA_R,
+        lora_alpha=LORA_ALPHA,
+        target_modules=lora_targets,
+        lora_dropout=LORA_DROPOUT,
+        use_rslora=USE_RSLORA,
+        bias="none",
+        task_type=TaskType.CAUSAL_LM,
+    )
+    model = get_peft_model(model, lora_cfg)
+
+    # PEFT may have frozen non-Linear reward_branch params; re-unfreeze them.
+    re_unfreeze_reward_branch(model)
+
+    model.print_trainable_parameters()
 
 # Final trainable parameter report.
 total_params = sum(p.numel() for p in model.parameters())
@@ -920,11 +875,17 @@ train_dataset = peek_streaming_dataset(CPT_DATASETS)
 
 # %% [code.13]
 def tokenize_fn(example: dict) -> dict:
+    text = example.get("text") or ""
+    text = text.strip()
+    if not text:
+        return {"input_ids": [], "attention_mask": [], "labels": []}
     tok = tokenizer(
-        example["text"],
+        text,
         truncation=True,
         max_length=MAX_SEQ_LENGTH,
     )
+    if not tok["input_ids"]:
+        return {"input_ids": [], "attention_mask": [], "labels": []}
     return {
         "input_ids": tok["input_ids"],
         "attention_mask": tok["attention_mask"],
@@ -944,7 +905,6 @@ from transformers import DataCollatorWithPadding
 
 data_collator = DataCollatorWithPadding(
     tokenizer=tokenizer,
-    return_tensors="pt",
 )
 
 
@@ -953,6 +913,11 @@ train_dataset = train_dataset.map(
     batched=False,
     remove_columns=cols_to_remove,
 )
+
+# Drop rows that tokenize_fn rejected (empty sequences).
+def _keep_tokenized(example: dict) -> bool:
+    return len(example.get("input_ids") or []) > 0
+train_dataset = train_dataset.filter(_keep_tokenized)
 
 print(f"Tokenized columns : {train_dataset.column_names}")
 print(f"Max seq length    : {MAX_SEQ_LENGTH}")
@@ -1114,22 +1079,33 @@ class CPTSFTTrainer(SFTTrainer):
             print(f"[parallel_reward WARN] {warning}")
 
 
-dummy_ids = torch.tensor([tokenizer("Hello world")["input_ids"]], device="cpu")
-dummy_mask = torch.ones_like(dummy_ids)
-dummy_rewards = torch.zeros_like(dummy_ids, dtype=TORCH_DTYPE)
+_smoke_device = "cuda" if torch.cuda.is_available() else "cpu"
+_dummy_ids = torch.tensor([tokenizer("Hello world")["input_ids"]], device=_smoke_device)
+_dummy_mask = torch.ones_like(_dummy_ids)
+_dummy_rewards = torch.zeros_like(_dummy_ids, dtype=TORCH_DTYPE)
 with torch.no_grad():
-    out = model(
-        input_ids=dummy_ids,
-        attention_mask=dummy_mask,
-        reward_values=dummy_rewards,
+    _out = model(
+        input_ids=_dummy_ids,
+        attention_mask=_dummy_mask,
+        reward_values=_dummy_rewards,
     )
 print("Reward-values forward pass OK.")
-print(f"Logits shape: {out.logits.shape}")
+print(f"Logits shape: {_out.logits.shape}")
+del _dummy_ids, _dummy_mask, _dummy_rewards, _out
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
 
 # %% [markdown.16]
 # ## Training
 
 # %% [code.17]
+_training_optim = "paged_adamw_8bit"
+try:
+    import bitsandbytes  # noqa: F401
+except ImportError:
+    _training_optim = "adamw_torch"
+    print("[train] bitsandbytes not available; falling back to adamw_torch")
+
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
     per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
@@ -1139,6 +1115,7 @@ training_args = TrainingArguments(
     lr_scheduler_type=LR_SCHEDULER_TYPE,
     warmup_steps=WARMUP_STEPS,
     num_train_epochs=NUM_TRAIN_EPOCHS,
+    max_steps=MAX_TRAIN_STEPS,
     logging_steps=LOGGING_STEPS,
     save_steps=SAVE_STEPS,
     save_total_limit=SAVE_TOTAL_LIMIT,
@@ -1149,7 +1126,7 @@ training_args = TrainingArguments(
     fp16=(TORCH_DTYPE == torch.float16),
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
-    optim="paged_adamw_8bit",
+    optim=_training_optim,
     report_to=["tensorboard"],
     seed=42,
     data_seed=42,
@@ -1159,7 +1136,7 @@ trainer = CPTSFTTrainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
-    tokenizer=tokenizer,
+    processing_class=tokenizer,
     data_collator=data_collator,
     reward_every_n_steps=REWARD_EVERY_N_STEPS,
 )
@@ -1167,9 +1144,46 @@ trainer = CPTSFTTrainer(
 trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 
 # %% [markdown.18]
-# ## Checkpoint Export & Dataset Summary
+# ## Checkpoint Export & Save
+#
+# The trainer has already saved PEFT adapter checkpoints to ``OUTPUT_DIR``
+# every ``save_steps``. This cell optionally merges the LoRA weights into
+# the base model and saves the full model so it can be loaded for inference
+# without PEFT.
 
 # %% [code.19]
+print(f"\nCheckpoints saved to: {OUTPUT_DIR}")
+
+_FINAL_DIR = os.path.join(OUTPUT_DIR, "merged-final")
+if MERGE_LORA_AFTER_TRAINING:
+    print(f"Merging LoRA and saving full model to: {_FINAL_DIR}")
+    try:
+        merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
+        merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
+        tokenizer.save_pretrained(_FINAL_DIR)
+        print(f"Full model saved to {_FINAL_DIR}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[WARN] merge_and_unload failed: {e}. Falling back to PEFT adapter save.")
+        model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))  # pyrefly: ignore[not-callable]
+        tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
+else:
+    print("MERGE_LORA_AFTER_TRAINING=False; skipping merge.")
+    model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
+    tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
+
+if PUSH_TO_HUB:
+    print(f"Pushing to Hub: {HUB_MODEL_ID}")
+    try:
+        model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
+        tokenizer.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)
+        print("Push complete.")
+    except Exception as e:  # noqa: BLE001
+        print(f"[WARN] push_to_hub failed: {e}")
+
+# %% [markdown.20]
+# ## Dataset Summary
+
+# %% [code.21]
 print("\n" + "=" * 60)
 print("DATASET REPORT — CPT Mixer")
 print("=" * 60)

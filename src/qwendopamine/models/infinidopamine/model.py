@@ -60,20 +60,6 @@ from qwendopamine.models.shared.model_family import (
 unwrap_gated_delta_rule_fns()
 
 
-def _normalize_weights_to_state_dict(
-    weights: dict[str, torch.Tensor] | nn.Module,
-) -> dict[str, torch.Tensor]:
-    r"""Normalize ``weights`` into a plain ``state_dict``."""
-    if isinstance(weights, nn.Module):
-        return weights.state_dict()
-    raw = dict(weights)
-    if not all(isinstance(k, str) for k in raw):
-        raise TypeError(
-            f"weight dict keys must be str; got {[type(k).__name__ for k in raw if not isinstance(k, str)][:1]}"
-        )
-    return raw
-
-
 class InfiniDopaminePreTrainedModel(FamilyPreTrainedModel):
     r"""InfiniDopaminePreTrainedModel: base pretrained model with GDN-2 weight
     initialization.
@@ -168,7 +154,7 @@ class InfiniDopamineTextModel(FamilyTextModel):
     def get_gate_regularization_loss(self, target: float = 0.5) -> torch.Tensor:
         r"""get_gate_regularization_loss(target=0.5) -> torch.Tensor
 
-        Sum gate balance regularization across all GDN-2 layer blocks.
+        Delegate to :func:`qwendopamine.models.infinidopamine._gate_loss.gate_regularization_loss`.
 
         Args:
             target (float): Target gate balance value. Default: ``0.5``.
@@ -176,17 +162,11 @@ class InfiniDopamineTextModel(FamilyTextModel):
         Returns:
             torch.Tensor: Scalar regularization loss.
         """
-        losses: list[torch.Tensor] = []
-        for layer in self.layers[: self.config.num_hidden_layers]:
-            if hasattr(layer, "linear_attn") and hasattr(
-                layer.linear_attn, "get_gate_regularization_loss"
-            ):
-                linear_attn: Any = layer.linear_attn
-                losses.append(linear_attn.get_gate_regularization_loss(target=target))
-        if not losses:
-            device = next(self.parameters()).device
-            return torch.tensor(0.0, device=device)
-        return torch.stack(losses).mean()
+        from qwendopamine.models.infinidopamine._gate_loss import (
+            gate_regularization_loss as _loss,
+        )
+
+        return _loss(self, target=target)
 
     def load_qwen35_weights(
         self,
@@ -195,8 +175,7 @@ class InfiniDopamineTextModel(FamilyTextModel):
     ) -> Any:
         r"""load_qwen35_weights(weights, strict=True) -> Any
 
-        Load pretrained Qwen3.5 (GDN-1) weights into InfiniDopamine (GDN-2
-        with SWA), stripping visual and MTP prefixes.
+        Delegate to :func:`qwendopamine.models.infinidopamine._text_qwen35_weights.load_text_qwen35_weights`.
 
         Args:
             weights (dict[str, torch.Tensor] | nn.Module): State dict or module.
@@ -205,30 +184,11 @@ class InfiniDopamineTextModel(FamilyTextModel):
         Returns:
             Any: Result of :meth:`load_state_dict` (missing/unexpected keys).
         """
-        state_dict = _normalize_weights_to_state_dict(weights)
-
-        has_full_prefix = any(
-            k.startswith(("model.language_model.", "model.", "language_model."))
-            for k in state_dict
+        from qwendopamine.models.infinidopamine._text_qwen35_weights import (
+            load_text_qwen35_weights as _load,
         )
-        if has_full_prefix:
-            remapped_state_dict: dict[str, torch.Tensor] = {}
-            for k, v in state_dict.items():
-                new_k = k
-                if new_k.startswith("model.language_model."):
-                    new_k = new_k[len("model.language_model.") :]
-                elif new_k.startswith("language_model."):
-                    new_k = new_k[len("language_model.") :]
-                elif new_k.startswith("model."):
-                    new_k = new_k[len("model.") :]
-                if not (
-                    k.startswith(("model.visual.", "visual.", "mtp."))
-                    or k == "lm_head.weight"
-                ):
-                    remapped_state_dict[new_k] = v
-            state_dict = remapped_state_dict
 
-        return self.load_state_dict(state_dict, strict=strict)
+        return _load(self, weights, strict=strict)
 
 
 class InfiniDopamineModel(FamilyModel):
@@ -295,12 +255,7 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
     def get_parallel_reward_gate_loss(self) -> torch.Tensor:
         r"""get_parallel_reward_gate_loss() -> torch.Tensor
 
-        Mean ``σ(W_g x + b_g) - init_bias`` across all parallel reward gates.
-
-        Penalises the gate from drifting away from its initialisation
-        (``sigmoid(init_bias) ≈ 0.0067`` by default) so the dopamine branch
-        stays effectively silent until the rest of the model has stabilised.
-        Active layers only.
+        Delegate to :func:`qwendopamine.models.infinidopamine._gate_loss.parallel_reward_gate_loss`.
 
         Args:
             None
@@ -308,20 +263,11 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
         Returns:
             torch.Tensor: Scalar penalty on gate deviation.
         """
-        device = next(self.parameters()).device
-        init_bias = float(getattr(self.config, "reward_gate_init_bias", -5.0))
-        init_gate = float(torch.sigmoid(torch.tensor(init_bias)).item())
-        # Use a fixed zero-like input so the gate ≈ sigmoid(bias) on init.
-        # The exact value doesn't matter — only the deviation matters.
-        losses: list[torch.Tensor] = []
-        for layer in self.model.layers[: self.config.num_hidden_layers]:
-            if not hasattr(layer, "reward_gate_proj"):
-                continue
-            gate = torch.sigmoid(layer.reward_gate_proj.bias)
-            losses.append(((gate - init_gate) ** 2).mean())
-        if not losses:
-            return torch.tensor(0.0, device=device)
-        return torch.stack(losses).mean()
+        from qwendopamine.models.infinidopamine._gate_loss import (
+            parallel_reward_gate_loss as _loss,
+        )
+
+        return _loss(self)
 
     def load_qwen35_weights(
         self,
@@ -330,7 +276,7 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
     ) -> Any:
         r"""load_qwen35_weights(weights, strict=True) -> Any
 
-        Load Qwen3.5 (GDN-1) weights, remapping language-model prefixes.
+        Delegate to :func:`qwendopamine.models.infinidopamine._text_qwen35_weights.load_causal_lm_qwen35_weights`.
 
         Args:
             weights (dict[str, torch.Tensor] | nn.Module): State dict or module.
@@ -339,28 +285,11 @@ class InfiniDopamineForCausalLM(FamilyForCausalLM):
         Returns:
             Any: Result of :meth:`load_state_dict`.
         """
-        state_dict = _normalize_weights_to_state_dict(weights)
-
-        has_language_model_prefix = any(
-            k.startswith(("model.language_model.", "language_model."))
-            for k in state_dict
+        from qwendopamine.models.infinidopamine._text_qwen35_weights import (
+            load_causal_lm_qwen35_weights as _load,
         )
-        if has_language_model_prefix:
-            remapped_state_dict: dict[str, torch.Tensor] = {}
-            for k, v in state_dict.items():
-                if k.startswith("model.language_model."):
-                    remapped_state_dict[
-                        k.replace("model.language_model.", "model.")
-                    ] = v
-                elif k.startswith("language_model."):
-                    remapped_state_dict[k.replace("language_model.", "model.")] = v
-                elif k == "lm_head.weight" or not k.startswith(
-                    ("model.visual.", "visual.", "mtp.")
-                ):
-                    remapped_state_dict[k] = v
-            state_dict = remapped_state_dict
 
-        return self.load_state_dict(state_dict, strict=strict)
+        return _load(self, weights, strict=strict)
 
 
 class InfiniDopamineForTokenClassification(FamilyForTokenClassification):
@@ -432,8 +361,7 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
     ) -> _IncompatibleKeys:
         r"""load_qwen35_weights(weights, strict=True) -> _IncompatibleKeys
 
-        Load Qwen3.5 weights into a multimodal model, splitting into vision,
-        text, and LM-head state.
+        Delegate to :func:`qwendopamine.models.infinidopamine._qwen35_weights.load_qwen35_weights`.
 
         Args:
             weights (dict[str, torch.Tensor] | nn.Module): State dict or module.
@@ -443,59 +371,11 @@ class InfiniDopamineForConditionalGeneration(FamilyForConditionalGeneration):
             _IncompatibleKeys: Named tuple of ``missing_keys`` and
             ``unexpected_keys``.
         """
-        state_dict = _normalize_weights_to_state_dict(weights)
+        from qwendopamine.models.infinidopamine._qwen35_weights import (
+            load_qwen35_weights as _load,
+        )
 
-        vision_state: dict[str, torch.Tensor] = {}
-        text_state: dict[str, torch.Tensor] = {}
-        lm_head_state: dict[str, torch.Tensor] = {}
-
-        for k, v in state_dict.items():
-            if k == "lm_head.weight":
-                lm_head_state[k] = v
-            elif k.startswith("model.visual."):
-                vision_state[k[len("model.visual.") :]] = v
-            elif k.startswith("model.language_model."):
-                text_state[k[len("model.") :]] = v
-            elif k.startswith("language_model."):
-                text_state[k] = v
-            elif k.startswith("visual."):
-                vision_state[k[len("visual.") :]] = v
-            elif k.startswith("mtp."):
-                continue
-            elif strict:
-                text_state[k] = v
-
-        load_info: list[str] = []
-        all_missing: list[str] = []
-        all_unexpected: list[str] = []
-
-        if vision_state:
-            missing_v, unexpected_v = self.model.visual.load_state_dict(
-                vision_state, strict=strict
-            )
-            all_missing.extend(missing_v)
-            all_unexpected.extend(unexpected_v)
-            load_info.append(
-                f"vision: loaded {len(vision_state) - len(missing_v)} keys "
-                f"({len(missing_v)} missing, {len(unexpected_v)} unexpected)"
-            )
-
-        if text_state:
-            missing_t, unexpected_t = self.model.language_model.load_qwen35_weights(
-                text_state, strict=strict
-            )
-            all_missing.extend(missing_t)
-            all_unexpected.extend(unexpected_t)
-            load_info.append(
-                f"text: loaded {len(text_state) - len(missing_t)} keys "
-                f"({len(missing_t)} missing, {len(unexpected_t)} unexpected)"
-            )
-
-        if lm_head_state:
-            self.lm_head.weight.data.copy_(lm_head_state["lm_head.weight"])
-            load_info.append("lm_head: loaded 1 key")
-
-        return _IncompatibleKeys(all_missing, all_unexpected)
+        return _load(self, weights, strict=strict)
 
 
 class InfiniDopamineTextForSequenceClassification(FamilyTextForSequenceClassification):

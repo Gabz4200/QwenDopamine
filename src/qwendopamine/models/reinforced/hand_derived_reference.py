@@ -121,7 +121,6 @@ def canonical_delta_step_with_grad(
         d_omega_W: ``[B]`` or ``[B, 1]`` (matches the input rank)
         d_omega_E: ``[B, d]``
     """
-    # ---- forward (operational form) ----
     rank = S.dim()
     tensors = _promote(
         {
@@ -145,22 +144,6 @@ def canonical_delta_step_with_grad(
     scale = ow.unsqueeze(-1)
     S_next = decay * S + scale * outer
 
-    # ---- per-token VJP (hand-derived) ----
-    # S_next[d, k] = (1 - omega_E[d]) * S[d, k] + omega_W[d] * e[d] * k[k]
-    #
-    # Define r[d] = sum_kk G[d, kk] * k[kk]  (upstream-weighted read).
-    # Then:
-    #   d_v[d]        = omega_W[d] * r[d]
-    #   d_k_write[k]  = sum_dd G[dd, k] * omega_W[dd] * e[dd]
-    #   d_k_read[k]   = - sum_dd S[dd, k] * omega_W[dd] * r[dd]
-    #   d_k[k]        = d_k_write[k] + d_k_read[k]
-    #   d_omega_W[d]  = r[d] * e[d]
-    #   d_omega_E[d]  = - sum_kk G[d, kk] * S[d, kk]
-    #   d_S[d, k]     = (1 - omega_E[d]) * G[d, k]
-    #                   - omega_W[d] * k[k] * r[d]
-    #
-    # All per-channel ``omega_W[d]`` is used **inside** the sum over
-    # ``d`` to keep the reduction well-defined.
     r = torch.einsum(f"{sub_state},{sub_k}->{sub_v}", dS, k)  # [B, d]
     # d_v[d] = omega_W[d] * r[d]
     dv = ow * r  # [B, d]

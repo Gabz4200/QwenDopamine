@@ -7,7 +7,6 @@ its role explicit (the file is a hand-written oracle, not a
 generated reference).
 
 This shim keeps the old import path working. New code should
-import from :mod:`hand_derived_reference` directly.
 """
 
 from __future__ import annotations

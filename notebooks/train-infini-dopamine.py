@@ -41,7 +41,11 @@ if importlib.util.find_spec("qwendopamine") is None:
     )
     _proc = subprocess.run(
         [
-            sys.executable, "-m", "pip", "install", "-q",
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-q",
             "accelerate>=0.34.0",
             "bitsandbytes>=0.43.0",
             "datasets>=2.20.0",
@@ -85,6 +89,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import numpy as np
 import torch
 import torch.nn.functional as F
+from accelerate import PartialState
 from datasets import IterableDataset, interleave_datasets, load_dataset
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
@@ -108,10 +113,20 @@ if hasattr(torch, "set_float32_matmul_precision"):
     torch.set_float32_matmul_precision("high")
 
 print("InfiniDopamine registered.")
-print(f"CUDA available : {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    for i in range(torch.cuda.device_count()):
-        print(f"Device         : {torch.cuda.get_device_name(i)}")
+
+# Rank/world size from accelerate.PartialState. Reads env vars set by Kaggle
+# (T4 x2 -> world_size=2) or falls back to single-process for single T4 / CPU.
+ACCEL_STATE = PartialState()
+IS_MAIN = ACCEL_STATE.is_main_process
+WORLD_SIZE = ACCEL_STATE.num_processes
+RANK = ACCEL_STATE.process_index
+
+if IS_MAIN:
+    print(f"CUDA available : {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            print(f"Device         : {torch.cuda.get_device_name(i)}")
+    print(f"World size     : {WORLD_SIZE}")
 
 # %% [markdown.3]
 # ## Dataset Sources & Schema Mapping
@@ -216,7 +231,9 @@ WEIGHT_DECAY: float = 0.01
 LR_SCHEDULER_TYPE: str = "cosine"
 WARMUP_STEPS: int = 100
 NUM_TRAIN_EPOCHS: int = 1
-MAX_TRAIN_STEPS: int | None = None  # None = rely on num_train_epochs with finite dataset
+MAX_TRAIN_STEPS: int | None = (
+    None  # None = rely on num_train_epochs with finite dataset
+)
 LOGGING_STEPS: int = 10
 SAVE_STEPS: int = 500
 SAVE_TOTAL_LIMIT: int = 2
@@ -264,7 +281,9 @@ def _build_infini_cfg(
     text_dict.setdefault("parallel_reward_layers", PARALLEL_REWARD_LAYERS)
     text_dict.setdefault("reward_gate_init_bias", REWARD_GATE_INIT_BIAS)
     text_dict.setdefault("reward_memory_rank", REWARD_MEMORY_RANK)
-    text_dict.setdefault("parallel_reward_gate_loss_weight", PARALLEL_REWARD_GATE_LOSS_WEIGHT)
+    text_dict.setdefault(
+        "parallel_reward_gate_loss_weight", PARALLEL_REWARD_GATE_LOSS_WEIGHT
+    )
     hf_dict["text_config"] = text_dict
     return InfiniDopamineConfig(**hf_dict)
 
@@ -300,7 +319,8 @@ try:
         load_in_4bit=LOAD_IN_4BIT,
     )
 except (OSError, ValueError) as e:
-    print(f"[WARN] AutoModelForCausalLM fallback to AutoModelForVision2Seq: {e}")
+    if IS_MAIN:
+        print(f"[WARN] AutoModelForCausalLM fallback to AutoModelForVision2Seq: {e}")
     try:
         from transformers import (
             AutoModelForVision2Seq,  # pyrefly: ignore[missing-module-attribute]
@@ -319,11 +339,16 @@ except (OSError, ValueError) as e:
         load_in_4bit=LOAD_IN_4BIT,
     )
 
+# Each rank loads from the shared HF cache. Rank 0 pays the network fetch,
+# the rest hit disk. Avoids pickling ~1.6 GB of weights over the process group.
 missing, unexpected = model.load_qwen35_weights(base_model, strict=False)
 
 del base_model
 gc.collect()
-torch.cuda.empty_cache()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+
+ACCEL_STATE.wait_for_everyone()
 
 print(f"Model type       : {model.config.model_type}")
 print(f"Total params     : {sum(p.numel() for p in model.parameters()):,}")
@@ -348,6 +373,7 @@ if torch.cuda.is_available():
 # %% [markdown.7]
 # ## PEFT / LoRA Configuration
 
+
 # %% [code.8]
 def ensure_all_trainable(model: Any, missing_keys: list[str]) -> None:
     """Unfreeze newly initialized params so they are trainable."""
@@ -365,11 +391,17 @@ def re_unfreeze_reward_branch(model: Any) -> int:
     """Re-unfreeze non-Linear reward_branch params PEFT froze."""
     unfrozen = 0
     for name, param in model.named_parameters():
-        if not param.requires_grad and "reward_branch" in name and "lora" not in name.lower():
+        if (
+            not param.requires_grad
+            and "reward_branch" in name
+            and "lora" not in name.lower()
+        ):
             param.requires_grad = True
             unfrozen += 1
     if unfrozen:
-        print(f"Re-unfrozen {unfrozen} direct-trained reward_branch parameters after PEFT wrap.")
+        print(
+            f"Re-unfrozen {unfrozen} direct-trained reward_branch parameters after PEFT wrap."
+        )
     return unfrozen
 
 
@@ -859,15 +891,17 @@ def build_streaming_dataset(
 
 
 def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> IterableDataset:
-    train_dataset = build_streaming_dataset(dataset_names, seed=seed)
-    sample = next(iter(train_dataset))
-    print(f"Sample keys  : {list(sample.keys())}")
-    print(f"Sample text  : {str(sample.get('text', ''))[:240]}")
-    print(f"Sample length: {len(str(sample.get('text', '')))}")
-    del sample
-    gc.collect()
-    result: IterableDataset = train_dataset
-    return result
+    # Offset the interleave seed by rank so each rank samples a different slice.
+    rank_seed = seed + RANK
+    train_dataset = build_streaming_dataset(dataset_names, seed=rank_seed)
+    if IS_MAIN:
+        sample = next(iter(train_dataset))
+        print(f"Sample keys  : {list(sample.keys())}")
+        print(f"Sample text  : {str(sample.get('text', ''))[:240]}")
+        print(f"Sample length: {len(str(sample.get('text', '')))}")
+        del sample
+        gc.collect()
+    return train_dataset
 
 
 train_dataset = peek_streaming_dataset(CPT_DATASETS)
@@ -914,9 +948,12 @@ train_dataset = train_dataset.map(
     remove_columns=cols_to_remove,
 )
 
+
 # Drop rows that tokenize_fn rejected (empty sequences).
 def _keep_tokenized(example: dict) -> bool:
     return len(example.get("input_ids") or []) > 0
+
+
 train_dataset = train_dataset.filter(_keep_tokenized)
 
 print(f"Tokenized columns : {train_dataset.column_names}")
@@ -1089,8 +1126,9 @@ with torch.no_grad():
         attention_mask=_dummy_mask,
         reward_values=_dummy_rewards,
     )
-print("Reward-values forward pass OK.")
-print(f"Logits shape: {_out.logits.shape}")
+if IS_MAIN:
+    print("Reward-values forward pass OK.")
+    print(f"Logits shape: {_out.logits.shape}")
 del _dummy_ids, _dummy_mask, _dummy_rewards, _out
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
@@ -1104,7 +1142,8 @@ try:
     import bitsandbytes  # noqa: F401
 except ImportError:
     _training_optim = "adamw_torch"
-    print("[train] bitsandbytes not available; falling back to adamw_torch")
+    if IS_MAIN:
+        print("[train] bitsandbytes not available; falling back to adamw_torch")
 
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
@@ -1119,7 +1158,7 @@ training_args = TrainingArguments(
     logging_steps=LOGGING_STEPS,
     save_steps=SAVE_STEPS,
     save_total_limit=SAVE_TOTAL_LIMIT,
-    push_to_hub=PUSH_TO_HUB,
+    push_to_hub=PUSH_TO_HUB and IS_MAIN,
     hub_model_id=HUB_MODEL_ID or None,
     hub_token=HF_TOKEN,
     bf16=(TORCH_DTYPE == torch.bfloat16),
@@ -1127,9 +1166,12 @@ training_args = TrainingArguments(
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
     optim=_training_optim,
-    report_to=["tensorboard"],
+    report_to=["tensorboard"] if IS_MAIN else "none",
     seed=42,
     data_seed=42,
+    # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.
+    ddp_find_unused_parameters=True,
+    dataloader_drop_last=True,
 )
 
 trainer = CPTSFTTrainer(
@@ -1143,6 +1185,8 @@ trainer = CPTSFTTrainer(
 
 trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 
+ACCEL_STATE.wait_for_everyone()
+
 # %% [markdown.18]
 # ## Checkpoint Export & Save
 #
@@ -1152,42 +1196,43 @@ trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 # without PEFT.
 
 # %% [code.19]
-print(f"\nCheckpoints saved to: {OUTPUT_DIR}")
+if IS_MAIN:
+    print(f"\nCheckpoints saved to: {OUTPUT_DIR}")
 
-_FINAL_DIR = os.path.join(OUTPUT_DIR, "merged-final")
-if MERGE_LORA_AFTER_TRAINING:
-    print(f"Merging LoRA and saving full model to: {_FINAL_DIR}")
-    try:
-        merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
-        merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
-        tokenizer.save_pretrained(_FINAL_DIR)
-        print(f"Full model saved to {_FINAL_DIR}")
-    except Exception as e:  # noqa: BLE001
-        print(f"[WARN] merge_and_unload failed: {e}. Falling back to PEFT adapter save.")
-        model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))  # pyrefly: ignore[not-callable]
+    _FINAL_DIR = os.path.join(OUTPUT_DIR, "merged-final")
+    if MERGE_LORA_AFTER_TRAINING:
+        print(f"Merging LoRA and saving full model to: {_FINAL_DIR}")
+        try:
+            merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
+            merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
+            tokenizer.save_pretrained(_FINAL_DIR)
+            print(f"Full model saved to {_FINAL_DIR}")
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"[WARN] merge_and_unload failed: {e}. Falling back to PEFT adapter save."
+            )
+            model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))  # pyrefly: ignore[not-callable]
+            tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
+    else:
+        print("MERGE_LORA_AFTER_TRAINING=False; skipping merge.")
+        model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
         tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
-else:
-    print("MERGE_LORA_AFTER_TRAINING=False; skipping merge.")
-    model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
-    tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
 
-if PUSH_TO_HUB:
-    print(f"Pushing to Hub: {HUB_MODEL_ID}")
-    try:
-        model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
-        tokenizer.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)
-        print("Push complete.")
-    except Exception as e:  # noqa: BLE001
-        print(f"[WARN] push_to_hub failed: {e}")
+    if PUSH_TO_HUB:
+        print(f"Pushing to Hub: {HUB_MODEL_ID}")
+        try:
+            model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
+            tokenizer.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)
+            print("Push complete.")
+        except Exception as e:  # noqa: BLE001
+            print(f"[WARN] push_to_hub failed: {e}")
+
+ACCEL_STATE.wait_for_everyone()
 
 # %% [markdown.20]
 # ## Dataset Summary
 
 # %% [code.21]
-print("\n" + "=" * 60)
-print("DATASET REPORT — CPT Mixer")
-print("=" * 60)
-
 REPORT = [
     (
         "DylanRiden/smb-worldmodel-data",
@@ -1276,11 +1321,16 @@ REPORT = [
     ),
 ]
 
-for name, size, usage in REPORT:
-    print(f"\nDataset : {name}")
-    print(f"  Size  : {size}")
-    print(f"  Usage : {usage}")
+if IS_MAIN:
+    print("\n" + "=" * 60)
+    print("DATASET REPORT — CPT Mixer")
+    print("=" * 60)
 
-print("\n" + "=" * 60)
-print(f"Total datasets in mixer: {len(REPORT)}")
-print("=" * 60)
+    for name, size, usage in REPORT:
+        print(f"\nDataset : {name}")
+        print(f"  Size  : {size}")
+        print(f"  Usage : {usage}")
+
+    print("\n" + "=" * 60)
+    print(f"Total datasets in mixer: {len(REPORT)}")
+    print("=" * 60)

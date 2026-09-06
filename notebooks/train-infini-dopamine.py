@@ -27,48 +27,70 @@
 # Streams and interleaves tokenized trajectory, reasoning, and world-model datasets with reward-conditioned forward passes.
 
 # %% [code.1]
-# Install dependencies on Kaggle. Skips if qwendopamine is already installed.
+# Install dependencies on Kaggle. Ensures transformers>=5.0.0 even on reruns.
+import importlib.metadata
 import importlib.util
 import subprocess
 import sys
 
-if importlib.util.find_spec("qwendopamine") is None:
+from packaging.version import Version
+
+_NEEDS_INSTALL = importlib.util.find_spec("qwendopamine") is None
+_NEEDS_TF_UPGRADE = False
+if importlib.util.find_spec("transformers") is None:
+    _NEEDS_TF_UPGRADE = True
+    _tf_ver = "not installed"
+else:
+    _tf_ver = importlib.metadata.version("transformers")
+    _NEEDS_TF_UPGRADE = Version(_tf_ver) < Version("5.0.0")
+
+if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
     print("[setup] Installing dependencies for Kaggle runtime...")
-    _QWEIGHT = "0.2.0"
-    _WHEEL_URL = (
-        "https://github.com/Gabz4200/QwenDopamine/releases/download/"
-        f"v{_QWEIGHT}/qwendopamine-{_QWEIGHT}-py3-none-any.whl"
-    )
-    _proc = subprocess.run(
-        [
+    _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
+    _pkgs = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "accelerate>=0.34.0",
+        "bitsandbytes>=0.43.0",
+        "datasets>=2.20.0",
+        "einops>=0.7.0",
+        "huggingface-hub>=0.20.0",
+        "numpy>=1.24.0",
+        "peft>=0.7.0",
+        "Pillow>=10.0.0",
+        "sentencepiece>=0.1.99",
+        "tokenizers>=0.15.0",
+        "torch>=2.0.0",
+        "tqdm>=4.65.0",
+        "transformers>=5.0.0",
+        "trl>=0.12.0",
+        "tensorboard",
+    ]
+    if not _NEEDS_INSTALL:
+        print(
+            f"[setup] qwendopamine present but transformers {_tf_ver} < 5.0.0 — upgrading transformers."
+        )
+    else:
+        _pkgs.append(_WHEEL_URL)
+    if _NEEDS_INSTALL and _NEEDS_TF_UPGRADE:
+        pass
+    elif not _NEEDS_INSTALL:
+        _pkgs = [
             sys.executable,
             "-m",
             "pip",
             "install",
             "-q",
-            "accelerate>=0.34.0",
-            "bitsandbytes>=0.43.0",
-            "datasets>=2.20.0",
-            "einops>=0.7.0",
-            "huggingface-hub>=0.20.0",
-            "numpy>=1.24.0",
-            "peft>=0.7.0",
-            "Pillow>=10.0.0",
-            "sentencepiece>=0.1.99",
-            "tokenizers>=0.15.0",
-            "torch>=2.0.0",
-            "tqdm>=4.65.0",
-            "transformers>=4.40.0,<5.0.0",
-            "trl>=0.12.0",
-            "tensorboard",
-            _WHEEL_URL,
-        ],
-        check=False,
-    )
+            "transformers>=5.0.0",
+        ]
+    _proc = subprocess.run(_pkgs, check=False)
     if _proc.returncode != 0:
         raise RuntimeError(
             "pip install failed. On Kaggle, ensure Internet is ON and "
-            f"that a matching wheel exists at https://github.com/Gabz4200/QwenDopamine/releases/tag/v{_QWEIGHT}."
+            "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
     print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
 else:
@@ -293,13 +315,7 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
-try:
-    processor: Any = AutoProcessor.from_pretrained(
-        BASE_MODEL_NAME, trust_remote_code=True
-    )
-except (OSError, ValueError) as e:
-    print(f"[WARN] AutoProcessor fallback to AutoTokenizer: {e}")
-    processor = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+processor: Any = AutoProcessor.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
 HFIntegration.register_infinidopamine_hf()
 
@@ -309,35 +325,14 @@ infini_cfg = _build_infini_cfg(qwen_cfg)
 model = InfiniDopamineForConditionalGeneration(infini_cfg)
 
 print("Loading base model weights...")
-try:
-    base_model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL_NAME,
-        torch_dtype=TORCH_DTYPE,
-        device_map="cpu",
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-        load_in_4bit=LOAD_IN_4BIT,
-    )
-except (OSError, ValueError) as e:
-    if IS_MAIN:
-        print(f"[WARN] AutoModelForCausalLM fallback to AutoModelForVision2Seq: {e}")
-    try:
-        from transformers import (
-            AutoModelForVision2Seq,  # pyrefly: ignore[missing-module-attribute]
-        )
-    except ImportError as ie:
-        raise ImportError(
-            "Neither AutoModelForCausalLM nor AutoModelForVision2Seq is available"
-        ) from ie
-
-    base_model = AutoModelForVision2Seq.from_pretrained(
-        BASE_MODEL_NAME,
-        torch_dtype=TORCH_DTYPE,
-        device_map="cpu",
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-        load_in_4bit=LOAD_IN_4BIT,
-    )
+base_model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL_NAME,
+    torch_dtype=TORCH_DTYPE,
+    device_map="cpu",
+    trust_remote_code=True,
+    low_cpu_mem_usage=True,
+    load_in_4bit=LOAD_IN_4BIT,
+)
 
 # Each rank loads from the shared HF cache. Rank 0 pays the network fetch,
 # the rest hit disk. Avoids pickling ~1.6 GB of weights over the process group.
@@ -447,9 +442,10 @@ print("Model prepared for CPT.")
 # %% [code.10]
 def _flatten_messages(messages: Any) -> str:
     if isinstance(messages, str):
-        try:
-            messages = json.loads(messages)
-        except json.JSONDecodeError:
+        stripped = messages.strip()
+        if stripped.startswith(("[", "{")):
+            messages = json.loads(stripped)
+        else:
             return messages
     if not isinstance(messages, list):
         return str(messages)
@@ -562,10 +558,10 @@ def format_alfworld(example: dict) -> dict:
     steps_raw = example.get("steps", "[]")
     steps: list[Any]
     if isinstance(steps_raw, str):
-        try:
-            steps = json.loads(steps_raw)
-        except json.JSONDecodeError as e:
-            print(f"[WARN] Dataset formatting error: {e}")
+        stripped = steps_raw.strip()
+        if stripped.startswith(("[", "{")):
+            steps = json.loads(stripped)
+        else:
             steps = []
     else:
         steps = steps_raw if isinstance(steps_raw, list) else []
@@ -681,10 +677,10 @@ def format_r0b0tlab(example: dict) -> dict:
     raw: list[Any] = []
     raw_value = example.get("messages_json", "[]")
     if isinstance(raw_value, str):
-        try:
-            raw = json.loads(raw_value)
-        except json.JSONDecodeError as e:
-            print(f"[WARN] Dataset formatting error: {e}")
+        stripped = raw_value.strip()
+        if stripped.startswith(("[", "{")):
+            raw = json.loads(stripped)
+        else:
             raw = []
     else:
         raw = raw_value if isinstance(raw_value, list) else []
@@ -747,21 +743,17 @@ def load_smb_dataset() -> IterableDataset:
     import zipfile
 
     from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import HfHubHTTPError
 
     repo_id = "DylanRiden/smb-worldmodel-data"
     cache_dir = Path(SMB_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        zip_path = hf_hub_download(
-            repo_id=repo_id,
-            filename="smb_frames.zip",
-            repo_type="dataset",
-            cache_dir=str(cache_dir),
-        )
-    except HfHubHTTPError as e:
-        raise RuntimeError(f"Failed to download SMB dataset: {e}") from e
+    zip_path = hf_hub_download(
+        repo_id=repo_id,
+        filename="smb_frames.zip",
+        repo_type="dataset",
+        cache_dir=str(cache_dir),
+    )
 
     extract_dir = cache_dir / "smb_frames"
     if not extract_dir.exists():
@@ -774,38 +766,30 @@ def load_smb_dataset() -> IterableDataset:
 
     def _gen() -> Iterator[dict]:
         for npz_path in npz_files:
-            try:
-                data = np.load(npz_path)
-                action = data["action"]
-                if action.ndim == 0:
-                    action = np.array([0.0] * 8)
-                buttons = ["Up", "Down", "Left", "Right", "A", "B", "Start", "Select"]
-                action_str = ", ".join(
-                    f"{b}={float(v):.1f}" for b, v in zip(buttons, action.flatten()[:8])
-                )
-                yield {"text": f"SMB Frame Action: [{action_str}]"}
-            except (OSError, KeyError, ValueError) as e:
-                print(f"[WARN] Dataset formatting error: {e}")
-                continue
+            data = np.load(npz_path)
+            action = data["action"]
+            if action.ndim == 0:
+                action = np.array([0.0] * 8)
+            buttons = ["Up", "Down", "Left", "Right", "A", "B", "Start", "Select"]
+            action_str = ", ".join(
+                f"{b}={float(v):.1f}" for b, v in zip(buttons, action.flatten()[:8])
+            )
+            yield {"text": f"SMB Frame Action: [{action_str}]"}
 
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
 def load_maze_dataset() -> IterableDataset:
     from huggingface_hub import snapshot_download
-    from huggingface_hub.errors import HfHubHTTPError
 
     cache_dir = Path(MAZE_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        maze_dir = snapshot_download(
-            repo_id="Kalso42/WorldModelForMaze",
-            repo_type="dataset",
-            cache_dir=str(cache_dir),
-        )
-    except HfHubHTTPError as e:
-        raise RuntimeError(f"Failed to download maze dataset: {e}") from e
+    maze_dir = snapshot_download(
+        repo_id="Kalso42/WorldModelForMaze",
+        repo_type="dataset",
+        cache_dir=str(cache_dir),
+    )
     maze_path = Path(maze_dir)
     txt_files = sorted(maze_path.glob("data/**/*.txt"))
     if not txt_files:
@@ -814,14 +798,10 @@ def load_maze_dataset() -> IterableDataset:
 
     def _gen() -> Iterator[dict]:
         for tf in txt_files:
-            try:
-                text = tf.read_text(encoding="utf-8", errors="replace")
-                text = text.strip()
-                if text:
-                    yield {"text": text}
-            except (OSError, UnicodeDecodeError) as e:
-                print(f"[WARN] Dataset formatting error: {e}")
-                continue
+            text = tf.read_text(encoding="utf-8", errors="replace")
+            text = text.strip()
+            if text:
+                yield {"text": text}
 
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
@@ -1138,12 +1118,7 @@ if torch.cuda.is_available():
 
 # %% [code.17]
 _training_optim = "paged_adamw_8bit"
-try:
-    import bitsandbytes  # noqa: F401
-except ImportError:
-    _training_optim = "adamw_torch"
-    if IS_MAIN:
-        print("[train] bitsandbytes not available; falling back to adamw_torch")
+import bitsandbytes  # noqa: F401
 
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
@@ -1202,17 +1177,10 @@ if IS_MAIN:
     _FINAL_DIR = os.path.join(OUTPUT_DIR, "merged-final")
     if MERGE_LORA_AFTER_TRAINING:
         print(f"Merging LoRA and saving full model to: {_FINAL_DIR}")
-        try:
-            merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
-            merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
-            tokenizer.save_pretrained(_FINAL_DIR)
-            print(f"Full model saved to {_FINAL_DIR}")
-        except Exception as e:  # noqa: BLE001
-            print(
-                f"[WARN] merge_and_unload failed: {e}. Falling back to PEFT adapter save."
-            )
-            model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))  # pyrefly: ignore[not-callable]
-            tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
+        merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
+        merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
+        tokenizer.save_pretrained(_FINAL_DIR)
+        print(f"Full model saved to {_FINAL_DIR}")
     else:
         print("MERGE_LORA_AFTER_TRAINING=False; skipping merge.")
         model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
@@ -1220,12 +1188,9 @@ if IS_MAIN:
 
     if PUSH_TO_HUB:
         print(f"Pushing to Hub: {HUB_MODEL_ID}")
-        try:
-            model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
-            tokenizer.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)
-            print("Push complete.")
-        except Exception as e:  # noqa: BLE001
-            print(f"[WARN] push_to_hub failed: {e}")
+        model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
+        tokenizer.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)
+        print("Push complete.")
 
 ACCEL_STATE.wait_for_everyone()
 

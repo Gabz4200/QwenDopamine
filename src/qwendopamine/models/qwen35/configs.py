@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from huggingface_hub.dataclasses import strict
 from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLConfig,
@@ -12,7 +11,6 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 )
 
 
-@strict(accept_kwargs=True)
 class Qwen3_5TextConfig(Qwen3NextConfig):
     r"""Text configuration for Qwen3.5 models."""
 
@@ -113,7 +111,6 @@ class Qwen3_5TextConfig(Qwen3NextConfig):
             del self.__dict__["mlp_only_layers"]
 
 
-@strict
 class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
     r"""Vision configuration for Qwen3.5 models."""
 
@@ -121,7 +118,6 @@ class Qwen3_5VisionConfig(Qwen3VLVisionConfig):
     deepstack_visual_indexes = AttributeError()
 
 
-@strict
 class Qwen3_5Config(Qwen3VLConfig):
     """Master configuration for Qwen3.5 multimodal models."""
 

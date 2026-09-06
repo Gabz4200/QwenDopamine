@@ -74,45 +74,27 @@ def register_qwen35_hf() -> None:
             Qwen3_5TextConfig, Qwen3_5ForCausalLM, exist_ok=True
         )
 
-    try:
-        import transformers
+    import transformers as _tf_qwen35
 
-        auto_cg: Any = getattr(transformers, "AutoModelForConditionalGeneration", None)
-        if auto_cg is not None and hasattr(auto_cg, "register"):
-            auto_cg.register(
-                Qwen3_5Config, Qwen3_5ForConditionalGeneration, exist_ok=True
-            )
-    except (ImportError, AttributeError):
-        pass
+    auto_cg: Any = getattr(_tf_qwen35, "AutoModelForConditionalGeneration", None)
+    if auto_cg is not None and hasattr(auto_cg, "register"):
+        auto_cg.register(Qwen3_5Config, Qwen3_5ForConditionalGeneration, exist_ok=True)
 
-    try:
-        from transformers import AutoModelForSequenceClassification
+    from transformers import AutoModelForSequenceClassification as _AMSC_Q35
+    from transformers import AutoModelForTokenClassification as _AMTC_Q35
 
-        if AutoModelForSequenceClassification is not None and hasattr(
-            AutoModelForSequenceClassification, "register"
-        ):
-            AutoModelForSequenceClassification.register(
-                Qwen3_5TextConfig,
-                Qwen3_5TextForSequenceClassification,
-                exist_ok=True,
-            )
-            AutoModelForSequenceClassification.register(
-                Qwen3_5Config, Qwen3_5ForSequenceClassification, exist_ok=True
-            )
-    except (ImportError, AttributeError):
-        pass
+    if _AMSC_Q35 is not None and hasattr(_AMSC_Q35, "register"):
+        _AMSC_Q35.register(
+            Qwen3_5TextConfig,
+            Qwen3_5TextForSequenceClassification,
+            exist_ok=True,
+        )
+        _AMSC_Q35.register(
+            Qwen3_5Config, Qwen3_5ForSequenceClassification, exist_ok=True
+        )
 
-    try:
-        from transformers import AutoModelForTokenClassification
-
-        if AutoModelForTokenClassification is not None and hasattr(
-            AutoModelForTokenClassification, "register"
-        ):
-            AutoModelForTokenClassification.register(
-                Qwen3_5Config, Qwen3_5ForTokenClassification, exist_ok=True
-            )
-    except (ImportError, AttributeError):
-        pass
+    if _AMTC_Q35 is not None and hasattr(_AMTC_Q35, "register"):
+        _AMTC_Q35.register(Qwen3_5Config, Qwen3_5ForTokenClassification, exist_ok=True)
 
 
 def register_infinidopamine_hf() -> None:
@@ -158,53 +140,37 @@ def register_infinidopamine_hf() -> None:
             InfiniDopamineTextConfig, InfiniDopamineForCausalLM, exist_ok=True
         )
 
-    try:
-        import transformers
+    import transformers as _tf_infini
 
-        auto_cg_inf: Any = getattr(
-            transformers, "AutoModelForConditionalGeneration", None
+    auto_cg_inf: Any = getattr(_tf_infini, "AutoModelForConditionalGeneration", None)
+    if auto_cg_inf is not None and hasattr(auto_cg_inf, "register"):
+        auto_cg_inf.register(
+            InfiniDopamineConfig,
+            InfiniDopamineForConditionalGeneration,
+            exist_ok=True,
         )
-        if auto_cg_inf is not None and hasattr(auto_cg_inf, "register"):
-            auto_cg_inf.register(
-                InfiniDopamineConfig,
-                InfiniDopamineForConditionalGeneration,
-                exist_ok=True,
-            )
-    except (ImportError, AttributeError):
-        pass
 
-    try:
-        from transformers import AutoModelForSequenceClassification
+    from transformers import AutoModelForSequenceClassification as _AMSC_INF
+    from transformers import AutoModelForTokenClassification as _AMTC_INF
 
-        if AutoModelForSequenceClassification is not None and hasattr(
-            AutoModelForSequenceClassification, "register"
-        ):
-            AutoModelForSequenceClassification.register(
-                InfiniDopamineTextConfig,
-                InfiniDopamineTextForSequenceClassification,
-                exist_ok=True,
-            )
-            AutoModelForSequenceClassification.register(
-                InfiniDopamineConfig,
-                InfiniDopamineForSequenceClassification,
-                exist_ok=True,
-            )
-    except (ImportError, AttributeError):
-        pass
+    if _AMSC_INF is not None and hasattr(_AMSC_INF, "register"):
+        _AMSC_INF.register(
+            InfiniDopamineTextConfig,
+            InfiniDopamineTextForSequenceClassification,
+            exist_ok=True,
+        )
+        _AMSC_INF.register(
+            InfiniDopamineConfig,
+            InfiniDopamineForSequenceClassification,
+            exist_ok=True,
+        )
 
-    try:
-        from transformers import AutoModelForTokenClassification
-
-        if AutoModelForTokenClassification is not None and hasattr(
-            AutoModelForTokenClassification, "register"
-        ):
-            AutoModelForTokenClassification.register(
-                InfiniDopamineConfig,
-                InfiniDopamineForTokenClassification,
-                exist_ok=True,
-            )
-    except (ImportError, AttributeError):
-        pass
+    if _AMTC_INF is not None and hasattr(_AMTC_INF, "register"):
+        _AMTC_INF.register(
+            InfiniDopamineConfig,
+            InfiniDopamineForTokenClassification,
+            exist_ok=True,
+        )
 
 
 def register_all_hf() -> None:

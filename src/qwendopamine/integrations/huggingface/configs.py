@@ -1,71 +1,28 @@
 """HF PreTrainedConfig adapters for QwenDopamine architectures.
 
 Defines :class:`GDN2HFConfig`, :class:`Qwen35GDN2HFConfig`, and
-:class:`InfiniDopamineGDN2HFConfig`, plus the optional-import fallbacks for
-``transformers`` symbols used across the integration.
+:class:`InfiniDopamineGDN2HFConfig`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedConfig as _BaseConfig
-else:
-    try:
-        from transformers import PreTrainedConfig as _BaseConfig
-    except ModuleNotFoundError:
-
-        class _BaseConfig:
-            model_type: str = ""
-
-            def __init__(self, **kwargs: Any) -> None:
-                for k, v in kwargs.items():
-                    setattr(self, k, v)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+    QuantoConfig,
+)
 
 
-try:
-    from transformers import (
-        AutoConfig,
-        AutoModel,
-        AutoModelForCausalLM,
-        AutoTokenizer,
-        BitsAndBytesConfig,
-        PreTrainedModel,
-        PreTrainedTokenizer,
-        PreTrainedTokenizerFast,
-        QuantoConfig,
-    )
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-
-    @dataclass
-    class _FallbackBitsAndBytesConfig:
-        load_in_8bit: bool = False
-        llm_int8_enable_fp32_cpu_offload: bool = False
-        load_in_4bit: bool = False
-        bnb_4bit_quant_type: str = "nf4"
-        bnb_4bit_compute_dtype: Any = None
-
-    @dataclass
-    class _FallbackQuantoConfig:
-        weights: str = "int8"
-
-    AutoConfig = None
-    AutoModel = None
-    AutoModelForCausalLM = None
-    AutoTokenizer = None
-    BitsAndBytesConfig = _FallbackBitsAndBytesConfig
-    PreTrainedModel = Any
-    PreTrainedTokenizer = Any
-    PreTrainedTokenizerFast = Any
-    QuantoConfig = _FallbackQuantoConfig
-
-
-PreTrainedConfig = _BaseConfig
-
-
-class GDN2HFConfig(_BaseConfig):
+class GDN2HFConfig(PreTrainedConfig):
     r"""Hugging Face PreTrainedConfig adapter for GDN-2 module configuration."""
 
     model_type = "gdn2"

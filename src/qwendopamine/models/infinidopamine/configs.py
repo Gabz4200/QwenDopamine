@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from huggingface_hub.dataclasses import strict
 from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLConfig,
@@ -12,7 +11,6 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 )
 
 
-@strict(accept_kwargs=True)
 class InfiniDopamineTextConfig(Qwen3NextConfig):
     r"""Text configuration for InfiniDopamine models."""
 
@@ -208,7 +206,6 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
             del self.__dict__["mlp_only_layers"]
 
 
-@strict
 class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
     r"""Vision configuration for InfiniDopamine models."""
 
@@ -216,7 +213,6 @@ class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
     deepstack_visual_indexes = AttributeError()
 
 
-@strict
 class InfiniDopamineConfig(Qwen3VLConfig):
     """Master configuration for InfiniDopamine multimodal models."""
 

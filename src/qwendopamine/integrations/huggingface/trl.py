@@ -38,12 +38,15 @@ def prepare_model_for_trl_training(
     """
     if use_gradient_checkpointing:
         if hasattr(model, "gradient_checkpointing_enable"):
+            import inspect
+
             kwargs = gradient_checkpointing_kwargs or {"use_reentrant": False}
-            try:
+            sig = inspect.signature(model.gradient_checkpointing_enable)
+            if "gradient_checkpointing_kwargs" in sig.parameters:
                 model.gradient_checkpointing_enable(
                     gradient_checkpointing_kwargs=kwargs
                 )
-            except TypeError:
+            else:
                 model.gradient_checkpointing_enable()
 
         if hasattr(model, "enable_input_require_grads"):

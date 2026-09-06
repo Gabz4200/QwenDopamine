@@ -27,13 +27,15 @@
 # Streams and interleaves tokenized trajectory, reasoning, and world-model datasets with reward-conditioned forward passes.
 
 # %% [code.1]
-# Install dependencies on Kaggle. Ensures transformers>=5.0.0 even on reruns.
+# Install dependencies on Kaggle. Ensures transformers>=5.15.0 even on reruns.
 import importlib.metadata
 import importlib.util
 import subprocess
 import sys
 
 from packaging.version import Version
+
+_MIN_TRANSFORMERS = Version("5.15.0")
 
 _NEEDS_INSTALL = importlib.util.find_spec("qwendopamine") is None
 _NEEDS_TF_UPGRADE = False
@@ -42,36 +44,48 @@ if importlib.util.find_spec("transformers") is None:
     _tf_ver = "not installed"
 else:
     _tf_ver = importlib.metadata.version("transformers")
-    _NEEDS_TF_UPGRADE = Version(_tf_ver) < Version("5.0.0")
+    _NEEDS_TF_UPGRADE = Version(_tf_ver) < _MIN_TRANSFORMERS
 
 if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
     print("[setup] Installing dependencies for Kaggle runtime...")
     _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
+    _base_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "-q"]
     _pkgs = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "-q",
-        "accelerate>=0.34.0",
-        "bitsandbytes>=0.43.0",
-        "datasets>=2.20.0",
-        "einops>=0.7.0",
-        "huggingface-hub>=0.20.0",
-        "numpy>=1.24.0",
-        "peft>=0.7.0",
-        "Pillow>=10.0.0",
-        "sentencepiece>=0.1.99",
-        "tokenizers>=0.15.0",
-        "torch>=2.0.0",
-        "tqdm>=4.65.0",
-        "transformers>=5.0.0",
-        "trl>=0.12.0",
-        "tensorboard",
+        *_base_cmd,
+        "accelerate>=1.14.0",
+        "bitsandbytes>=0.50.2",
+        "datasets>=4.3.0",
+        "einops>=0.8.2",
+        "gguf>=0.19.0",
+        "huggingface-hub>=1.30.0",
+        "hydra-core>=1.3.6",
+        "ipykernel>=7.3.0",
+        "jupyterlab>=4.6.3",
+        "jupytext>=1.19.5",
+        "matplotlib>=3.11.1",
+        "notebook>=7.6.2",
+        "numpy>=2.5.3",
+        "omegaconf>=2.3.1",
+        "peft>=0.20.0",
+        "Pillow>=12.3.0",
+        "pyrefly>=1.2.0",
+        "pytest>=9.1.1",
+        "ruff>=0.16.6",
+        "safetensors>=0.8.0",
+        "sentencepiece>=0.2.2",
+        "taichi>=1.7.4",
+        "tensorboard>=2.21.0",
+        "tokenizers>=0.22.0",
+        "torch>=2.11.0",
+        "torchao>=0.18.0",
+        "torchvision>=0.26.0",
+        "tqdm>=4.70.0",
+        "transformers>=5.15.0",
+        "trl>=0.24.0",
     ]
     if not _NEEDS_INSTALL:
         print(
-            f"[setup] qwendopamine present but transformers {_tf_ver} < 5.0.0 — upgrading transformers."
+            f"[setup] qwendopamine present but transformers {_tf_ver} < {_MIN_TRANSFORMERS} — upgrading transformers."
         )
     else:
         _pkgs.append(_WHEEL_URL)
@@ -83,8 +97,9 @@ if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
             "-m",
             "pip",
             "install",
+            "--upgrade",
             "-q",
-            "transformers>=5.0.0",
+            "transformers>=5.15.0",
         ]
     _proc = subprocess.run(_pkgs, check=False)
     if _proc.returncode != 0:

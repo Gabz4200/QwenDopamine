@@ -106,3 +106,41 @@ def test_when_hf_integration_register_called_then_idempotent() -> None:
 
     HFIntegration.register_infinidopamine_hf()
     HFIntegration.register_infinidopamine_hf()
+
+
+# ---------------------------------------------------------------------------
+# Accelerator kernel arg-migration: tensor_arg_indices must include
+# `initial_state` (arg 6) for chunk/recurrent ops (review finding M10).
+# Without it, a CPU `initial_state` on a CUDA/XPU/MPS call lands in the
+# kernel body on the wrong device.
+# ---------------------------------------------------------------------------
+
+
+def test_when_register_accelerator_kernels_then_initial_state_in_arg_indices() -> None:
+    """Every GDN-2 op's tensor-arg spec must include arg 6 (``initial_state``).
+
+    Review finding M10: the production spec lists
+    ``[0, 1, 2, 3, 4, 5]`` for the four GDN-2 ops, omitting
+    ``initial_state`` (arg 6). The migration helper in ``_register_one``
+    only moves args whose index is in the list, so a CPU
+    ``initial_state`` on a CUDA/XPU/MPS call lands in the kernel body
+    on the wrong device. Delta correctly lists ``[0..6]``.
+
+    The contract: the per-op spec is a module-level constant on
+    ``qwendopamine.integrations.pytorch.register`` and every GDN-2 op
+    spec includes index 6.
+    """
+    from qwendopamine.integrations.pytorch import register as reg_module
+
+    # The fix introduces a public per-op spec list.
+    spec_lists = reg_module.GDN2_ACCEL_TENSOR_ARG_INDICES
+    # The four GDN-2 ops must each list [0..6] (7 args).
+    assert len(spec_lists) == 4, (
+        f"Expected 4 GDN-2 per-op spec lists (chunk, chunk_with_state, "
+        f"recurrent, recurrent_with_state); got {len(spec_lists)}."
+    )
+    for i, spec in enumerate(spec_lists):
+        assert spec == [0, 1, 2, 3, 4, 5, 6], (
+            f"GDN-2 spec #{i} must be [0..6] (including initial_state); "
+            f"got {spec}. Review M10."
+        )

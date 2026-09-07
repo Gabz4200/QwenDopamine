@@ -62,6 +62,19 @@ def _route_to_active_device(
 _ACCEL_REGISTERED: bool = False
 
 
+# Tensor-arg indices for each accelerator-kernel op spec. Every list
+# covers ALL tensor positional args of the op (initial_state at index 6
+# included). Omitting initial_state leaves a CPU initial_state on a
+# CUDA/XPU/MPS call landing in the kernel body on the wrong device
+# (review M10). The four GDN-2 ops all use the same arg layout.
+GDN2_ACCEL_TENSOR_ARG_INDICES: list[list[int]] = [
+    [0, 1, 2, 3, 4, 5, 6],  # chunk_gdn2
+    [0, 1, 2, 3, 4, 5, 6],  # chunk_gdn2_with_state
+    [0, 1, 2, 3, 4, 5, 6],  # recurrent_gdn2
+    [0, 1, 2, 3, 4, 5, 6],  # recurrent_gdn2_with_state
+]
+
+
 def _register_one(
     op: CustomOpDef,
     body: Callable[..., object],
@@ -133,27 +146,29 @@ def register_accelerator_kernels() -> None:
     )
 
     available = _devices.detect_available_devices()
-    # Each entry: (op, body-fn, args-of-the-op)
+    # Each entry: (op, body-fn, args-of-the-op). The GDN-2 specs come
+    # from the module-level constant so the per-op list can be tested
+    # at the seam; delta has its own 7-arg layout inlined for clarity.
     per_op_specs: list[tuple[CustomOpDef, Callable[..., object], list[int]]] = [
         (
             chunk_gdn2_op,
             _chunk_gdn2_body,
-            [0, 1, 2, 3, 4, 5],  # all tensor args are migrated
+            GDN2_ACCEL_TENSOR_ARG_INDICES[0],  # [0..6] including initial_state
         ),
         (
             chunk_gdn2_with_state_op,
             _chunk_gdn2_with_state_body,
-            [0, 1, 2, 3, 4, 5],
+            GDN2_ACCEL_TENSOR_ARG_INDICES[1],
         ),
         (
             recurrent_gdn2_op,
             _recurrent_gdn2_body,
-            [0, 1, 2, 3, 4, 5],
+            GDN2_ACCEL_TENSOR_ARG_INDICES[2],
         ),
         (
             recurrent_gdn2_with_state_op,
             _recurrent_gdn2_with_state_body,
-            [0, 1, 2, 3, 4, 5],
+            GDN2_ACCEL_TENSOR_ARG_INDICES[3],
         ),
         (
             delta_core_step_op,

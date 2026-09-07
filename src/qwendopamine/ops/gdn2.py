@@ -89,6 +89,7 @@ def chunk_taichi_gdn2(
         initial_state=initial_state,
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        chunk_size=chunk_size,
     )
     if state is not None and state.data_ptr() == (
         initial_state.data_ptr() if initial_state is not None else 0

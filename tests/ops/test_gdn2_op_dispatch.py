@@ -139,6 +139,68 @@ class TestGdn2OpDispatch:
             f"Expected state dtype float32, got {state.dtype}"
         )
 
+    def test_chunk_size_is_propagated_to_torch_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The torch-fallback branch must receive the caller's ``chunk_size``.
+
+        Review finding M4: the public ``chunk_taichi_gdn2`` accepted
+        ``chunk_size`` but only forwarded it to the Taichi branch. The
+        torch-fallback branch always used its default. This test proves
+        that the caller-supplied ``chunk_size`` is what reaches the
+        underlying ``torch_chunk_gdn2``.
+        """
+        monkeypatch.setattr("qwendopamine.ops.gdn2._is_available", lambda: False)
+
+        seen: dict[str, int] = {}
+
+        def _spy(
+            q: torch.Tensor,
+            k: torch.Tensor,
+            v: torch.Tensor,
+            g: torch.Tensor,
+            b: torch.Tensor,
+            w: torch.Tensor,
+            initial_state: torch.Tensor | None = None,
+            output_final_state: bool = False,
+            use_qk_l2norm_in_kernel: bool = True,
+            chunk_size: int = 64,
+            **_kwargs: object,
+        ) -> tuple[torch.Tensor, torch.Tensor | None]:
+            seen["chunk_size"] = chunk_size
+            B, T, H, K, V = q.shape[0], q.shape[1], q.shape[2], q.shape[3], v.shape[3]
+            out = torch.zeros(B, T, H, V)
+            state = torch.zeros(B, H, K, V) if output_final_state else None
+            return out, state
+
+        monkeypatch.setattr("qwendopamine.ops.gdn2.torch_chunk_gdn2", _spy)
+
+        B, T, H, K, V = 1, 4, 1, 4, 4
+        torch.manual_seed(0)
+        q = torch.randn(B, T, H, K)
+        k = torch.randn(B, T, H, K)
+        v = torch.randn(B, T, H, V)
+        g = torch.zeros(B, T, H, K)
+        b = torch.rand(B, T, H, K)
+        w = torch.rand(B, T, H, V)
+
+        chunk_taichi_gdn2(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            b=b,
+            w=w,
+            initial_state=None,
+            output_final_state=True,
+            chunk_size=8,
+        )
+
+        assert seen["chunk_size"] == 8, (
+            f"torch fallback received chunk_size={seen.get('chunk_size')!r}; "
+            "expected 8 (caller-supplied)"
+        )
+
     def test_signature_matches_torch_reference(self) -> None:
         """The public op signature accepts the same args as the torch reference."""
         # Check recurrent_taichi_gdn2 signature matches torch reference

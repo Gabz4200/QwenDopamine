@@ -2,6 +2,7 @@ r"""GGUF weight loading and conversion utilities."""
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -17,6 +18,8 @@ from qwendopamine import DEFAULT_QWEN35_REPO
 
 from .huggingface import HFIntegration
 from .safetensors import save_safetensors
+
+_logger = logging.getLogger(__name__)
 
 GGUF_TO_HF_NAME_MAP: dict[str, str] = {
     "token_embd.weight": "model.embed_tokens.weight",
@@ -159,9 +162,6 @@ def load_gguf_weights(
     allowed = allowed_unexpected if allowed_unexpected is not None else set()
     real_unexpected = set(unexpected) - allowed
     if real_unexpected:
-        import logging as _logging
-
-        _logger = _logging.getLogger(__name__)
         _logger.warning(
             "GGUF %s contained %d unexpected keys not consumed by the model: %s",
             gguf_path,

@@ -12,15 +12,15 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 
 
 class _UnsupportedAttr:
-    r"""Descriptor that returns ``None`` on read; the field is unsupported.
+    r"""Descriptor that returns ``0`` on read; the field is unsupported.
 
     Replaces the old ``AttributeError()`` class-attr sentinel trick
     (review N6). The parent ``PretrainedConfig`` machinery walks class
-    attrs to copy defaults and to support ``getattr`` introspection, so
-    the new sentinel returns ``None`` instead of raising. The class
-    surface clearly marks these fields as unsupported; runtime code
-    that needs to enforce "no MoE" semantics should check
-    ``num_experts is None`` rather than relying on an exception.
+    attrs to copy defaults and to support ``getattr`` introspection,
+    AND compares fields to numbers (e.g. ``num_experts > 0``), so the
+    new sentinel returns ``0`` instead of ``None``/raising. The class
+    surface clearly marks these fields as unsupported; the value 0
+    means "not MoE" to the parent machinery.
     """
 
     def __init__(self, name: str, owner: str) -> None:

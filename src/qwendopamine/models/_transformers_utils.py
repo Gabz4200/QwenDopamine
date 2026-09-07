@@ -84,13 +84,6 @@ def unwrap_gated_delta_rule_fns() -> None:
             "Skipping qwen3_next CPU unwrap (opt-in env var "
             "QWENDOPAMINE_CPU_UNWRAP is not set)."
         )
-        import sys as _s
-
-        print(
-            "DEBUG: should_unwrap=False, returning. env=",
-            _s.modules.get("__main__").__dict__.get("env_check", None),
-            file=_s.stderr,
-        )
         return
 
     import types as _types

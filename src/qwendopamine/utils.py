@@ -31,12 +31,17 @@ def move_to_device(batch: Any, device: torch.device) -> Any:
 
     Recursively move tensors in a batch to the target device.
 
-    Handles ``dict``, ``list``, and ``tuple`` containers, recursing into
-    nested structures. Non-tensor leaves are passed through unchanged.
+    Handles ``dict``, ``list``, ``tuple``, ``NamedTuple``, and
+    ``frozenset`` containers, recursing into nested structures.
+    Non-tensor leaves are passed through unchanged.
+
+    Review N4: the previous code did ``type(batch)(moved)`` for every
+    list/tuple, which broke ``NamedTuple`` (the type's __new__ requires
+    keyword args via _fields) and missed ``frozenset``.
 
     Args:
         batch (Any): A tensor, or a nested container of tensors (``dict``,
-            ``list``, ``tuple``).
+            ``list``, ``tuple``, ``NamedTuple``, ``frozenset``).
         device (torch.device): Target device for tensor relocation.
 
     Returns:
@@ -47,6 +52,13 @@ def move_to_device(batch: Any, device: torch.device) -> Any:
         return batch.to(device)
     if isinstance(batch, dict):
         return {k: move_to_device(v, device) for k, v in batch.items()}
+    # NamedTuple check: it subclasses tuple but its __new__ takes
+    # positional or keyword args. Use _make to preserve the type.
+    if isinstance(batch, tuple) and hasattr(batch, "_fields"):
+        moved = [move_to_device(item, device) for item in batch]
+        return type(batch)._make(moved)
+    if isinstance(batch, frozenset):
+        return frozenset(move_to_device(item, device) for item in batch)
     if isinstance(batch, (list, tuple)):
         moved = [move_to_device(item, device) for item in batch]
         return type(batch)(moved)

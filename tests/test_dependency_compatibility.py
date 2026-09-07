@@ -83,9 +83,28 @@ def test_notebook_pin_matches_project_pin() -> None:
 
 
 def test_pyproject_toml_has_compatible_pins() -> None:
-    """pyproject.toml must declare compatible numpy/scipy minimums."""
-    with open("pyproject.toml") as fh:
-        content = fh.read()
+    """pyproject.toml must declare compatible numpy/scipy minimums.
 
-    assert "numpy>=2.0.0" in content, "pyproject.toml must require numpy>=2.0.0"
-    assert "scipy>=1.13.0" in content, "pyproject.toml must require scipy>=1.13.0"
+    Review N11: previously the test asserted raw text (``"numpy>=2.0.0"
+    in content``), which is brittle and breaks on formatting changes.
+    The fix parses the file with ``tomllib`` and checks the parsed
+    dependency strings.
+    """
+    import sys
+
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        import tomli as tomllib  # type: ignore[import-not-found]
+
+    with open("pyproject.toml", "rb") as fh:
+        data = tomllib.load(fh)
+
+    deps = data.get("project", {}).get("dependencies", [])
+    dep_strs = " ".join(deps)
+    assert "numpy>=2.0.0" in dep_strs, (
+        f"pyproject.toml must require numpy>=2.0.0; got deps: {deps!r}"
+    )
+    assert "scipy>=1.13.0" in dep_strs, (
+        f"pyproject.toml must require scipy>=1.13.0; got deps: {deps!r}"
+    )

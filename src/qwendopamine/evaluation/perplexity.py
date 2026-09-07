@@ -55,7 +55,13 @@ def compute_perplexity(
             total_loss += loss.item() * num_tokens
             total_tokens += num_tokens
 
-    avg_loss = total_loss / max(total_tokens, 1)
+    if total_tokens == 0:
+        raise ValueError(
+            "Cannot compute perplexity: total_tokens == 0 "
+            "(the dataloader produced no valid tokens). "
+            "Review N2: previous behaviour silently returned ppl=1.0."
+        )
+    avg_loss = total_loss / total_tokens
     ppl = torch.exp(torch.tensor(avg_loss)).item()
     if ppl == float("inf"):
         warnings.warn(

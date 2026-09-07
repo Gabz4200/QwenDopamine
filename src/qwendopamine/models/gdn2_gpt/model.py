@@ -54,17 +54,25 @@ class GDN2GPT(nn.Module):
         self.max_len = self.config.block_size
         self.mamba_init = config.mamba_init
         self.apply(self._init_weights)
+        # Review N12: cache the transformer ModuleDict so each access
+        # returns the same object identity (previously the property
+        # allocated a fresh ModuleDict on every call).
+        self._transformer_cache: nn.ModuleDict = nn.ModuleDict(
+            {"wte": self.wte, "h": self.h, "ln_f": self.ln_f}
+        )
 
     @property
     def transformer(self) -> nn.ModuleDict:
         r"""transformer() -> nn.ModuleDict
 
-        Return the transformer submodules (embeddings, blocks, norm).
+        Return the cached transformer submodules (embeddings, blocks,
+        norm). The same ``ModuleDict`` instance is returned on every
+        call (review N12).
 
         Returns:
             nn.ModuleDict: Named submodules ``wte``, ``h``, ``ln_f``.
         """
-        return nn.ModuleDict({"wte": self.wte, "h": self.h, "ln_f": self.ln_f})
+        return self._transformer_cache
 
     def _init_weights(self, module: nn.Module) -> None:
         """Initialize weights following GPT-2 / Mamba init conventions."""

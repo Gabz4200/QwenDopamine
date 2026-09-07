@@ -126,7 +126,14 @@ class LinearWarmupScheduler(LRScheduler):
         else:
             self.base_scheduler.load_state_dict(state_dict)
 
-        if self.step_count <= self.warmup_steps and self.warmup_steps > 0:
+        # Review N3: only re-apply warmup when step_count > 0. A fresh
+        # restore (step_count == 0) would otherwise reset LR to 0.0
+        # even when the base scheduler is mid-cycle.
+        if (
+            self.step_count > 0
+            and self.step_count <= self.warmup_steps
+            and self.warmup_steps > 0
+        ):
             scale = self.step_count / max(self.warmup_steps, 1)
             for group in self.optimizer.param_groups:
                 initial_lr = float(

@@ -45,12 +45,12 @@ def test_when_decode_steps_exceed_max_seq_length_then_cache_capped() -> None:
     assert cache_k.shape[2] == 3
     # Step 4: another. Cache should be at the cap (4).
     _, cache = attn(x, rope=None, max_seq_length=max_seq_length, kv_cache=cache)
-    cache_k, cache_v = cache
+    cache_k, _cache_v = cache
     assert cache_k.shape[2] == max_seq_length
     # Step 5+: must NOT grow past the cap.
     for _ in range(5):
         _, cache = attn(x, rope=None, max_seq_length=max_seq_length, kv_cache=cache)
-        cache_k, cache_v = cache
+        cache_k, _cache_v = cache
         assert cache_k.shape[2] <= max_seq_length, (
             f"Cache exceeded max_seq_length={max_seq_length}: got shape {cache_k.shape}"
         )

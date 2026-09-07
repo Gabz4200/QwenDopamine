@@ -39,7 +39,7 @@ def test_mtp_keys_emit_warning(caplog: pytest.LogCaptureFixture) -> None:
 
     class _StubVisual(torch.nn.Module):
         def load_state_dict(self, sd, strict: bool = True):  # type: ignore[override]
-            return [], []
+            return (list[str](), list[str]())
 
     class _StubModel(torch.nn.Module):
         def __init__(self) -> None:
@@ -49,10 +49,10 @@ def test_mtp_keys_emit_warning(caplog: pytest.LogCaptureFixture) -> None:
 
     class _StubLang(torch.nn.Module):
         def load_qwen35_weights(self, sd, strict: bool = True):  # type: ignore[override]
-            return [], []
+            return (list[str](), list[str]())
 
         def load_state_dict(self, sd, strict: bool = True):  # type: ignore[override]
-            return [], []
+            return (list[str](), list[str]())
 
     class _StubTop(torch.nn.Module):
         def __init__(self) -> None:
@@ -89,7 +89,7 @@ def test_text_loader_warns_on_mtp(caplog: pytest.LogCaptureFixture) -> None:
 
     class _Stub(torch.nn.Module):
         def load_state_dict(self, sd, strict: bool = True):  # type: ignore[override]
-            return [], []
+            return (list[str](), list[str]())
 
     model = _Stub()
     state = {

@@ -63,6 +63,7 @@ def test_when_decode_steps_then_gdn2_state_persists(
         _ = out1
         # The GDN-2 forward updates the cache's ``recurrent_state``.
         state_after_first = model.kv_caches[0].get("recurrent_state")
+        state_snapshot: torch.Tensor | None = None
         if state_after_first is not None:
             state_snapshot = state_after_first.detach().clone()
         out2 = model(x, input_pos=torch.tensor([1]))

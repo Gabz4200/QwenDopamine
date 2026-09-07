@@ -35,7 +35,6 @@ ops below do **not** select a backend.
 
 from __future__ import annotations
 
-
 __all__ = [
     "_chunk_gdn2_fake",
     "_chunk_gdn2_with_state_fake",

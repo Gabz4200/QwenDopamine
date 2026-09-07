@@ -90,12 +90,7 @@ def test_pyproject_toml_has_compatible_pins() -> None:
     The fix parses the file with ``tomllib`` and checks the parsed
     dependency strings.
     """
-    import sys
-
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        import tomli as tomllib  # type: ignore[import-not-found]
+    import tomllib
 
     with open("pyproject.toml", "rb") as fh:
         data = tomllib.load(fh)

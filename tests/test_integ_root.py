@@ -171,11 +171,18 @@ def test_when_gguf_load_then_unexpected_keys_are_reported(
             self.fc = torch.nn.Linear(2, 2)
 
         def load_state_dict(self, state_dict, strict: bool = True):  # type: ignore[override]
-            return [], ["unexpected.key.alpha", "unexpected.key.beta"]
+            return (
+                list[str](),
+                ["unexpected.key.alpha", "unexpected.key.beta"],
+            )
 
     fake = _FakeModel()
     # Bypass the real GGUF build (no file I/O).
-    monkeypatch.setattr(gguf_mod, "_build_state_dict_from_gguf", lambda p: {})
+    monkeypatch.setattr(
+        gguf_mod,
+        "_build_state_dict_from_gguf",
+        lambda p: dict[str, torch.Tensor](),  # type: ignore[arg-type,return-value]
+    )
 
     with caplog.at_level("WARNING", logger="qwendopamine.integrations.gguf"):
         returned = gguf_mod.load_gguf_weights(fake, "/dummy.gguf")
@@ -198,10 +205,14 @@ def test_when_gguf_load_then_allowed_unexpected_is_silenced(
 
     class _FakeModel(torch.nn.Module):
         def load_state_dict(self, state_dict, strict: bool = True):  # type: ignore[override]
-            return [], ["tied.tie_word_embeddings"]
+            return (list[str](), ["tied.tie_word_embeddings"])
 
     fake = _FakeModel()
-    monkeypatch.setattr(gguf_mod, "_build_state_dict_from_gguf", lambda p: {})
+    monkeypatch.setattr(
+        gguf_mod,
+        "_build_state_dict_from_gguf",
+        lambda p: dict[str, torch.Tensor](),  # type: ignore[arg-type,return-value]
+    )
 
     with caplog.at_level("WARNING", logger="qwendopamine.integrations.gguf"):
         returned = gguf_mod.load_gguf_weights(

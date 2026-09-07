@@ -34,7 +34,10 @@ def test_parallel_reward_except_logs_at_debug(
     class _BadCache:
         # Force the except branch by having ``layers`` be an empty list
         # so ``layers[layer_idx]`` raises IndexError.
-        layers = []
+        layers: list  # initialised in __init__ to avoid mutable class attr
+
+        def __init__(self) -> None:
+            self.layers = []
 
     model = _Model()
     with caplog.at_level(logging.DEBUG, logger=pr.__name__):

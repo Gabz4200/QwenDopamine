@@ -6,7 +6,6 @@ from typing import NamedTuple
 
 import pytest
 
-
 # N2 ---
 
 
@@ -65,8 +64,8 @@ def test_move_to_device_handles_namedtuple() -> None:
     """Review N4: NamedTuple containers must be preserved with tensors moved."""
 
     class _Batch(NamedTuple):
-        x: "object"
-        y: "object"
+        x: object
+        y: object
 
     from qwendopamine.utils import move_to_device
 
@@ -106,7 +105,7 @@ def test_pyproject_parsed_not_asserted_as_text() -> None:
     if mod is None:
         # pytest may not have imported the module under this name; load
         # by path instead.
-        from importlib.util import spec_from_file_location, module_from_spec
+        from importlib.util import module_from_spec, spec_from_file_location
 
         spec = spec_from_file_location(
             "tests.test_dependency_compatibility",

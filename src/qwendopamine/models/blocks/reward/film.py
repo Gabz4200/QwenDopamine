@@ -86,30 +86,10 @@ class TokenWiseFiLM(nn.Module):
         return result
 
     def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        """Align ``cond`` to the same rank as ``x`` for broadcasting."""
-        if cond.dim() == 0:
-            cond = cond.unsqueeze(0)
+        """Defer to the shared ``broadcast_cond`` helper (review N9)."""
+        from qwendopamine.models.blocks.reward.components import broadcast_cond
 
-        if cond.dim() == 1:
-            cond = cond.unsqueeze(0)
-
-        # Align conditioning rank with input rank for broadcasting.
-        if x.dim() == 3 and cond.dim() == 2:
-            cond = cond.unsqueeze(1)
-        elif x.dim() == 2 and cond.dim() == 3:
-            if cond.size(1) != 1:
-                raise ValueError(
-                    "When x has shape (B, D), cond with shape (B, L, C) is only "
-                    f"valid if L == 1. Got cond.shape={tuple(cond.shape)}."
-                )
-            cond = cond.squeeze(1)
-        elif x.dim() != cond.dim():
-            raise ValueError(
-                "Unsupported combination of x and cond shapes: "
-                f"x={tuple(x.shape)}, cond={tuple(cond.shape)}."
-            )
-
-        return cond
+        return broadcast_cond(x, cond)
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str

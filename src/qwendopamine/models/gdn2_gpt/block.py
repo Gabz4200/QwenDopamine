@@ -59,13 +59,15 @@ class Block(nn.Module):
                 config, layer_idx=layer_idx, n_embd=config.n_embd
             )
 
-        if (
-            not config.shared_attention_norm
-            and config.mlp
-            and not config.parallel_residual
-        ):
-            self.norm_2 = RMSNorm(config.n_embd, eps=config.norm_eps)
+        # ``norm_2`` is consumed by the non-parallel-residual branch when
+        # MLP is present, regardless of ``shared_attention_norm``. The
+        # previous code only allocated it when
+        # ``not shared_attention_norm and not parallel_residual``,
+        # which crashed when both shared_attention_norm=True and
+        # parallel_residual=False were set. Review M14: always
+        # allocate when MLP is present so the use-site contract holds.
         if config.mlp:
+            self.norm_2 = RMSNorm(config.n_embd, eps=config.norm_eps)
             self.mlp = LLaMAMLP(config)
 
     def forward(

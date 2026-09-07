@@ -20,6 +20,17 @@ import pytest
 import torch
 from torch.library import opcheck
 
+from qwendopamine.integrations.pytorch import (
+    custom_ops,  # noqa: F401  # triggers op registration
+)
+from qwendopamine.integrations.pytorch.chunk import (  # noqa: F401  # registers the @custom_op-decorated ops
+    chunk_gdn2_op,
+    chunk_gdn2_with_state_op,
+)
+from qwendopamine.integrations.pytorch.recurrent import (  # noqa: F401
+    recurrent_gdn2_op,
+    recurrent_gdn2_with_state_op,
+)
 from qwendopamine.kernels.taichi import is_available
 from qwendopamine.ops.gdn2 import chunk_taichi_gdn2, recurrent_taichi_gdn2
 

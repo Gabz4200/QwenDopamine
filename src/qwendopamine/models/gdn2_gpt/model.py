@@ -54,9 +54,6 @@ class GDN2GPT(nn.Module):
         self.max_len = self.config.block_size
         self.mamba_init = config.mamba_init
         self.apply(self._init_weights)
-        # Review N12: cache the transformer ModuleDict so each access
-        # returns the same object identity (previously the property
-        # allocated a fresh ModuleDict on every call).
         self._transformer_cache: nn.ModuleDict = nn.ModuleDict(
             {"wte": self.wte, "h": self.h, "ln_f": self.ln_f}
         )

@@ -143,9 +143,6 @@ def collect_parallel_reward_metrics(
             if rec is not None:
                 metrics["parallel_reward/recurrent_state_norm"] = _norm(rec)
         except (AttributeError, IndexError) as e:
-            # Review M9: previously the bare ``pass`` silently swallowed
-            # any misconfigured model. Surface the failure at debug so a
-            # user can diagnose without crashing the training loop.
             _logger.debug(
                 "parallel_reward: could not read cache state for layer %r: %r",
                 getattr(layer, "layer_idx", None),

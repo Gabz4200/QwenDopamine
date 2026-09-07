@@ -53,6 +53,29 @@ def load_qwen35_weights(
     mtp_keys: list[str] = []
 
     for k, v in state_dict.items():
+        # MoE and mtp filters come FIRST so a MoE key like
+        # ``model.language_model.layers.0.mlp.gate.weight`` is dropped
+        # before the language-model prefix branch adds it to text_state.
+        if k.startswith("mtp."):
+            mtp_keys.append(k)
+            continue
+        if any(
+            k.endswith(suffix)
+            for suffix in (
+                ".mlp.gate.weight",
+                ".mlp.experts.gate_up_proj",
+                ".mlp.experts.down_proj",
+                ".mlp.experts.up_proj",
+                ".mlp.experts.gate_proj",
+                ".mlp.shared_expert.gate_proj.weight",
+                ".mlp.shared_expert.up_proj.weight",
+                ".mlp.shared_expert.down_proj.weight",
+                ".mlp.shared_expert_gate.weight",
+            )
+        ):
+            # Qwen3.5-0.8B+ uses MoE; InfiniDopamine is non-MoE (review N6).
+            mtp_keys.append(k)
+            continue
         if k == "lm_head.weight":
             lm_head_state[k] = v
         elif k.startswith("model.visual."):
@@ -63,15 +86,13 @@ def load_qwen35_weights(
             text_state[k] = v
         elif k.startswith("visual."):
             vision_state[k[len("visual.") :]] = v
-        elif k.startswith("mtp."):
-            mtp_keys.append(k)
         elif strict:
             text_state[k] = v
 
     if mtp_keys:
         _logger.warning(
-            "Dropping %d mtp.* keys (multi-token prediction heads are not "
-            "supported by InfiniDopamine): %s",
+            "Dropping %d unsupported keys (mtp.* or MoE submodules; "
+            "InfiniDopamine is non-MoE per review N6): %s",
             len(mtp_keys),
             mtp_keys[:5] + (["..."] if len(mtp_keys) > 5 else []),
         )

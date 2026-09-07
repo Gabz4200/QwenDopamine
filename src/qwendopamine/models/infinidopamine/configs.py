@@ -28,9 +28,18 @@ class _UnsupportedAttr:
         self._owner = owner
 
     def __get__(self, instance: object, owner: type | None = None) -> object:
-        # The parent ``PretrainedConfig`` machinery compares these
-        # fields to numbers (e.g. ``num_experts > 0``). Return 0 so
-        # those checks evaluate to "not MoE" without raising.
+        # Return a safe default for the two kinds of fields this
+        # sentinel replaces:
+        #   - numeric flags like ``num_experts``/``num_experts_per_tok``
+        #     where the parent config does ``> 0`` checks; return 0 so
+        #     those evaluate to "not MoE".
+        #   - sequence fields like ``deepstack_visual_indexes`` where
+        #     the parent vision model does ``len(...)`` and
+        #     ``range(...)``; return an empty list so the deepstack
+        #     merger list is empty (no deepstack fusion).
+        # ``owner`` is the class; we discriminate by attribute name.
+        if self._name in {"deepstack_visual_indexes"}:
+            return list[int]()
         return 0
 
     def __set__(self, instance: object, value: object) -> None:

@@ -124,6 +124,12 @@ class CausalSelfAttention(nn.Module):
             cache_v = cache_v.to(v.dtype)
             k = torch.cat([cache_k, k], dim=2)
             v = torch.cat([cache_v, v], dim=2)
+            # Review M12: trim to max_seq_length so an unbounded decode
+            # does not OOM. The kept window is the *most recent*
+            # max_seq_length tokens (drop the oldest).
+            if max_seq_length is not None and k.shape[2] > max_seq_length:
+                k = k[:, :, -max_seq_length:]
+                v = v[:, :, -max_seq_length:]
             new_cache = (k, v)
         else:
             new_cache = None

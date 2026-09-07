@@ -35,7 +35,9 @@ Reinforced Delta update rule.
         d_e_term [B, D, D] = g * omega_w_eff[B, D, 1]
         d_e [B, D]         = (d_e_term * k[B, 1, D]).sum(dim=-1)
         d_state [B, D, D]  = g * (1 - omega_e_eff)[B, D, 1] - d_e[B, D, 1] * k[B, 1, D]
-        d_k [B, D]         = (d_e_term * e[B, D, 1]).sum(dim=1)
+        r [B, D]          = (d_e_term * k[B, 1, D]).sum(dim=-1)  # grad w.r.t. e
+        d_k [B, D]         = (d_e_term * e[B, D, 1]).sum(dim=1)            # write
+                         - (state * r.unsqueeze(-1) * omega_w_eff).sum(dim=1)  # read-back
         d_v [B, D]         = d_e
         d_omega_w_eff [B, D] = (g * e_term).sum(dim=-1)
         d_omega_w [B, 1]   = (d_omega_w_eff * write).sum(dim=-1, keepdim=True)
@@ -120,20 +122,18 @@ def _delta_core_step_fake(
 
 def _delta_core_step_out_setup(
     ctx: torch.autograd.function.FunctionCtx,
-    state: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    omega_w: torch.Tensor,
-    omega_e: torch.Tensor,
-    write: torch.Tensor,
-    erase: torch.Tensor,
+    inputs: tuple,
+    output: torch.Tensor,
 ) -> torch.Tensor:
-    """Save inputs and re-compute the per-step output for the backward pass."""
-    from qwendopamine.ops.reward import _reward_torch_step
+    """Save inputs for the backward pass (review H5, torch 2.9+ API).
 
-    out = _reward_torch_step(state, k, v, omega_w, omega_e, write, erase)
-    ctx.save_for_backward(state, k, v, omega_w, omega_e, write, erase, out)
-    return out
+    The ``setup_context`` signature changed in torch 2.9: it is now
+    ``(ctx, inputs, output)`` where ``inputs`` is a tuple of the op's
+    positional arguments, and ``output`` is the op's return tensor.
+    """
+    state, k, v, omega_w, omega_e, write, erase = inputs
+    ctx.save_for_backward(state, k, v, omega_w, omega_e, write, erase, output)
+    return output
 
 
 def _delta_core_step_out_backward(
@@ -186,7 +186,14 @@ def _delta_core_step_out_backward(
     d_state = g * (1.0 - omega_e_eff) - d_e.unsqueeze(-1) * k32.unsqueeze(
         1
     )  # [B, D, D]
-    d_k = (d_e_term * e.unsqueeze(-1)).sum(dim=1)  # [B, D]
+    # r[d] = sum_kk k[kk] * dS_next[d, kk] — gradient w.r.t. the
+    # residual e[d]. Used for the read-back term of d_k (review H5).
+    r = (d_e_term.squeeze(-1) * k32).sum(dim=-1, keepdim=True)  # [B, D, 1]
+    # d_k[k] = sum_d dS_next[d, k] * w_term[d]            (write path)
+    #        - sum_d S[d, k] * omega_w_eff[d] * r[d]        (read-back)
+    d_k_write = d_e_term.squeeze(-1) * e.unsqueeze(-1)  # [B, D, 1]
+    d_k_read = -state32 * r  # [B, D, 1]
+    d_k = (d_k_write + d_k_read).sum(dim=1)  # [B, D]
     d_v = d_e  # [B, D]
 
     d_omega_w_eff = (g * e_term).sum(dim=-1)  # [B, D]

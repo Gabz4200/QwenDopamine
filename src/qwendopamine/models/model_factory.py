@@ -12,16 +12,11 @@ from qwendopamine.models.core.config_adapter import ConfigAdapter
 from qwendopamine.models.core.embeddings import PositionEmbeddings, TokenEmbeddings
 from qwendopamine.models.core.normalization import RMSNorm
 from qwendopamine.models.core.output_head import LMHead
-from qwendopamine.models.infinidopamine import (
-    InfiniDopamineConfig,
-    InfiniDopamineForCausalLM,
-    InfiniDopamineTextConfig,
-)
-from qwendopamine.models.qwen35 import (
-    Qwen3_5Config,
-    Qwen3_5ForCausalLM,
-    Qwen3_5TextConfig,
-)
+
+# Lazy imports (review H1): the HF model families are heavy and not
+# needed for callers that only build a :class:`ResearchDecoder`. They
+# are imported inside the factory functions below so the top-level
+# ``import qwendopamine.models`` stays cheap.
 
 
 class ResearchDecoder(nn.Module):
@@ -123,6 +118,17 @@ def _resolve_model_family(config: Any) -> tuple[str, Any]:
         tuple[str, Any]: ``(family, config)`` where ``family`` is one of
         ``"infinidopamine"``, ``"qwen35"``, or ``"unknown"``.
     """
+    # Review H1: lazy import the HF model families inside the function
+    # so the top-level ``import qwendopamine.models`` stays cheap.
+    from qwendopamine.models.infinidopamine import (
+        InfiniDopamineConfig,
+        InfiniDopamineTextConfig,
+    )
+    from qwendopamine.models.qwen35 import (
+        Qwen3_5Config,
+        Qwen3_5TextConfig,
+    )
+
     config = _unwrap_text_config(config)
     model_type = getattr(config, "model_type", None)
     if isinstance(config, (InfiniDopamineTextConfig, InfiniDopamineConfig)) or (
@@ -151,6 +157,13 @@ def build_model(config: Any) -> nn.Module:
         ``Qwen3_5ForCausalLM``, or :class:`ResearchDecoder`) depending on the
         resolved model family.
     """
+    # Review H1: lazy import so the top-level ``import qwendopamine.models``
+    # does not eagerly pull the HF model families.
+    from qwendopamine.models.infinidopamine import (
+        InfiniDopamineForCausalLM,
+    )
+    from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM
+
     family, config = _resolve_model_family(config)
     if family == "infinidopamine":
         return InfiniDopamineForCausalLM(config)
@@ -178,6 +191,11 @@ def build_reference_model(
         nn.Module: Reference HuggingFace causal language model on
         ``device_map``.
     """
+    # Review H1: lazy import so the top-level ``import qwendopamine.models``
+    # does not eagerly pull the HF model families.
+    from qwendopamine.models.infinidopamine import InfiniDopamineForCausalLM
+    from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM
+
     family, config = _resolve_model_family(config)
     if quantization_config is not None:
         kwargs["quantization_config"] = quantization_config

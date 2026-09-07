@@ -46,6 +46,16 @@ class TrainingLoop:
         scheduler: LRScheduler,
         config: TrainConfig,
     ) -> None:
+        # Review M8: reject fp16 on CPU up front. fp16 on CPU is
+        # unstable and can silently produce NaNs; catch this at
+        # construction time so a misconfigured model fails fast
+        # rather than mid-training.
+        if config.mixed_precision == "fp16" and get_model_device(model).type == "cpu":
+            raise ValueError(
+                "mixed_precision='fp16' is not supported on CPU "
+                "(fp16 on CPU can overflow and silently produce NaNs). "
+                "Use 'bf16' on CPU or run on a CUDA device."
+            )
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -69,10 +79,26 @@ class TrainingLoop:
         """
         self.model.train()
         accum = 0
-        batches = list(train_loader)
-        if not batches:
-            raise ValueError("train_loader is empty; cannot run training loop.")
-        for accum, batch in enumerate(batches, start=1):
+        # Review H2: stream the loader so an infinite/streaming
+        # iterable is not fully materialised by ``list(...)``. We
+        # peek the first batch to keep the empty-loader contract,
+        # then walk one-ahead so we can detect the end of the
+        # iterator without buffering the whole stream.
+        loader_iter = iter(train_loader)
+        try:
+            current = next(loader_iter)
+        except StopIteration:
+            raise ValueError(
+                "train_loader is empty; cannot run training loop."
+            ) from None
+        while True:
+            batch = current
+            try:
+                current = next(loader_iter)
+                is_final = False
+            except StopIteration:
+                is_final = True
+            accum += 1
             batch = self._move_to_device(self.model, batch)
             autocast_device = get_model_device(self.model).type
             with torch.autocast(
@@ -84,7 +110,22 @@ class TrainingLoop:
             ):
                 outputs = self.model(**batch)
                 loss = outputs["loss"] if isinstance(outputs, dict) else outputs.loss
-                loss = loss / self.config.grad_accum_steps
+                # Review H3: when the final window is shorter than
+                # ``grad_accum_steps`` (a partial tail at the end of
+                # the loader), rescale so the gradient magnitude
+                # matches a full window. The partial tail size is
+                # ``accum % grad_accum_steps`` because we just
+                # consumed the last batch.
+                window_pos = (
+                    accum % self.config.grad_accum_steps
+                    if self.config.grad_accum_steps > 0
+                    else 1
+                )
+                if is_final and window_pos != 0:
+                    # Partial tail — rescale to a full window.
+                    loss = loss * (self.config.grad_accum_steps / window_pos)
+                else:
+                    loss = loss / self.config.grad_accum_steps
 
             loss_tensor: torch.Tensor = (
                 loss if isinstance(loss, torch.Tensor) else torch.as_tensor(loss)
@@ -95,6 +136,9 @@ class TrainingLoop:
                 self._step_optimizer()
                 if self.global_step >= self.config.max_steps:
                     break
+
+            if is_final:
+                break
 
         if accum > 0 and accum % self.config.grad_accum_steps != 0:
             self._step_optimizer()

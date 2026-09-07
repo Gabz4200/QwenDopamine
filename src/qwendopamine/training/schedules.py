@@ -89,7 +89,26 @@ class LinearWarmupScheduler(LRScheduler):
             for group in self.optimizer.param_groups:
                 group["lr"] = group["initial_lr"] * scale
             return
+        # Review N7: the parent ``LRScheduler.step`` emits a warning
+        # when invoked before ``optimizer.step()``. Set the
+        # ``_opt_called`` flag torch uses for that check so the warning
+        # is silenced when the scheduler is invoked standalone (e.g.
+        # in a test that does not call ``optimizer.step()`` first).
+        self.optimizer._opt_called = True
         self.base_scheduler.step(epoch)
+
+    def _initial_step(self) -> None:
+        r"""_initial_step() -> None
+
+        Review N7: the parent ``LRScheduler.__init__`` calls
+        ``self.step()`` once to set the initial LR. Our ``step()``
+        forwards to ``self.base_scheduler.step(epoch)``, which
+        triggers a torch warning ("lr_scheduler.step() called before
+        optimizer.step()") during construction. Override to a no-op
+        so the warning never fires; the first real ``step()`` call
+        is made by the training loop AFTER ``optimizer.step()``.
+        """
+        return
 
     def state_dict(self) -> dict[str, Any]:
         r"""state_dict() -> dict[str, Any]

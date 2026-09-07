@@ -47,23 +47,38 @@ except ImportError:
 # native CPU code on CPU and to GPU shaders on CUDA, so no separate
 # CUDA dependency is required. The model layer never imports the
 # Taichi kernels directly — it asks the ops layer to dispatch.
-_HAS_TAICHI_OPS = False
+#
+# Review H4: availability is probed lazily on first use (not at
+# import time) so ``import qwendopamine.models`` stays cheap and
+# does not trigger a full ``ti.init()`` / Vulkan JIT on process start.
+_HAS_TAICHI_OPS: bool | None = None
 _taichi_chunk_gdn2 = None
 _taichi_recurrent_gdn2 = None
-try:
-    from qwendopamine.kernels.taichi import is_available as _taichi_is_available
-    from qwendopamine.kernels.taichi.gdn2_api import (
-        chunk_taichi_gdn2 as _taichi_chunk_gdn2,
-    )
-    from qwendopamine.kernels.taichi.gdn2_api import (
-        recurrent_taichi_gdn2 as _taichi_recurrent_gdn2,
-    )
 
-    _HAS_TAICHI_OPS = bool(_taichi_is_available())
-except (ImportError, RuntimeError) as e:
-    from qwendopamine.models.gdn2.backend import _warn_fallback_once
 
-    _warn_fallback_once(f"Taichi ops failed to load: {e}")
+def _taichi_ops_available() -> bool:
+    """Return whether the public Taichi ops path is available, caching
+    the result after the first probe (review H4).
+    """
+    global _HAS_TAICHI_OPS
+    if _HAS_TAICHI_OPS is None:
+        try:
+            from qwendopamine.kernels.taichi import is_available
+            from qwendopamine.ops import (
+                chunk_taichi_gdn2,
+                recurrent_taichi_gdn2,
+            )
+
+            global _taichi_chunk_gdn2, _taichi_recurrent_gdn2
+            _taichi_chunk_gdn2 = chunk_taichi_gdn2
+            _taichi_recurrent_gdn2 = recurrent_taichi_gdn2
+            # Probe availability without forcing the full runtime init:
+            # the ops themselves delegate to the Taichi kernel lazily.
+            _HAS_TAICHI_OPS = bool(is_available())
+        except (ImportError, RuntimeError):
+            _HAS_TAICHI_OPS = False
+    return _HAS_TAICHI_OPS
+
 
 _DEFAULT_HIDDEN_SIZE = 2048
 _DEFAULT_NUM_HEADS = 16
@@ -220,6 +235,8 @@ class GatedDeltaNet2(nn.Module):
                 TypeError,
                 AttributeError,
             ) as e:  # compile is purely optional
+                from qwendopamine.models.gdn2.backend import _warn_fallback_once
+
                 _warn_fallback_once(f"torch.compile unavailable ({e})")
                 self._compiled_chunk = None
                 self.compile_error = e
@@ -653,7 +670,7 @@ class GatedDeltaNet2(nn.Module):
         use_cache: bool,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         r"""Run the Taichi kernel. Falls back to the torch path on failure."""
-        if not _HAS_TAICHI_OPS:
+        if not _taichi_ops_available():
             raise RuntimeError(
                 "GDN-2 backend 'taichi' was requested but Taichi failed to "
                 "initialise. Reinstall the project with `uv sync` to ensure "

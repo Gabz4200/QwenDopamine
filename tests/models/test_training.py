@@ -89,7 +89,7 @@ def test_when_training_loop_run_then_advances_global_steps_and_optimizes() -> No
     )
 
     config = TrainConfig(
-        max_steps=4, grad_accum_steps=2, max_grad_norm=1.0, mixed_precision="fp16"
+        max_steps=4, grad_accum_steps=2, max_grad_norm=1.0, mixed_precision="bf16"
     )
     loop = TrainingLoop(model, optimizer, scheduler, config)
 

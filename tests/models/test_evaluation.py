@@ -163,10 +163,13 @@ def test_when_layerwise_stats_called_then_executes_batches_and_returns_dict() ->
     assert all(isinstance(v, float) for v in stats.values())
 
 
-def test_when_compute_perplexity_empty_dataloader_then_returns_finite_value() -> None:
-    # Functionality: empty dataloader should not crash, returns exp(0) = 1.0
-    ppl = compute_perplexity(DummyLM(), [])
-    assert ppl == 1.0, "empty dataloader should yield ppl=1.0"
+def test_when_compute_perplexity_empty_dataloader_then_raises_value_error() -> None:
+    # Review N2: previously this test pinned the buggy "return ppl=1.0"
+    # behaviour. The new contract is explicit: an empty dataloader
+    # (no valid tokens) must raise ValueError so a user gets a clear
+    # signal instead of a silently-incorrect perplexity.
+    with pytest.raises(ValueError, match="total_tokens == 0"):
+        compute_perplexity(DummyLM(), [])
 
 
 def test_when_layerwise_stats_then_attempts_model_forward_to_validate_inputs() -> None:

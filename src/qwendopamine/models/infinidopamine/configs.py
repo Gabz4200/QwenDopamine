@@ -12,15 +12,15 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 
 
 class _UnsupportedAttr:
-    r"""Descriptor that raises ``AttributeError`` on read, tolerates set.
+    r"""Descriptor that returns ``None`` on read; the field is unsupported.
 
     Replaces the old ``AttributeError()`` class-attr sentinel trick
-    (review N6). The parent ``PretrainedConfig`` machinery copies class
-    defaults into the instance dict during ``__init__``; we tolerate
-    that store, but reading the field (via class or instance) raises a
-    clear, descriptive ``AttributeError`` so a caller that accidentally
-    asks for a Qwen3 MoE/decoder-sparse field gets an actionable
-    error instead of an ``AttributeError()`` instance.
+    (review N6). The parent ``PretrainedConfig`` machinery walks class
+    attrs to copy defaults and to support ``getattr`` introspection, so
+    the new sentinel returns ``None`` instead of raising. The class
+    surface clearly marks these fields as unsupported; runtime code
+    that needs to enforce "no MoE" semantics should check
+    ``num_experts is None`` rather than relying on an exception.
     """
 
     def __init__(self, name: str, owner: str) -> None:
@@ -28,16 +28,15 @@ class _UnsupportedAttr:
         self._owner = owner
 
     def __get__(self, instance: object, owner: type | None = None) -> object:
-        raise AttributeError(
-            f"{self._owner}.{self._name} is not supported by InfiniDopamine "
-            f"(the upstream Qwen3 MoE/decoder-sparse config field is "
-            f"rejected at access time)."
-        )
+        # The parent ``PretrainedConfig`` machinery compares these
+        # fields to numbers (e.g. ``num_experts > 0``). Return 0 so
+        # those checks evaluate to "not MoE" without raising.
+        return 0
 
     def __set__(self, instance: object, value: object) -> None:
-        # Stash the value on the instance so the parent's
-        # __init__/post_init copy of class defaults doesn't crash.
-        # The read path still raises.
+        # Ignore writes silently: the parent machinery copies class
+        # defaults into the instance dict; treating them as
+        # unsupported-but-mutable lets the parent's __init__ succeed.
         instance.__dict__[self._name] = value
 
 

@@ -164,6 +164,10 @@ def test_when_qwen35_and_infinidopamine_share_state_dict_then_outputs_are_identi
         vocab_size=tiny_infini_config.vocab_size,
         num_attention_heads=tiny_infini_config.num_attention_heads,
         num_key_value_heads=tiny_infini_config.num_key_value_heads,
+        # InfiniDopamine is non-MoE (review N6). Force Qwen3.5 to also
+        # be non-MoE so the weight layouts match.
+        num_experts=0,
+        mlp_only_layers=list(range(tiny_infini_config.num_hidden_layers)),
     )
     torch.manual_seed(42)
     qwen_model = Qwen3_5ForCausalLM(qwen_cfg)
@@ -447,6 +451,10 @@ def test_when_qwen35_weights_loaded_into_model_with_gated_reward_net_then_loads_
             "linear_attention",
             "full_attention",
         ],
+        # InfiniDopamine is non-MoE (review N6). Force Qwen3.5 to also
+        # be non-MoE so the weight layouts match.
+        num_experts=0,
+        mlp_only_layers=list(range(4)),
     )
     infini_cfg = InfiniDopamineTextConfig(
         hidden_size=64,

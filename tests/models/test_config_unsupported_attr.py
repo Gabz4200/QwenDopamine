@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_unsupported_attr_descriptor_replaces_sentinel() -> None:
     """The class must NOT contain ``AttributeError()`` sentinels.
@@ -25,30 +23,18 @@ def test_unsupported_attr_descriptor_replaces_sentinel() -> None:
     )
 
 
-def test_accessing_unsupported_attr_raises_clear_error() -> None:
-    """Reading an unsupported field must raise AttributeError with a useful message."""
-    from qwendopamine.models.infinidopamine.configs import (
-        InfiniDopamineTextConfig,
-    )
+def test_accessing_unsupported_attr_returns_zero() -> None:
+    """Reading an unsupported field returns 0 so parent ``> 0`` checks work.
 
-    cfg = InfiniDopamineTextConfig()
-    with pytest.raises(AttributeError, match="norm_topk_prob.*not supported"):
-        # __get__ raises when accessed.
-        _ = cfg.norm_topk_prob
-
-
-def test_reading_after_set_still_raises() -> None:
-    """The parent ``__init__`` may stash a default on the instance; the
-    read path must still raise. This is the contract: any access to an
-    unsupported field fails loudly regardless of how it got there.
+    The parent ``PretrainedConfig`` machinery compares these fields
+    to numbers (e.g. ``num_experts > 0``). The descriptor returns 0 so
+    those checks evaluate to "not MoE" without raising.
     """
     from qwendopamine.models.infinidopamine.configs import (
         InfiniDopamineTextConfig,
     )
 
     cfg = InfiniDopamineTextConfig()
-    # The parent's __init__ may have written to cfg.__dict__ directly
-    # (bypassing the descriptor). Bypass the descriptor too.
-    object.__setattr__(cfg, "norm_topk_prob", True)
-    with pytest.raises(AttributeError, match="not supported"):
-        _ = cfg.norm_topk_prob
+    assert cfg.norm_topk_prob == 0, (
+        f"norm_topk_prob must be 0 (sentinel); got {cfg.norm_topk_prob!r}"
+    )

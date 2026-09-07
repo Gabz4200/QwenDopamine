@@ -70,3 +70,9 @@ __all__ = [
     "is_autograd_registered",
     "register_all_autograd",
 ]
+
+
+# Eagerly register at import time so the public ops carry autograd
+# rules as soon as a caller imports this module. The flag below is
+# flipped to True ONLY on successful completion (review M13).
+register_all_autograd()

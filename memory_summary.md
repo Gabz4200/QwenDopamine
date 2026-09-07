@@ -22,3 +22,21 @@
 (25) **Canonical config construction.** `InfiniDopamineConfig(**hf_cfg.to_dict())` preserves all upstream fields verbatim. Hand-rolled `_as_obj` + `getattr` defaults silently drops fields and can pass wrong values (e.g. `hidden_size=1280` for vision when actual is 768). Patch only the parallel_reward keys into `text_config` dict after `to_dict()`.
 
 (26) **HFIntegration registration guard.** `HFIntegration.register_infinidopamine_hf()` must run before `AutoConfig.from_pretrained` in any cell that might be rerun after a kernel restart. Make each config-using cell self-contained.
+
+## Code-remediation TDD lessons (2026-09-07)
+
+(27) **Import-time side effects need opt-in, not be silent.** Gated monkeypatches behind env vars (`QWENDOPAMINE_CPU_UNWRAP=1`); helper is a no-op without it.
+
+(28) **Silently-true sentinels are bugs.** `AttributeError()` instance as class attr was truthy → silently picked MoE path. Replace with descriptor returning 0 so `> 0` checks evaluate to "not MoE".
+
+(29) **Thread cache through every decode step.** `build_kv_caches` returning None re-initialised state on every step. Build per-layer dict, pass through `block.forward` → `self.attn(past_key_values=...)`.
+
+(30) **Test brittle mocks at the gate, not the side effect.** M5 mock was intercepting real transformers import; refactor to assert the gate function.
+
+(31) **Pre-existing tests pinning buggy behaviour must be re-pinned.** Update assertions; never silently keep them.
+
+(32) **Pyrefly: explicit empty container types, never bare `[]` or `{}`.** Use `list[str]()`, `dict[str, torch.Tensor]()`.
+
+(33) **Sequential phase-by-phase TDD; one commit per phase.** Multi-agent parallel caused file collisions.
+
+(34) **Final state: 523 passed, 2 skipped, 6 deselected; ruff clean; pyrefly 0 errors.** Started at 491 baseline; added 32 new tests across 7 phases.

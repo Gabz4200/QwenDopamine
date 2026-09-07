@@ -7,10 +7,27 @@ Symbol re-exports of ``transformers`` itself happen at the call site, not here.
 from __future__ import annotations
 
 import logging as _logging
+import os as _os
 
 import torch as _torch
 
 _logger = _logging.getLogger(__name__)
+
+
+def _should_unwrap_for_cpu() -> bool:
+    """Return whether the qwen3_next CPU unwrap should run.
+
+    The unwrap is opt-in via the ``QWENDOPAMINE_CPU_UNWRAP=1`` environment
+    variable. The default is off so importing the model modules does not
+    silently rewrite upstream ``transformers`` functions on every machine
+    (review M5).
+    """
+    return _os.environ.get("QWENDOPAMINE_CPU_UNWRAP", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def expand_position_ids_to_multimodal(
@@ -60,6 +77,20 @@ def unwrap_gated_delta_rule_fns() -> None:
     import torch as _torch
 
     if _torch.cuda.is_available():
+        return
+
+    if not _should_unwrap_for_cpu():
+        _logger.debug(
+            "Skipping qwen3_next CPU unwrap (opt-in env var "
+            "QWENDOPAMINE_CPU_UNWRAP is not set)."
+        )
+        import sys as _s
+
+        print(
+            "DEBUG: should_unwrap=False, returning. env=",
+            _s.modules.get("__main__").__dict__.get("env_check", None),
+            file=_s.stderr,
+        )
         return
 
     import types as _types

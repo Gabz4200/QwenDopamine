@@ -7,11 +7,14 @@ appropriate submodule.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 from torch import nn
 from torch.nn.modules.module import _IncompatibleKeys
+
+_logger = logging.getLogger(__name__)
 
 
 def load_qwen35_weights(
@@ -23,6 +26,12 @@ def load_qwen35_weights(
 
     Load Qwen3.5 weights into a multimodal model, splitting into vision,
     text, and LM-head state.
+
+    ``mtp.*`` keys (multi-token prediction heads) are reported at
+    ``WARNING`` level and dropped, instead of being silently
+    ``continue``d (review M7). The previously-built ``load_info`` list
+    is removed — review N1 — and replaced with structured logging at
+    INFO level per partition when counts are non-zero.
 
     Args:
         model (Any): The :class:`InfiniDopamineForConditionalGeneration` instance.
@@ -41,6 +50,7 @@ def load_qwen35_weights(
     vision_state: dict[str, torch.Tensor] = {}
     text_state: dict[str, torch.Tensor] = {}
     lm_head_state: dict[str, torch.Tensor] = {}
+    mtp_keys: list[str] = []
 
     for k, v in state_dict.items():
         if k == "lm_head.weight":
@@ -54,13 +64,20 @@ def load_qwen35_weights(
         elif k.startswith("visual."):
             vision_state[k[len("visual.") :]] = v
         elif k.startswith("mtp."):
-            continue
+            mtp_keys.append(k)
         elif strict:
             text_state[k] = v
 
+    if mtp_keys:
+        _logger.warning(
+            "Dropping %d mtp.* keys (multi-token prediction heads are not "
+            "supported by InfiniDopamine): %s",
+            len(mtp_keys),
+            mtp_keys[:5] + (["..."] if len(mtp_keys) > 5 else []),
+        )
+
     all_missing: list[str] = []
     all_unexpected: list[str] = []
-    load_info: list[str] = []
 
     if vision_state:
         missing_v, unexpected_v = model.model.visual.load_state_dict(
@@ -68,9 +85,12 @@ def load_qwen35_weights(
         )
         all_missing.extend(missing_v)
         all_unexpected.extend(unexpected_v)
-        load_info.append(
-            f"vision: loaded {len(vision_state) - len(missing_v)} keys "
-            f"({len(missing_v)} missing, {len(unexpected_v)} unexpected)"
+        _logger.info(
+            "vision partition: loaded %d / %d keys (missing=%d unexpected=%d)",
+            len(vision_state) - len(missing_v),
+            len(vision_state),
+            len(missing_v),
+            len(unexpected_v),
         )
 
     if text_state:
@@ -79,14 +99,17 @@ def load_qwen35_weights(
         )
         all_missing.extend(missing_t)
         all_unexpected.extend(unexpected_t)
-        load_info.append(
-            f"text: loaded {len(text_state) - len(missing_t)} keys "
-            f"({len(missing_t)} missing, {len(unexpected_t)} unexpected)"
+        _logger.info(
+            "text partition: loaded %d / %d keys (missing=%d unexpected=%d)",
+            len(text_state) - len(missing_t),
+            len(text_state),
+            len(missing_t),
+            len(unexpected_t),
         )
 
     if lm_head_state:
         model.lm_head.weight.data.copy_(lm_head_state["lm_head.weight"])
-        load_info.append("lm_head: loaded 1 key")
+        _logger.info("lm_head: loaded 1 key")
 
     return _IncompatibleKeys(all_missing, all_unexpected)
 

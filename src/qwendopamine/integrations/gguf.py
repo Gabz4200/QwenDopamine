@@ -125,17 +125,30 @@ def _build_state_dict_from_gguf(gguf_path: str) -> dict[str, torch.Tensor]:
     return state_dict
 
 
-def load_gguf_weights(model: Any, gguf_path: str) -> None:
+def load_gguf_weights(
+    model: Any, gguf_path: str, *, allowed_unexpected: set[str] | None = None
+) -> set[str]:
     r"""Load GGUF weights into an existing model.
 
     Missing ``lm_head.weight`` is allowed; all other missing keys raise.
+    Unexpected keys (present in the GGUF but not in the model) are
+    reported in the return value so callers can decide whether to
+    log/raise/ignore them. Review M6: previously unexpected keys were
+    silently discarded, hiding mis-mapping or extra-tensor bugs.
 
     Args:
         model (Any): model to populate.
         gguf_path (str): path to a GGUF file.
+        allowed_unexpected (set[str] | None): names that are expected to
+            be present in the GGUF but absent from the model. Defaults
+            to an empty set; the caller can extend it.
+
+    Returns:
+        set[str]: unexpected keys present in the GGUF state dict but
+        not consumed by the model.
     """
     state_dict = _build_state_dict_from_gguf(gguf_path)
-    missing, _ = model.load_state_dict(state_dict, strict=False)
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
     if missing:
         allowed_missing = {"lm_head.weight"}
         unexpected_missing = set(missing) - allowed_missing
@@ -143,6 +156,19 @@ def load_gguf_weights(model: Any, gguf_path: str) -> None:
             raise RuntimeError(
                 f"Missing keys after GGUF load: {sorted(unexpected_missing)}"
             )
+    allowed = allowed_unexpected if allowed_unexpected is not None else set()
+    real_unexpected = set(unexpected) - allowed
+    if real_unexpected:
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
+        _logger.warning(
+            "GGUF %s contained %d unexpected keys not consumed by the model: %s",
+            gguf_path,
+            len(real_unexpected),
+            sorted(real_unexpected),
+        )
+    return set(unexpected)
 
 
 def convert_gguf_to_safetensors(gguf_path: str, output_dir: str) -> str:

@@ -7,10 +7,25 @@ prefixes from a Qwen3.5 state dict and applies the rest to the
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 from torch import nn
+
+_logger = logging.getLogger(__name__)
+
+
+def _warn_mtp_drops(state_dict: dict[str, torch.Tensor]) -> None:
+    """Emit a warning if any ``mtp.*`` keys would be dropped (review M7)."""
+    mtp_keys = [k for k in state_dict if k.startswith("mtp.")]
+    if mtp_keys:
+        _logger.warning(
+            "Dropping %d mtp.* keys (multi-token prediction heads are not "
+            "supported by InfiniDopamine): %s",
+            len(mtp_keys),
+            mtp_keys[:5] + (["..."] if len(mtp_keys) > 5 else []),
+        )
 
 
 def load_text_qwen35_weights(
@@ -41,6 +56,7 @@ def load_text_qwen35_weights(
         for k in state_dict
     )
     if has_full_prefix:
+        _warn_mtp_drops(state_dict)
         remapped_state_dict: dict[str, torch.Tensor] = {}
         for k, v in state_dict.items():
             new_k = k
@@ -87,6 +103,7 @@ def load_causal_lm_qwen35_weights(
         k.startswith(("model.language_model.", "language_model.")) for k in state_dict
     )
     if has_language_model_prefix:
+        _warn_mtp_drops(state_dict)
         remapped_state_dict: dict[str, torch.Tensor] = {}
         for k, v in state_dict.items():
             if k.startswith("model.language_model."):

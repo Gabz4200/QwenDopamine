@@ -144,3 +144,70 @@ def test_when_register_accelerator_kernels_then_initial_state_in_arg_indices() -
             f"GDN-2 spec #{i} must be [0..6] (including initial_state); "
             f"got {spec}. Review M10."
         )
+
+
+# ---------------------------------------------------------------------------
+# GGUF loader: report unexpected keys (review finding M6).
+# ---------------------------------------------------------------------------
+
+
+def test_when_gguf_load_then_unexpected_keys_are_reported(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``load_gguf_weights`` must surface (log + return) unexpected keys.
+
+    Review M6: previously the function discarded the unexpected tuple
+    from ``load_state_dict(strict=False)``, so a mis-mapping or extra
+    GGUF tensor went unnoticed. The fix returns the set and logs a
+    warning for keys not in the allowlist.
+    """
+    import torch
+
+    from qwendopamine.integrations import gguf as gguf_mod
+
+    class _FakeModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc = torch.nn.Linear(2, 2)
+
+        def load_state_dict(self, state_dict, strict: bool = True):  # type: ignore[override]
+            return [], ["unexpected.key.alpha", "unexpected.key.beta"]
+
+    fake = _FakeModel()
+    # Bypass the real GGUF build (no file I/O).
+    monkeypatch.setattr(gguf_mod, "_build_state_dict_from_gguf", lambda p: {})
+
+    with caplog.at_level("WARNING", logger="qwendopamine.integrations.gguf"):
+        returned = gguf_mod.load_gguf_weights(fake, "/dummy.gguf")
+
+    assert returned == {"unexpected.key.alpha", "unexpected.key.beta"}, (
+        f"Expected both unexpected keys returned; got {returned!r}"
+    )
+    assert any("unexpected" in rec.message for rec in caplog.records), (
+        f"Expected a warning log about unexpected keys; got {[r.message for r in caplog.records]!r}"
+    )
+
+
+def test_when_gguf_load_then_allowed_unexpected_is_silenced(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Keys in ``allowed_unexpected`` must not trigger a warning."""
+    import torch
+
+    from qwendopamine.integrations import gguf as gguf_mod
+
+    class _FakeModel(torch.nn.Module):
+        def load_state_dict(self, state_dict, strict: bool = True):  # type: ignore[override]
+            return [], ["tied.tie_word_embeddings"]
+
+    fake = _FakeModel()
+    monkeypatch.setattr(gguf_mod, "_build_state_dict_from_gguf", lambda p: {})
+
+    with caplog.at_level("WARNING", logger="qwendopamine.integrations.gguf"):
+        returned = gguf_mod.load_gguf_weights(
+            fake, "/dummy.gguf", allowed_unexpected={"tied.tie_word_embeddings"}
+        )
+    assert returned == {"tied.tie_word_embeddings"}
+    assert not any("unexpected" in rec.message for rec in caplog.records), (
+        f"Expected no warning for allowed key; got {[r.message for r in caplog.records]!r}"
+    )

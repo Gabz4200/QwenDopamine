@@ -19,9 +19,9 @@ Two entry points are exposed:
 Both paths use the same column-wise recurrence:
 
     e[d]        = v[d] - sum_kk S[d, kk] * k[kk]
-    w_term[d]   = omega_w_eff * write[d]      with omega_w_eff = omega_w * write
-    e_term[d]   = omega_e_eff * erase[d]      with omega_e_eff = omega_e * erase
-    S_next[d,k] = (1 - e_term[d]) * S[d, k] + w_term[d] * e[d] * k[k]
+    omega_w_eff[d] = omega_w[d] * write[d]      # per-channel effective write gate
+    omega_e_eff[d] = omega_e[d] * erase[d]      # per-channel effective erase gate
+    S_next[d,k] = (1 - omega_e_eff[d]) * S[d, k] + omega_w_eff[d] * e[d] * k[k]
 """
 
 import torch

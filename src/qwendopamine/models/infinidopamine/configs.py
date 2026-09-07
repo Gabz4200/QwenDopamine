@@ -11,6 +11,36 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 )
 
 
+class _UnsupportedAttr:
+    r"""Descriptor that raises ``AttributeError`` on read, tolerates set.
+
+    Replaces the old ``AttributeError()`` class-attr sentinel trick
+    (review N6). The parent ``PretrainedConfig`` machinery copies class
+    defaults into the instance dict during ``__init__``; we tolerate
+    that store, but reading the field (via class or instance) raises a
+    clear, descriptive ``AttributeError`` so a caller that accidentally
+    asks for a Qwen3 MoE/decoder-sparse field gets an actionable
+    error instead of an ``AttributeError()`` instance.
+    """
+
+    def __init__(self, name: str, owner: str) -> None:
+        self._name = name
+        self._owner = owner
+
+    def __get__(self, instance: object, owner: type | None = None) -> object:
+        raise AttributeError(
+            f"{self._owner}.{self._name} is not supported by InfiniDopamine "
+            f"(the upstream Qwen3 MoE/decoder-sparse config field is "
+            f"rejected at access time)."
+        )
+
+    def __set__(self, instance: object, value: object) -> None:
+        # Stash the value on the instance so the parent's
+        # __init__/post_init copy of class defaults doesn't crash.
+        # The read path still raises.
+        instance.__dict__[self._name] = value
+
+
 class InfiniDopamineTextConfig(Qwen3NextConfig):
     r"""Text configuration for InfiniDopamine models."""
 
@@ -192,13 +222,23 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
         """
         # no-op setter for schema compatibility.
 
-    norm_topk_prob = AttributeError()
-    moe_intermediate_size = AttributeError()
-    shared_expert_intermediate_size = AttributeError()
-    num_experts_per_tok = AttributeError()
-    num_experts = AttributeError()
-    output_router_logits = AttributeError()
-    router_aux_loss_coef = AttributeError()
+    norm_topk_prob = _UnsupportedAttr("norm_topk_prob", "InfiniDopamineTextConfig")
+    moe_intermediate_size = _UnsupportedAttr(
+        "moe_intermediate_size", "InfiniDopamineTextConfig"
+    )
+    shared_expert_intermediate_size = _UnsupportedAttr(
+        "shared_expert_intermediate_size", "InfiniDopamineTextConfig"
+    )
+    num_experts_per_tok = _UnsupportedAttr(
+        "num_experts_per_tok", "InfiniDopamineTextConfig"
+    )
+    num_experts = _UnsupportedAttr("num_experts", "InfiniDopamineTextConfig")
+    output_router_logits = _UnsupportedAttr(
+        "output_router_logits", "InfiniDopamineTextConfig"
+    )
+    router_aux_loss_coef = _UnsupportedAttr(
+        "router_aux_loss_coef", "InfiniDopamineTextConfig"
+    )
 
     def __post_init__(self, **kwargs: Any) -> None:
         super().__post_init__(**kwargs)
@@ -210,7 +250,9 @@ class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
     r"""Vision configuration for InfiniDopamine models."""
 
     model_type = "infinidopamine_vision"
-    deepstack_visual_indexes = AttributeError()
+    deepstack_visual_indexes = _UnsupportedAttr(
+        "deepstack_visual_indexes", "InfiniDopamineVisionConfig"
+    )
 
 
 class InfiniDopamineConfig(Qwen3VLConfig):

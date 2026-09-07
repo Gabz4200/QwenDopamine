@@ -24,6 +24,6 @@ build/
 *.swo
 .aislop/
 .agents/
-AGENTS.md
+# AGENTS.md
 skills-lock.json
 ./skills-lock.json

@@ -35,13 +35,6 @@ ops below do **not** select a backend.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
-else:
-    pass  # runtime import for decorators
-
 
 __all__ = [
     "_chunk_gdn2_fake",

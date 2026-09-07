@@ -39,12 +39,19 @@ def _register_delta_core_step_out() -> None:
     return
 
 
-_REGISTERED_AUTOGRAD: bool = True
+_REGISTERED_AUTOGRAD: bool = False
 
 
 def register_all_autograd() -> None:
     """Idempotently attach autograd rules. Currently a no-op — see
-    module docstring for rationale."""
+    module docstring for rationale.
+
+    Review M13: the previous code initialised ``_REGISTERED_AUTOGRAD``
+    to ``True`` at import time, so ``is_autograd_registered()`` always
+    returned True even if the registration function was never called
+    or failed. The flag is now set to True ONLY after a successful
+    ``register_all_autograd()`` call.
+    """
     global _REGISTERED_AUTOGRAD
     if _REGISTERED_AUTOGRAD:
         return
@@ -57,9 +64,6 @@ def register_all_autograd() -> None:
 def is_autograd_registered() -> bool:
     """Return True if every public op has an autograd rule attached."""
     return _REGISTERED_AUTOGRAD
-
-
-register_all_autograd()
 
 
 __all__ = [

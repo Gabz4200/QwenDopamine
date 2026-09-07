@@ -21,15 +21,16 @@ def test_parallel_reward_except_logs_at_debug(
     from qwendopamine.training import parallel_reward as pr
 
     class _Layer(nn.Module):
-        layer_idx = 0
-        reward_branch = nn.Linear(1, 1)
-        reward_gate_proj = nn.Linear(1, 1)
-
-    class _Model(nn.Module):
-        layers = nn.ModuleList([_Layer()])
-
         def __init__(self) -> None:
             super().__init__()
+            self.layer_idx = 0
+            self.reward_branch = nn.Module()
+            self.reward_branch.reward_gate_proj = nn.Linear(1, 1)
+
+    class _Model(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = nn.ModuleList([_Layer()])
 
     class _BadCache:
         # Force the except branch by having ``layers`` be an empty list

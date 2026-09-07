@@ -32,7 +32,11 @@ from qwendopamine.integrations.pytorch.recurrent import (  # noqa: F401
     recurrent_gdn2_with_state_op,
 )
 from qwendopamine.kernels.taichi import is_available
-from qwendopamine.ops.gdn2 import chunk_taichi_gdn2, recurrent_taichi_gdn2
+from qwendopamine.ops.gdn2 import (
+    chunk_taichi_gdn2,
+    recurrent_taichi_gdn2,
+    set_backend,
+)
 
 
 @pytest.mark.skipif(
@@ -161,7 +165,7 @@ class TestGdn2OpDispatch:
         that the caller-supplied ``chunk_size`` is what reaches the
         underlying ``torch_chunk_gdn2``.
         """
-        monkeypatch.setattr("qwendopamine.ops.gdn2._is_available", lambda: False)
+        set_backend("torch-chunk")
 
         seen: dict[str, int] = {}
 

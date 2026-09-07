@@ -59,9 +59,12 @@ def parallel_reward_gate_loss(model: Any) -> torch.Tensor:
     # The exact value doesn't matter — only the deviation matters.
     losses: list[torch.Tensor] = []
     for layer in model.model.layers[: model.config.num_hidden_layers]:
-        if not hasattr(layer, "reward_gate_proj"):
+        if not hasattr(layer, "reward_branch"):
             continue
-        gate = torch.sigmoid(layer.reward_gate_proj.bias)
+        branch = layer.reward_branch
+        if not hasattr(branch, "reward_gate_proj"):
+            continue
+        gate = torch.sigmoid(branch.reward_gate_proj.bias)
         losses.append(((gate - init_gate) ** 2).mean())
     if not losses:
         return torch.tensor(0.0, device=device)

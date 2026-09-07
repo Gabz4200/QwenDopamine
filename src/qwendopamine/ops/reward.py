@@ -24,10 +24,29 @@ Both paths use the same column-wise recurrence:
     S_next[d,k] = (1 - omega_e_eff[d]) * S[d, k] + omega_w_eff[d] * e[d] * k[k]
 """
 
+from __future__ import annotations
+
 import torch
 
-from qwendopamine.kernels.taichi import is_available as _is_available
 from qwendopamine.kernels.taichi.reinforced_kernels import _make_effective_gate
+from qwendopamine.ops._backend_registry import register_backend, resolve_backend
+
+
+def _register_reward_backends() -> None:
+    def _torch_backend() -> str:
+        return "torch"
+
+    def _taichi_backend() -> str:
+        from qwendopamine.kernels.taichi import is_available as taichi_is_available
+
+        return "taichi" if taichi_is_available() else "torch"
+
+    register_backend("torch", _torch_backend)
+    register_backend("taichi", _taichi_backend)
+    register_backend("auto", _taichi_backend)
+
+
+_register_reward_backends()
 
 
 def _reward_torch_step(
@@ -72,7 +91,8 @@ def delta_core_step(
     per-token adjoint. When Taichi is unavailable, the pure-PyTorch
     fallback below implements the same column-wise spec.
     """
-    if _is_available():
+    backend = resolve_backend("auto")
+    if backend == "taichi":
         from qwendopamine.kernels.taichi import (
             delta_core_step as _taichi_delta_core_step,
         )
@@ -107,7 +127,8 @@ def delta_core_step_out(
         tensor.
       - ``state`` is not mutated.
     """
-    if _is_available():
+    backend = resolve_backend("auto")
+    if backend == "taichi":
         from qwendopamine.kernels.taichi import (
             delta_core_step_out as _taichi_delta_core_step_out,
         )
@@ -118,3 +139,9 @@ def delta_core_step_out(
 
     next_state.copy_(delta_core_step(state, k, v, omega_w, omega_e, write, erase))
     return next_state
+
+
+__all__ = [
+    "delta_core_step",
+    "delta_core_step_out",
+]

@@ -5,6 +5,7 @@ Moved from ``decoder_layer.py`` for size.
 
 from __future__ import annotations
 
+import torch
 from transformers.models.qwen3_next.modeling_qwen3_next import Qwen3NextAttention
 
 from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
@@ -26,3 +27,6 @@ class InfiniDopamineAttention(Qwen3NextAttention):
         self.attention_dropout = getattr(
             config, "attention_dropout", getattr(config, "attention_dropout_prob", 0.0)
         )
+
+    def forward(self, hidden_states: torch.Tensor, **kwargs) -> tuple[torch.Tensor, torch.Tensor | None]:
+        return super().forward(hidden_states, **kwargs)

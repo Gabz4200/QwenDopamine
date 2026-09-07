@@ -165,8 +165,18 @@ def torch_chunk_gdn2(
             state + torch.matmul(kbar.transpose(-1, -2), delta)
         )
 
-    out = torch.cat(outputs, dim=2)  # [B, H, T, V]
-    out = rearrange(out, "b h t d -> b t h d").to(out_dtype)
+    if outputs:
+        out = torch.cat(outputs, dim=2)  # [B, H, T, V]
+        out = rearrange(out, "b h t d -> b t h d").to(out_dtype)
+    else:
+        out = torch.empty(
+            batch_size,
+            0,
+            num_heads,
+            d_v,
+            dtype=out_dtype,
+            device=q.device,
+        )
 
     final_state: torch.Tensor | None = None
     if output_final_state:

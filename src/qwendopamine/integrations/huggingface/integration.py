@@ -43,6 +43,7 @@ from qwendopamine.integrations.huggingface.registration import (
     register_infinidopamine_hf,
     register_qwen35_hf,
 )
+from qwendopamine.models.ports import ModelPort
 
 
 class HFIntegration:
@@ -138,7 +139,7 @@ class HFIntegration:
     def load_model(
         model_name: str,
         **kwargs: Any,
-    ) -> Any:
+    ) -> ModelPort:
         return load_model(model_name, **kwargs)
 
     @staticmethod

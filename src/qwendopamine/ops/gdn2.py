@@ -7,9 +7,64 @@ this module falls back to the pure-PyTorch reference.
 
 import torch
 
-from qwendopamine.kernels.taichi import is_available as _is_available
 from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
 from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
+from qwendopamine.ops._backend_registry import (
+    BackendResolutionError,
+    register_backend,
+    resolve_backend,
+)
+
+
+def _register_default_backends() -> None:
+    from qwendopamine.kernels.taichi import is_available as taichi_is_available
+
+    def _torch_chunk_backend() -> str:
+        return "torch-chunk"
+
+    def _torch_recurrent_backend() -> str:
+        return "torch-recurrent"
+
+    def _taichi_backend() -> str:
+        return "taichi" if taichi_is_available() else "torch-chunk"
+
+    register_backend("torch-chunk", _torch_chunk_backend)
+    register_backend("torch-recurrent", _torch_recurrent_backend)
+    register_backend("taichi", _taichi_backend)
+    register_backend("auto", _taichi_backend)
+
+
+_register_default_backends()
+
+
+def _resolve_backend(backend: str | None) -> str:
+    if backend is None:
+        backend = "auto"
+    resolved = resolve_backend(backend)
+    if not isinstance(resolved, str):
+        raise BackendResolutionError(
+            f"Backend {backend!r} resolved to a non-string backend object."
+        )
+    return resolved
+
+
+_BACKEND_OVERRIDE: str | None = None
+
+
+def set_backend(backend: str | None) -> None:
+    global _BACKEND_OVERRIDE
+    if backend is not None:
+        try:
+            _resolve_backend(backend)
+        except BackendResolutionError as exc:
+            raise BackendResolutionError(
+                f"GDN-2 backend override rejected: {exc}"
+            ) from exc
+    _BACKEND_OVERRIDE = backend
+
+
+def _get_backend() -> str | None:
+    return _BACKEND_OVERRIDE
 
 
 def chunk_taichi_gdn2(
@@ -53,7 +108,8 @@ def chunk_taichi_gdn2(
         state: Final recurrent state ``[B, H, K, V]`` if
             ``output_final_state`` is ``True``, else ``None``.
     """
-    if _is_available():
+    backend = _resolve_backend(_get_backend())
+    if backend == "taichi":
         from qwendopamine.kernels.taichi.gdn2_api import (
             chunk_taichi_gdn2 as _fn,
         )
@@ -134,7 +190,8 @@ def recurrent_taichi_gdn2(
         state: Final recurrent state ``[B, H, K, V]`` if
             ``output_final_state`` is ``True``, else ``None``.
     """
-    if _is_available():
+    backend = _resolve_backend(_get_backend())
+    if backend == "taichi":
         from qwendopamine.kernels.taichi.gdn2_api import (
             recurrent_taichi_gdn2 as _fn,
         )

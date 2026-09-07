@@ -44,6 +44,11 @@ from qwendopamine.models.infinidopamine.configs import (
 class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
     r"""InfiniDopamineGatedDeltaNet(config, layer_idx) -> None
 
+    This is a framework adapter. It exists so the rest of the codebase
+    can depend on a project-owned abstraction instead of the concrete
+    ``transformers`` implementation. If the upstream delta-net API changes,
+    only this module needs updating.
+
     InfiniDopamine linear-attention layer with adaptive gating and
     per-head gate entropy monitoring.
 

@@ -252,9 +252,9 @@ def test_when_collect_metrics_with_no_active_branch_then_only_active_layers() ->
 def test_when_collect_metrics_with_branch_inputs_then_ratios_computed() -> None:
     """When the model has an active parallel branch and branch tensors are
     supplied, the ratio metrics must be computed."""
-    branch_layer = nn.Linear(2, 2)
-    branch_layer.reward_branch = nn.Linear(2, 2)
-    branch_layer.reward_gate_proj = nn.Linear(2, 2)
+    branch_layer = nn.Module()
+    branch_layer.reward_branch = nn.Module()
+    branch_layer.reward_branch.reward_gate_proj = nn.Linear(2, 2)
 
     class _MockModel(nn.Module):
         def __init__(self) -> None:

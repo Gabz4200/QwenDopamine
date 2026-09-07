@@ -16,6 +16,7 @@ from qwendopamine.models.infinidopamine import (
     InfiniDopamineTextModel,
     InfiniDopamineVisionConfig,
 )
+from qwendopamine.models.infinidopamine._parallel_reward import ParallelRewardBranch
 from qwendopamine.models.qwen35 import (
     Qwen3_5ForCausalLM,
     Qwen3_5TextConfig,
@@ -395,7 +396,11 @@ def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated
     assert isinstance(explicit_model.layers[2].linear_attn, InfiniDopamineGatedDeltaNet)
     assert hasattr(explicit_model.layers[2], "reward_branch")
     assert isinstance(
-        explicit_model.layers[2].reward_branch, InfiniDopamineGatedRewardNet
+        explicit_model.layers[2].reward_branch, ParallelRewardBranch
+    )
+    assert isinstance(
+        explicit_model.layers[2].reward_branch.reward_branch,
+        InfiniDopamineGatedRewardNet,
     )
     for idx in (0, 1, 3):
         assert not hasattr(explicit_model.layers[idx], "reward_branch")
@@ -427,7 +432,11 @@ def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated
         assert not hasattr(auto_model.layers[idx], "reward_branch")
     # Reward branch on the attention layer.
     assert hasattr(auto_model.layers[3], "reward_branch")
-    assert isinstance(auto_model.layers[3].reward_branch, InfiniDopamineGatedRewardNet)
+    assert isinstance(auto_model.layers[3].reward_branch, ParallelRewardBranch)
+    assert isinstance(
+        auto_model.layers[3].reward_branch.reward_branch,
+        InfiniDopamineGatedRewardNet,
+    )
 
 
 def test_when_qwen35_weights_loaded_into_model_with_gated_reward_net_then_loads_strictly() -> (
@@ -934,9 +943,10 @@ def test_when_parallel_reward_enabled_then_gate_init_is_near_zero() -> None:
     layer = cfg.layer_types[1] if cfg.layer_types is not None else ""
     model = InfiniDopamineForCausalLM(cfg)
     gate_layer = model.model.layers[1]
-    assert hasattr(gate_layer, "reward_gate_proj")
-    assert gate_layer.reward_gate_proj.weight.abs().sum() == 0.0
-    init_bias = gate_layer.reward_gate_proj.bias.item()
+    assert hasattr(gate_layer, "reward_branch")
+    gate_proj = gate_layer.reward_branch.reward_gate_proj
+    assert gate_proj.weight.abs().sum() == 0.0
+    init_bias = gate_proj.bias.item()
     assert init_bias == cfg.reward_gate_init_bias
     # sigmoid(b) is tiny at start.
     assert torch.sigmoid(torch.tensor(init_bias)).item() < 0.01
@@ -1055,7 +1065,7 @@ def test_when_gate_loss_weight_set_then_regularization_penalizes_drift() -> None
 
     # Move the bias of the only active layer away from init.
     layer = m.model.layers[1]
-    layer.reward_gate_proj.bias.data.fill_(2.0)
+    layer.reward_branch.reward_gate_proj.bias.data.fill_(2.0)
     drifted_loss = m.get_parallel_reward_gate_loss().item()
     assert drifted_loss > initial_loss
 
@@ -1140,9 +1150,10 @@ def test_when_gate_bias_default_then_branch_silent_on_reward_free_input() -> Non
     )
     model = InfiniDopamineForCausalLM(cfg)
     layer0 = model.model.layers[0]
-    assert layer0.reward_gate_proj.bias.item() == -5.0
+    gate_proj = layer0.reward_branch.reward_gate_proj
+    assert gate_proj.bias.item() == -5.0
     x = torch.randn(1, 4, 64)
-    gate = torch.sigmoid(layer0.reward_gate_proj(layer0.input_layernorm(x)))
+    gate = torch.sigmoid(gate_proj(layer0.input_layernorm(x)))
     # weight is zero-initialized so gate only depends on bias
     expected_value = torch.sigmoid(torch.tensor(-5.0)).item()
     assert torch.allclose(gate, torch.full_like(gate, expected_value))

@@ -17,6 +17,7 @@ from qwendopamine.integrations.huggingface.configs import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
+from qwendopamine.models.ports import ModelPort
 
 
 def load_config(model_name: str, **kwargs: Any) -> PreTrainedConfig:
@@ -49,7 +50,7 @@ def load_model(
     device_map: str = "cpu",
     from_gguf: bool = False,
     **kwargs: Any,
-) -> PreTrainedModel:
+) -> ModelPort:
     r"""Load a Hugging Face causal-LM model, optionally with quantization.
 
     .. note:: This is a direct copy of the original
@@ -87,7 +88,7 @@ def load_model(
             gguf_file=model_name if model_name.endswith(".gguf") else None,
             **kwargs,
         )
-        return gguf_result
+        return gguf_result  # type: ignore[bad-return]
 
     result2: PreTrainedModel = AutoModelForCausalLM.from_pretrained(  # type: ignore[assignment]
         model_name,
@@ -95,7 +96,7 @@ def load_model(
         device_map=device_map,
         **kwargs,
     )
-    return result2
+    return result2  # type: ignore[bad-return]
 
 
 def load_tokenizer(

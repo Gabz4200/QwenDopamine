@@ -21,6 +21,11 @@ class InfiniDopamineMLP(Qwen3NextMLP):
 
     MLP block with hidden-state dropout.
 
+    This is a framework adapter. It exists so the rest of the codebase
+    can depend on a project-owned abstraction instead of the concrete
+    ``transformers`` implementation. If the upstream MLP API changes,
+    only this module needs updating.
+
     Args:
         config (InfiniDopamineConfig): Layer configuration.
         intermediate_size (int): Feed-forward hidden dimension.

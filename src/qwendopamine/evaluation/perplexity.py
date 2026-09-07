@@ -6,21 +6,21 @@ import warnings
 from typing import Any
 
 import torch
-from torch import nn
 
+from qwendopamine.models.ports import ModelPort
 from qwendopamine.utils import get_model_device, move_to_device
 
 
 def compute_perplexity(
-    model: nn.Module, dataloader: Any, max_steps: int = 500
+    model: ModelPort, dataloader: Any, max_steps: int = 500
 ) -> float:
-    r"""compute_perplexity(model: nn.Module, dataloader: Any, max_steps: int = 500) -> float
+    r"""compute_perplexity(model: ModelPort, dataloader: Any, max_steps: int = 500) -> float
 
     Estimate perplexity over a dataloader by accumulating token-weighted
     cross-entropy loss.
 
     Args:
-        model (nn.Module): Causal language model whose ``__call__`` returns
+        model (ModelPort): Causal language model whose ``__call__`` returns
             ``{"loss": loss}`` or an object with a ``.loss`` attribute.
         dataloader (Any): Data loader yielding dict batches with keys such as
             ``{"input_ids", "labels", "attention_mask"}``.

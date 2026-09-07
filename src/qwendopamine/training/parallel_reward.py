@@ -53,7 +53,9 @@ def _iter_decoder_layers(model: nn.Module) -> list[nn.Module]:
 
 
 def _has_parallel_branch(layer: nn.Module) -> bool:
-    return hasattr(layer, "reward_branch") and hasattr(layer, "reward_gate_proj")
+    return hasattr(layer, "reward_branch") and hasattr(
+        layer.reward_branch, "reward_gate_proj"
+    )
 
 
 def _norm(t: torch.Tensor | tuple[torch.Tensor, torch.Tensor] | None) -> float:
@@ -79,7 +81,8 @@ def collect_parallel_reward_metrics(
 
     Args:
         model: The full model. The function locates the decoder layer list
-            and inspects each layer for ``reward_branch`` /
+            and inspects each layer through :class:`ParallelRewardPort` or,
+            for backward compatibility, ``reward_branch`` /
             ``reward_gate_proj`` attributes.
         main_out: Optional tensor — the main mixer output for the current
             step. When provided, the branch-to-main ratio uses this tensor.

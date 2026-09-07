@@ -12,6 +12,11 @@ from __future__ import annotations
 
 import logging
 
+from qwendopamine.ops._backend_registry import (
+    BackendResolutionError,
+    resolve_backend,
+)
+
 # Module-level single-warning guard for CPU fallback. Keyed on the
 # reason string so the same fallback reason only fires the first time.
 _WARNED_FALLBACKS: set[str] = set()
@@ -90,10 +95,18 @@ def resolve_gdn2_backend(
             return "taichi" if _taichi_ok() else "torch-chunk"
         if requested == "compiled":
             return "torch-chunk"
-        return requested
+        try:
+            return resolve_backend(requested)
+        except BackendResolutionError:
+            return requested
 
     if _taichi_ok():
         return "taichi"
+
+    try:
+        return resolve_backend(requested)
+    except BackendResolutionError:
+        pass
 
     if not training and seq_len <= _SINGLE_TOKEN_SEQ_LEN:
         return "torch-recurrent"

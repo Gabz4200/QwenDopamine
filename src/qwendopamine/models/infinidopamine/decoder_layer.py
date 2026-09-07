@@ -15,7 +15,7 @@ above components based on ``config.layer_types[layer_idx]``.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -33,8 +33,16 @@ from qwendopamine.models.infinidopamine._gated_delta_net import (
 from qwendopamine.models.infinidopamine._gated_reward_net import (
     InfiniDopamineGatedRewardNet,
 )
+from qwendopamine.models.infinidopamine._layer_factory import (
+    resolve_block_type,
+    should_enable_parallel_reward,
+    should_use_sparse_moe,
+)
 from qwendopamine.models.infinidopamine._mlp import InfiniDopamineMLP
 from qwendopamine.models.infinidopamine._norm import InfiniDopamineRMSNorm
+from qwendopamine.models.infinidopamine._parallel_reward import (
+    build_parallel_reward_branch,
+)
 from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
 
 
@@ -58,51 +66,25 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
     =====================  ==========================================
     """
 
-    _LINEAR_BLOCK_TYPES: ClassVar[frozenset[str]] = frozenset(
-        {"linear_attention", "gdn2", "gdn"}
-    )
-    _ATTENTION_BLOCK_TYPES: ClassVar[frozenset[str]] = frozenset(
-        {"full_attention", "sliding_attention"}
-    )
-    _REWARD_BLOCK_TYPES: ClassVar[frozenset[str]] = frozenset(
-        {
-            "gated_reward_net",
-            "reinforced_delta",
-            "reward_net",
-            "reward_linear_attention",
-        }
-    )
-
     def __init__(self, config: InfiniDopamineTextConfig, layer_idx: int) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         self.hidden_dropout = getattr(
             config, "hidden_dropout", getattr(config, "hidden_dropout_prob", 0.0)
         )
-        layer_types: Any = config.layer_types
-        self.block_type = layer_types[layer_idx]
-
-        if self.block_type in self._LINEAR_BLOCK_TYPES:
+        self.block_type = resolve_block_type(config, layer_idx)
+        family = self.block_type
+        if family == "linear":
             self.linear_attn = InfiniDopamineGatedDeltaNet(config, layer_idx)
-        elif self.block_type in self._ATTENTION_BLOCK_TYPES:
+        elif family == "attention":
             self.self_attn = InfiniDopamineAttention(config, layer_idx)
-        elif self.block_type in self._REWARD_BLOCK_TYPES:
+        elif family == "reward":
             self.linear_attn = InfiniDopamineGatedRewardNet(config, layer_idx)
-        else:
-            raise ValueError(
-                f"Unsupported InfiniDopamine block_type '{self.block_type}' at "
-                f"layer_idx={layer_idx}. Expected one of "
-                f"{sorted(self._LINEAR_BLOCK_TYPES | self._ATTENTION_BLOCK_TYPES | self._REWARD_BLOCK_TYPES)}."
-            )
 
-        if self._has_parallel_reward(config, layer_idx):
-            self._init_parallel_reward_branch(config, layer_idx)
+        if should_enable_parallel_reward(config, layer_idx):
+            self.reward_branch = build_parallel_reward_branch(config, layer_idx)
 
-        if (
-            (getattr(config, "num_experts", None) or 0) > 0
-            and layer_idx not in getattr(config, "mlp_only_layers", [])
-            and (layer_idx + 1) % getattr(config, "decoder_sparse_step", 1) == 0
-        ):
+        if should_use_sparse_moe(config, layer_idx):
             self.mlp = Qwen3NextSparseMoeBlock(config)
         else:
             self.mlp = InfiniDopamineMLP(config, config.intermediate_size)
@@ -113,47 +95,10 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-    @classmethod
-    def _has_parallel_reward(
-        cls, config: InfiniDopamineTextConfig, layer_idx: int
-    ) -> bool:
-        r"""Whether the parallel reward branch is enabled for this layer.
-
-        Resolution order:
-
-        1. ``config.parallel_reward_layers`` is the explicit allow-list.
-        2. ``config.use_parallel_reward`` opts in to the implicit rule of
-           attaching the branch to attention-only layers
-           (``full_attention`` / ``sliding_attention``).
-        """
-        explicit_layers = tuple(getattr(config, "parallel_reward_layers", ()) or ())
-        if explicit_layers:
-            return layer_idx in explicit_layers
-        if not getattr(config, "use_parallel_reward", False):
-            return False
-        layer_types: Any = config.layer_types
-        return layer_types[layer_idx] in cls._ATTENTION_BLOCK_TYPES
-
-    def _init_parallel_reward_branch(
-        self, config: InfiniDopamineTextConfig, layer_idx: int
-    ) -> None:
-        r"""Build the parallel reward branch + data-dependent gate.
-
-        The branch shares the same normalized input as the main mixer. The
-        gate starts near zero (``sigmoid(-5) ≈ 0.0067``) so the dopamine
-        contribution does not perturb a pretrained main mixer before the
-        gating parameters learn a useful scale.
-        """
-        self.reward_branch = InfiniDopamineGatedRewardNet(config, layer_idx)
-        self.reward_branch_norm = InfiniDopamineRMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
-        self.reward_gate_proj = nn.Linear(config.hidden_size, 1, bias=True)
-        nn.init.zeros_(self.reward_gate_proj.weight)
-        nn.init.constant_(
-            self.reward_gate_proj.bias,
-            getattr(config, "reward_gate_init_bias", -5.0),
-        )
+    @property
+    def reward_gate_proj(self) -> nn.Module:
+        """Forward to the parallel reward branch's gate projection."""
+        return self.reward_branch.reward_gate_proj
 
     def forward(
         self,
@@ -214,9 +159,7 @@ class InfiniDopamineDecoderLayer(GradientCheckpointingLayer):
                 reward_values=reward_values,
                 **kwargs,
             )
-            reward_out = self.reward_branch_norm(reward_out)
-            gate = torch.sigmoid(self.reward_gate_proj(x_norm))
-            mixed = mixed + gate * reward_out
+            mixed = mixed + reward_out
 
         if self.training and self.hidden_dropout > 0.0:
             mixed = F.dropout(mixed, p=self.hidden_dropout, training=True)

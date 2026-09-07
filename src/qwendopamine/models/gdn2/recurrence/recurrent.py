@@ -198,7 +198,17 @@ def torch_recurrent_gdn2(
         out_t = torch.einsum("bhkv,bhk->bhv", state, q_t)
         outputs.append(out_t)
 
-    out = torch.stack(outputs, dim=1).to(dtype)
+    if outputs:
+        out = torch.stack(outputs, dim=1).to(dtype)
+    else:
+        out = torch.empty(
+            batch_size,
+            0,
+            num_heads,
+            d_v,
+            dtype=dtype,
+            device=q.device,
+        )
     final_state = state.to(dtype) if output_final_state else None
 
     return out, final_state

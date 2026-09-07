@@ -96,7 +96,21 @@ class Block(nn.Module):
         """
         n_1 = self.norm_1(x)
         if self.use_gdn2:
-            h, _, new_kv_cache = self.attn(n_1, attention_mask=None)
+            # Review M11: the previous code dropped ``kv_cache`` here
+            # and called ``self.attn(n_1, attention_mask=None)`` with no
+            # cache. Every decode step then re-initialised the GDN-2
+            # recurrent state to zero. Thread the GDN-2 cache through
+            # by passing it as ``past_key_values`` (the GDN-2
+            # forward's existing contract).
+            gdn2_cache = kv_cache
+            if gdn2_cache is None:
+                # Build a per-layer slot the GDN-2 _get_cache helper
+                # can read. The helper expects a dict indexed by
+                # layer_idx and containing a ``recurrent_state`` entry.
+                gdn2_cache = {"layer_idx": self.layer_idx}
+            h, _, new_kv_cache = self.attn(
+                n_1, attention_mask=None, past_key_values=gdn2_cache
+            )
         else:
             h, new_kv_cache = self.attn(
                 n_1, rope, max_seq_length, mask, input_pos, kv_cache

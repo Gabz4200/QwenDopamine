@@ -280,10 +280,19 @@ class GDN2GPT(nn.Module):
 
     def build_kv_caches(
         self, idx: torch.Tensor, max_seq_length: int
-    ) -> list[KVCache | None]:
-        r"""build_kv_caches(idx: torch.Tensor, max_seq_length: int) -> list[KVCache | None]
+    ) -> list[KVCache | dict | None]:
+        r"""build_kv_caches(idx: torch.Tensor, max_seq_length: int) -> list[KVCache | dict | None]
 
-        Pre-allocate per-layer KV caches for decoding.
+        Pre-allocate per-layer caches for decoding.
+
+        For standard attention layers: a ``(k_cache, v_cache)`` tensor
+        pair of shape ``(B, max_seq_length, n_query_groups, head_size)``.
+
+        For GDN-2 layers: a per-layer ``dict`` that satisfies the
+        GDN-2 ``_get_cache`` contract (review M11). The dict holds the
+        recurrent and short-conv state so memory persists across decode
+        steps. The previous code returned ``None`` here, which caused
+        the GDN-2 state to be re-initialised to zero on every decode.
 
         Args:
             idx (torch.Tensor): Reference tensor providing batch size and
@@ -291,8 +300,7 @@ class GDN2GPT(nn.Module):
             max_seq_length (int): Maximum cache length per layer.
 
         Returns:
-            list[KVCache | None]: One ``(k_cache, v_cache)`` tuple per block,
-            or ``None`` for GDN-2 blocks that manage their own state.
+            list[KVCache | dict | None]: One cache per block.
         """
         b = idx.size(0)
         heads = self.config.n_query_groups
@@ -300,10 +308,12 @@ class GDN2GPT(nn.Module):
         v_cache_shape = (b, max_seq_length, heads, self.config.head_size)
         dev = idx.device
 
-        caches: list[KVCache | None] = []
+        caches: list[KVCache | dict | None] = []
         for block in self.h:
             if block.use_gdn2:
-                caches.append(None)
+                # Per-layer GDN-2 cache slot. The state entries are
+                # populated lazily on the first forward.
+                caches.append({"layer_idx": block.layer_idx})
             else:
                 caches.append(
                     (

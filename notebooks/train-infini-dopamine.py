@@ -28,6 +28,11 @@
 
 # %% [code.1]
 # Install dependencies on Kaggle. Ensures transformers>=5.15.0 even on reruns.
+#
+# NumPy 2.x changed private C-API symbols used by older SciPy builds.
+# This notebook pins SciPy>=1.13.0 so the Kaggle runtime does not hit
+# ``ImportError: cannot import name '_center' from 'numpy._core.umath'``
+# through ``peft -> transformers -> sklearn -> scipy -> numpy``.
 import importlib.metadata
 import importlib.util
 import subprocess
@@ -64,7 +69,8 @@ if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
         "jupytext>=1.19.5",
         "matplotlib>=3.11.1",
         "notebook>=7.6.2",
-        "numpy>=2.5.3",
+        "numpy>=2.0.0",
+        "scipy>=1.13.0",
         "omegaconf>=2.3.1",
         "peft>=0.20.0",
         "Pillow>=12.3.0",

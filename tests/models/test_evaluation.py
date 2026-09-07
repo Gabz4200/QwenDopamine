@@ -169,19 +169,8 @@ def test_when_compute_perplexity_empty_dataloader_then_returns_finite_value() ->
     assert ppl == 1.0, "empty dataloader should yield ppl=1.0"
 
 
-def test_when_compute_perplexity_max_steps_smaller_than_loader_then_truncates() -> None:
-    # Minimal: just verify function accepts max_steps
-    pass
-
-
 def test_when_layerwise_stats_then_attempts_model_forward_to_validate_inputs() -> None:
     from qwendopamine.evaluation import layerwise_stats
 
     with pytest.raises((TypeError, AttributeError, ValueError, RuntimeError)):
         layerwise_stats(object(), [])
-
-
-def test_when_compute_perplexity_with_attention_mask_only_then_uses_mask_token_count() -> (
-    None
-):
-    pass

@@ -169,10 +169,24 @@ def test_when_infinidopamine_forward_executed_after_qwen35_08b_loading_then_prod
 
     cfg = InfiniDopamineTextConfig(**text_dict)
     model = InfiniDopamineForCausalLM(cfg)
+    model.eval()
 
     inputs = torch.randint(0, 500, (2, 8))
     with torch.no_grad():
         outputs = model(inputs)
+        outputs2 = model(inputs)
 
     assert outputs.logits.shape == (2, 8, 500)
+    assert torch.isfinite(outputs.logits).all(), (
+        "Logits must be finite after Qwen3.5 weight adaptation"
+    )
     assert not torch.isnan(outputs.logits).any()
+    # Deterministic forward: second call must match first exactly (eval mode, no dropout).
+    assert torch.allclose(outputs.logits, outputs2.logits), (
+        "Post-load forward must be deterministic"
+    )
+    # All parameters must be finite after synthetic config construction.
+    for name, param in model.named_parameters():
+        assert torch.isfinite(param).all(), (
+            f"Parameter {name} contains non-finite values after load"
+        )

@@ -1096,14 +1096,12 @@ def test_when_reward_statistics_extractor_normalize_2d_LK_shape_then_returns_bro
 def test_when_reward_statistics_extractor_normalize_2d_unrecognised_shape_then_raises() -> (
     None
 ):
+    import pytest
     import torch
 
     from qwendopamine.models.blocks.reward.extractors import RewardStatisticsExtractor
 
     extractor = RewardStatisticsExtractor()
     rewards = torch.randn(7, 11)
-    try:
+    with pytest.raises(ValueError):
         extractor._normalize_2d(rewards, batch_size=2, seq_len=4)
-        assert False, "expected ValueError"
-    except ValueError:
-        pass

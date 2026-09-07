@@ -17,6 +17,8 @@ a real-checkpoint test, just on a synthetic random state dict.
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM, Qwen3_5TextConfig
@@ -75,3 +77,54 @@ def test_when_load_truncated_state_dict_then_load_state_dict_reports_missing() -
     assert len(result.missing_keys) > 0, (
         "Truncated state dict must produce missing-key report"
     )
+
+
+def _tiny_infini_text_config() -> Any:  # pyrefly: ignore[unannotated-return]
+    """Tiny InfiniDopamine config for synthetic round-trip without network."""
+    from qwendopamine.models.infinidopamine import InfiniDopamineTextConfig
+
+    return InfiniDopamineTextConfig(
+        hidden_size=32,
+        num_hidden_layers=2,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        intermediate_size=64,
+        vocab_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        layer_types=["linear_attention", "full_attention"],
+    )
+
+
+def test_when_infini_load_random_state_dict_then_forward_deterministic() -> None:
+    """Synthetic InfiniDopamine round-trip: verify strict load, finite and deterministic forward."""
+    from qwendopamine.models.infinidopamine import InfiniDopamineForCausalLM
+
+    config = _tiny_infini_text_config()
+    torch.manual_seed(0)
+    src = InfiniDopamineForCausalLM(config).eval()
+    dst = InfiniDopamineForCausalLM(config).eval()
+    state_dict = {k: v.detach().clone() for k, v in src.state_dict().items()}
+    result = dst.load_state_dict(state_dict, strict=True)
+    assert len(result.missing_keys) == 0
+    assert len(result.unexpected_keys) == 0
+
+    input_ids = torch.randint(0, config.vocab_size, (1, 4))
+    with torch.no_grad():
+        out_src = src(input_ids).logits
+        out_dst = dst(input_ids).logits
+        out_dst2 = dst(input_ids).logits
+    assert out_src.shape == out_dst.shape == (1, 4, config.vocab_size)
+    assert torch.allclose(out_src, out_dst), (
+        "InfiniDopamine state-dict round-trip changed output"
+    )
+    assert torch.allclose(out_dst, out_dst2), (
+        "InfiniDopamine forward must be deterministic in eval mode"
+    )
+    assert torch.isfinite(out_dst).all()
+    for name, param in dst.named_parameters():
+        assert torch.isfinite(param).all(), (
+            f"Parameter {name} non-finite after synthetic load"
+        )

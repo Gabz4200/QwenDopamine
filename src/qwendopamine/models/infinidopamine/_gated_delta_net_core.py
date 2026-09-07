@@ -117,7 +117,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             Output hidden states of shape ``(batch, seq_len, hidden_size)``.
         """
         result = super().forward(hidden_states, cache_params, attention_mask, **kwargs)
-        return result
+        return result  # type: ignore[no-any-return-implicit]
 
     def get_gate_regularization_loss(
         self, target: float = 0.5, hidden_states: torch.Tensor | None = None

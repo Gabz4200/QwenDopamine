@@ -88,11 +88,39 @@ Models MUST import operations from `qwendopamine.ops`, never directly from `qwen
 
 ## Block registry
 
-`src/qwendopamine/models/blocks/registry.py` defines `BLOCKS` and `build_block(...)`.
+`src/qwendopamine/models/blocks/registry.py` defines `BlockRegistry` and `build_block(...)`.
 
 - experiment YAML names MUST match registered block names
 - unregistered names break Hydra instantiation
 - layer-type selection is explicit via `config.layer_types[layer_idx]`; no implicit swap based on neighboring layers
+- registry lazily populates on first access to avoid circular imports
+
+## Dynamic registries
+
+- `BlockRegistry` in `src/qwendopamine/models/blocks/registry.py`: lazy `_populate()` loads block classes on first access
+- `BackendRegistry` in `src/qwendopamine/ops/_backend_registry.py`: replaces duplicated `_is_available()` branches; `gdn2.py` and `reward.py` dispatch through it
+- `ModelRegistry` in `src/qwendopamine/models/model_factory.py`: `register_model_family(name, builder)` and `create_model(name, config)` for dynamic model loading (timm-style)
+
+## Model factory
+
+`src/qwendopamine/models/model_factory.py` is the composition root for dynamic model creation:
+
+- `create_model(name, config, **kwargs)` instantiates a registered model family
+- Built-in families: `qwen35`, `infinidopamine`, `research`
+- `build_model(config)` delegates to `create_model` after resolving family from config
+- Lazy imports keep `import qwendopamine.models` cheap
+
+## SOLID splits (no backward-compat shims)
+
+God classes were split into composable modules. `__init__.py` files re-export for package API convenience, but there are no backward-compat shim files:
+
+- `infinidopamine/`: `configs.py`, `model_impl.py`, `model_outputs.py`, `decoder_layer.py`, `_gated_delta_net.py`, `_gated_reward_net.py`, `_attention.py`, `_mlp.py`, `_norm.py`, `rotary_embeddings.py`
+- `shared/`: `heads_causal_lm.py`, `heads_token_classification.py`, `heads_conditional_generation.py`, `heads_sequence_classification.py`, `model.py`, `outputs.py`, `pretrained.py`, `text.py`, `vision.py`
+- `gdn2_gpt/`: `params.py` holds `compute_model_params`; `model.py` keeps `GDN2GPT`
+- `reinforced/`: `_normalizer.py` extracted from `_layer.py`
+- `gdn2/`: `_block_meta.py` holds default constants for SRP
+
+Import directly from the specific module, or from the package `__init__.py` for the public surface.
 
 ## Testing
 

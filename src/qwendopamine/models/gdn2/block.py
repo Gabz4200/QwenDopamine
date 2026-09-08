@@ -42,58 +42,43 @@ try:
 except ImportError:
     LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
 
-# Safe optional Taichi ops imports via the public ops layer. The Taichi
-# backend is the single hardware-accelerated path; it JIT-compiles to
-# native CPU code on CPU and to GPU shaders on CUDA, so no separate
-# CUDA dependency is required. The model layer never imports the
-# Taichi kernels directly — it asks the ops layer to dispatch.
-#
-# Review H4: availability is probed lazily on first use (not at
-# import time) so ``import qwendopamine.models`` stays cheap and
-# does not trigger a full ``ti.init()`` / Vulkan JIT on process start.
+from qwendopamine.models.gdn2._block_meta import (
+    _DEFAULT_ALLOW_NEG_EIGVAL,
+    _DEFAULT_BACKEND,
+    _DEFAULT_CHUNK_SIZE,
+    _DEFAULT_COMPILE_BACKEND,
+    _DEFAULT_CONV_BIAS,
+    _DEFAULT_CONV_SIZE,
+    _DEFAULT_EXPAND_V,
+    _DEFAULT_FP32_DECAY,
+    _DEFAULT_HEAD_DIM,
+    _DEFAULT_HIDDEN_SIZE,
+    _DEFAULT_MODE,
+    _DEFAULT_NORM_EPS,
+    _DEFAULT_NUM_HEADS,
+    _DEFAULT_USE_SHORT_CONV,
+)
+
 _HAS_TAICHI_OPS: bool | None = None
 _taichi_chunk_gdn2 = None
 _taichi_recurrent_gdn2 = None
 
 
 def _taichi_ops_available() -> bool:
-    """Return whether the public Taichi ops path is available, caching
-    the result after the first probe (review H4).
-    """
+    """Return whether the public Taichi ops path is available, caching the result."""
     global _HAS_TAICHI_OPS
     if _HAS_TAICHI_OPS is None:
         try:
             from qwendopamine.kernels.taichi import is_available
-            from qwendopamine.ops import (
-                chunk_taichi_gdn2,
-                recurrent_taichi_gdn2,
-            )
+            from qwendopamine.ops import chunk_taichi_gdn2, recurrent_taichi_gdn2
 
             global _taichi_chunk_gdn2, _taichi_recurrent_gdn2
             _taichi_chunk_gdn2 = chunk_taichi_gdn2
             _taichi_recurrent_gdn2 = recurrent_taichi_gdn2
-            # Probe availability without forcing the full runtime init:
-            # the ops themselves delegate to the Taichi kernel lazily.
             _HAS_TAICHI_OPS = bool(is_available())
         except (ImportError, RuntimeError):
             _HAS_TAICHI_OPS = False
     return _HAS_TAICHI_OPS
-
-
-_DEFAULT_HIDDEN_SIZE = 2048
-_DEFAULT_NUM_HEADS = 16
-_DEFAULT_HEAD_DIM = 128
-_DEFAULT_MODE = "chunk"
-_DEFAULT_EXPAND_V = 1.0
-_DEFAULT_USE_SHORT_CONV = True
-_DEFAULT_ALLOW_NEG_EIGVAL = False
-_DEFAULT_CONV_SIZE = 4
-_DEFAULT_CONV_BIAS = False
-_DEFAULT_NORM_EPS = 1e-5
-_DEFAULT_CHUNK_SIZE = 64
-_DEFAULT_BACKEND = "auto"
-_DEFAULT_COMPILE_BACKEND = False
-_DEFAULT_FP32_DECAY = True
 
 
 class GatedDeltaNet2(nn.Module):

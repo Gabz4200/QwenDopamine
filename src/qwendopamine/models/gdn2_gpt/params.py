@@ -1,4 +1,7 @@
-"""Parameter count computation for GDN-2 GPT models."""
+# Copyright (c) 2026, NVIDIA CORPORATION & QwenDopamine Authors.
+# Licensed under the Apache License 2.0 or MIT license.
+
+"""Analytical parameter counting for GDN2GPT."""
 
 from __future__ import annotations
 
@@ -85,3 +88,5 @@ def compute_model_params(cfg: GDN2GPTConfig) -> dict[str, int]:
         "num_standard_layers": num_standard_attn_layers,
         "num_gdn2_layers": num_gdn2_layers,
     }
+
+__all__ = ["compute_model_params"]

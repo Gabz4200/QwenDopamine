@@ -6,10 +6,8 @@ suite guards it against drifting away from the actual ``nn.Module`` structure
 """
 
 from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
-from qwendopamine.models.gdn2_gpt.model import (
-    GDN2GPT,
-    compute_model_params,
-)
+from qwendopamine.models.gdn2_gpt.model import GDN2GPT
+from qwendopamine.models.gdn2_gpt.params import compute_model_params
 
 
 def test_when_gdn2_only_model_then_param_counts_match_reality() -> None:

@@ -5,7 +5,8 @@ from qwendopamine.models.gdn2_gpt.attention import CausalSelfAttention
 from qwendopamine.models.gdn2_gpt.block import Block
 from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig
 from qwendopamine.models.gdn2_gpt.mlp import LLaMAMLP, SwiGLU
-from qwendopamine.models.gdn2_gpt.model import GDN2GPT, compute_model_params
+from qwendopamine.models.gdn2_gpt.model import GDN2GPT
+from qwendopamine.models.gdn2_gpt.params import compute_model_params
 from qwendopamine.models.gdn2_gpt.rope import apply_rotary_emb, build_rope_cache
 
 __all__ = [

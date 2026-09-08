@@ -6,12 +6,11 @@ from typing import Any
 
 import torch
 
-from qwendopamine.models.ports import ModelPort
 from qwendopamine.utils import get_model_device
 
 
 def generate_text(
-    model: ModelPort,
+    model: Any,
     tokenizer: Any,
     prompt: str,
     max_new_tokens: int = 256,
@@ -23,7 +22,7 @@ def generate_text(
     Generate text continuation from a prompt.
 
     Args:
-        model (ModelPort): model with a ``generate`` method.
+        model (Any): model with a ``generate`` method.
         tokenizer (Any): Tokenizer with ``__call__`` and ``decode``.
         prompt (str): Input text string.
         max_new_tokens (int): Maximum tokens to generate. Default: ``256``.

@@ -1,5 +1,3 @@
-"""Conditional generation head for Qwen-family models."""
-
 from __future__ import annotations
 
 from typing import Any, ClassVar
@@ -7,7 +5,9 @@ from typing import Any, ClassVar
 import torch
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.modeling_outputs import BaseModelOutputWithPooling
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPooling,
+)
 from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLForConditionalGeneration,
 )
@@ -115,7 +115,7 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         reward_values: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> tuple | FamilyModelOutputWithPast:
-        r"""forward(self, input_ids: torch.LongTensor | None=None, ...) -> tuple | FamilyModelOutputWithPast
+        r"""forward(self, input_ids: torch.LongTensor | None=None, attention_mask: torch.Tensor | None=None, position_ids: torch.LongTensor | None=None, past_key_values: Cache | None=None, inputs_embeds: torch.FloatTensor | None=None, labels: torch.LongTensor | None=None, pixel_values: torch.Tensor | None=None, pixel_values_videos: torch.FloatTensor | None=None, image_grid_thw: torch.LongTensor | None=None, video_grid_thw: torch.LongTensor | None=None, mm_token_type_ids: torch.IntTensor | None=None, logits_to_keep: int | torch.Tensor=0, reward_values: torch.Tensor | None=None, **kwargs: Any) -> tuple | FamilyModelOutputWithPast
 
         Compute conditional generation logits and optional loss.
 
@@ -213,3 +213,5 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         """
         result: torch.Tensor = self.model.get_gate_regularization_loss(target=target)
         return result
+
+

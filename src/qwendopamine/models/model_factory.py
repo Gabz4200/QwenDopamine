@@ -110,6 +110,46 @@ _MODEL_FAMILIES = (
     "qwen35_reference",
 )
 
+_MODEL_REGISTRY: dict[str, Any] = {}
+
+
+def register_model_family(name: str, builder: Any) -> None:
+    r"""register_model_family(name: str, builder: Any) -> None
+
+    Register a model builder for dynamic model creation (OCP/DIP).
+
+    PyTorch-standard factory pattern (timm-style ``create_model``).
+
+    Args:
+        name (str): Family name (e.g. ``"infinidopamine"``, ``"qwen35"``, ``"research"``).
+        builder (Any): Callable ``(config, **kwargs) -> nn.Module`` that builds the model.
+
+    Returns:
+        None
+    """
+    _MODEL_REGISTRY[name] = builder
+
+
+def _qwen35_builder(config: Any, **kwargs: Any) -> nn.Module:
+    from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM
+
+    return Qwen3_5ForCausalLM(config, **kwargs)
+
+
+def _infinidopamine_builder(config: Any, **kwargs: Any) -> nn.Module:
+    from qwendopamine.models.infinidopamine import InfiniDopamineForCausalLM
+
+    return InfiniDopamineForCausalLM(config, **kwargs)
+
+
+def _research_builder(config: Any, **kwargs: Any) -> nn.Module:
+    return ResearchDecoder(config, **kwargs)
+
+
+register_model_family("qwen35", _qwen35_builder)
+register_model_family("infinidopamine", _infinidopamine_builder)
+register_model_family("research", _research_builder)
+
 
 def _resolve_model_family(config: Any) -> tuple[str, Any]:
     r"""Resolve a config to a model family name and unwrapped config.
@@ -144,6 +184,30 @@ def _resolve_model_family(config: Any) -> tuple[str, Any]:
     return "unknown", config
 
 
+def create_model(name: str, config: Any, **kwargs: Any) -> nn.Module:
+    r"""create_model(name: str, config: Any, **kwargs: Any) -> nn.Module
+
+    Dynamic factory for PyTorch-standard model creation (timm-style).
+
+    Args:
+        name (str): Registered family name (e.g. ``"qwen35"``, ``"infinidopamine"``).
+        config (Any): Model configuration.
+        **kwargs: Additional kwargs forwarded to the builder.
+
+    Returns:
+        nn.Module: Instantiated model.
+
+    Raises:
+        KeyError: If ``name`` is not registered.
+    """
+    if name not in _MODEL_REGISTRY:
+        raise KeyError(
+            f"Unknown model family {name!r}. Registered: {sorted(_MODEL_REGISTRY)}"
+        )
+    builder = _MODEL_REGISTRY[name]
+    return builder(config, **kwargs)  # type: ignore[no-any-return]
+
+
 def build_model(config: Any) -> nn.Module:
     r"""build_model(config: Any) -> nn.Module
 
@@ -159,16 +223,9 @@ def build_model(config: Any) -> nn.Module:
     """
     # Review H1: lazy import so the top-level ``import qwendopamine.models``
     # does not eagerly pull the HF model families.
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-    )
-    from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM
-
     family, config = _resolve_model_family(config)
-    if family == "infinidopamine":
-        return InfiniDopamineForCausalLM(config)
-    if family == "qwen35":
-        return Qwen3_5ForCausalLM(config)
+    if family in _MODEL_REGISTRY:
+        return create_model(family, config)
     return ResearchDecoder(config)
 
 
@@ -212,4 +269,6 @@ __all__ = [
     "ResearchDecoder",
     "build_model",
     "build_reference_model",
+    "create_model",
+    "register_model_family",
 ]

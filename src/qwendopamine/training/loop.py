@@ -8,7 +8,6 @@ from torch import nn
 from torch.amp import GradScaler
 from torch.optim.lr_scheduler import LRScheduler
 
-from qwendopamine.models.ports import ModelPort
 from qwendopamine.utils import get_model_device, move_to_device
 
 
@@ -34,7 +33,7 @@ class TrainingLoop:
     r"""Minimal training loop with gradient accumulation and mixed precision.
 
     Args:
-        model (ModelPort): model to train.
+        model (nn.Module): model to train.
         optimizer (torch.optim.Optimizer): optimizer.
         scheduler (LRScheduler): learning rate scheduler.
         config (TrainConfig): training configuration.
@@ -42,7 +41,7 @@ class TrainingLoop:
 
     def __init__(
         self,
-        model: ModelPort,
+        model: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: LRScheduler,
         config: TrainConfig,

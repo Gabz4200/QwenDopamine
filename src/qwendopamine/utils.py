@@ -5,17 +5,16 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+from torch import nn
 
-from qwendopamine.models.ports import ModelPort
 
-
-def get_model_device(model: ModelPort) -> torch.device:
-    r"""get_model_device(model: ModelPort) -> torch.device
+def get_model_device(model: nn.Module) -> torch.device:
+    r"""get_model_device(model: nn.Module) -> torch.device
 
     Return the device of the first parameter, falling back to CPU.
 
     Args:
-        model (ModelPort): Model whose parameters are inspected.
+        model (nn.Module): Model whose parameters are inspected.
 
     Returns:
         torch.device: Device of the first parameter, or ``torch.device("cpu")``

@@ -64,9 +64,9 @@ _DEFAULT_COMPILE_BACKEND = False
 
 def _taichi_ok() -> bool:
     try:
-        from qwendopamine.kernels.taichi import is_available
+        from qwendopamine.ops.gdn2 import is_taichi_available
 
-        return bool(is_available())
+        return bool(is_taichi_available())
     except (ImportError, RuntimeError):
         return False
 
@@ -105,8 +105,10 @@ def resolve_gdn2_backend(
 
     try:
         return resolve_backend(requested)
-    except BackendResolutionError:
-        pass
+    except BackendResolutionError as exc:
+        _logger.debug(
+            "GDN-2 backend '%s' not resolved (%s); using fallback", requested, exc
+        )
 
     if not training and seq_len <= _SINGLE_TOKEN_SEQ_LEN:
         return "torch-recurrent"

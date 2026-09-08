@@ -69,13 +69,13 @@ def _taichi_ops_available() -> bool:
     global _HAS_TAICHI_OPS
     if _HAS_TAICHI_OPS is None:
         try:
-            from qwendopamine.kernels.taichi import is_available
             from qwendopamine.ops import chunk_taichi_gdn2, recurrent_taichi_gdn2
+            from qwendopamine.ops.gdn2 import is_taichi_available
 
             global _taichi_chunk_gdn2, _taichi_recurrent_gdn2
             _taichi_chunk_gdn2 = chunk_taichi_gdn2
             _taichi_recurrent_gdn2 = recurrent_taichi_gdn2
-            _HAS_TAICHI_OPS = bool(is_available())
+            _HAS_TAICHI_OPS = bool(is_taichi_available())
         except (ImportError, RuntimeError):
             _HAS_TAICHI_OPS = False
     return _HAS_TAICHI_OPS

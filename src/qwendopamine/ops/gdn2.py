@@ -37,6 +37,13 @@ def _register_default_backends() -> None:
 _register_default_backends()
 
 
+def is_taichi_available() -> bool:
+    r"""Return whether Taichi GDN-2 backend is available."""
+    from qwendopamine.kernels.taichi import is_available as _is_available
+
+    return bool(_is_available())
+
+
 def _resolve_backend(backend: str | None) -> str:
     if backend is None:
         backend = "auto"

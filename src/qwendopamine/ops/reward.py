@@ -28,8 +28,16 @@ from __future__ import annotations
 
 import torch
 
-from qwendopamine.kernels.taichi.reinforced_kernels import _make_effective_gate
 from qwendopamine.ops._backend_registry import register_backend, resolve_backend
+
+
+def _make_effective_gate_local(omega: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+    """Local effective gate helper to avoid importing kernels at module import time."""
+    if omega.dim() == 1:
+        omega = omega.unsqueeze(-1)
+    if omega.dim() != 2 or omega.shape[-1] != 1:
+        raise ValueError(f"omega must be [B] or [B, 1]; got shape {tuple(omega.shape)}")
+    return (omega * gate).contiguous()
 
 
 def _register_reward_backends() -> None:
@@ -49,6 +57,13 @@ def _register_reward_backends() -> None:
 _register_reward_backends()
 
 
+def is_taichi_available() -> bool:
+    r"""Return whether Taichi Reinforced Delta backend is available."""
+    from qwendopamine.kernels.taichi import is_available as _is_available
+
+    return bool(_is_available())
+
+
 def _reward_torch_step(
     state: torch.Tensor,
     k: torch.Tensor,
@@ -64,8 +79,8 @@ def _reward_torch_step(
     no in-place writes"; callers can use the result without worrying
     about accidentally mutating ``state``.
     """
-    omega_w_eff = _make_effective_gate(omega_w, write)
-    omega_e_eff = _make_effective_gate(omega_e, erase)
+    omega_w_eff = _make_effective_gate_local(omega_w, write)
+    omega_e_eff = _make_effective_gate_local(omega_e, erase)
     e = v - (state @ k.unsqueeze(-1)).squeeze(-1)
     return (1.0 - omega_e_eff).unsqueeze(-1) * state + omega_w_eff.unsqueeze(-1) * (
         e.unsqueeze(-1) * k.unsqueeze(1)

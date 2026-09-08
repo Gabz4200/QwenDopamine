@@ -38,17 +38,19 @@ uv run qwendopamine
 
 ## Quality gates
 
-Run before committing:
+Run before committing (exact verification commands):
 
 ```bash
-uv run ruff check .
+uv run ruff check --fix .
+uv run aislop scan
+uv run pytest
 uv run pyrefly check
-uv run pytest -m "not slow" -v
 ```
 
-- `ruff` is the linter/formatter with default rules.
+- `ruff` is the linter/formatter with default rules (`--fix` auto-fixes).
+- `aislop` is the quality gate for agentic coding (must be 0 errors, warnings are medium-confidence).
 - `pyrefly` is the type checker; `pyrefly.toml` is committed.
-- Tests use `pytest`; the `slow` marker skips weight-downloading tests.
+- Tests use `pytest`; the `slow` marker exists but full `uv run pytest` is the verification target (use `-m "not slow"` for quick focused runs).
 
 ## Layout
 

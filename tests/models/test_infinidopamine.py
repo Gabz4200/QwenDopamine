@@ -6,17 +6,23 @@ import pytest
 import torch
 from torch import nn
 
-from qwendopamine.models.infinidopamine import (
-    InfiniDopamineConfig,
-    InfiniDopamineDecoderLayer,
-    InfiniDopamineForCausalLM,
+from qwendopamine.models.infinidopamine._gated_delta_net import (
     InfiniDopamineGatedDeltaNet,
+)
+from qwendopamine.models.infinidopamine._gated_reward_net import (
     InfiniDopamineGatedRewardNet,
-    InfiniDopamineTextConfig,
-    InfiniDopamineTextModel,
-    InfiniDopamineVisionConfig,
 )
 from qwendopamine.models.infinidopamine._parallel_reward import ParallelRewardBranch
+from qwendopamine.models.infinidopamine.configs import (
+    InfiniDopamineConfig,
+    InfiniDopamineTextConfig,
+    InfiniDopamineVisionConfig,
+)
+from qwendopamine.models.infinidopamine.decoder_layer import InfiniDopamineDecoderLayer
+from qwendopamine.models.infinidopamine.model_impl import (
+    InfiniDopamineForCausalLM,
+    InfiniDopamineTextModel,
+)
 from qwendopamine.models.qwen35 import (
     Qwen3_5ForCausalLM,
     Qwen3_5TextConfig,
@@ -1000,7 +1006,9 @@ def test_when_low_rank_reward_memory_used_then_state_shape_matches_rank() -> Non
     r"""When ``reward_memory_rank`` is set, the parallel reward branch uses
     a factored ``(U, V)`` state instead of a dense ``d × d`` matrix.
     """
-    from qwendopamine.models.infinidopamine import InfiniDopamineGatedRewardNet
+    from qwendopamine.models.infinidopamine._gated_reward_net import (
+        InfiniDopamineGatedRewardNet,
+    )
     from qwendopamine.models.reinforced import GatedRewardNet
 
     cfg = InfiniDopamineTextConfig(

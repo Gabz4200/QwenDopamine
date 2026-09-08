@@ -31,7 +31,7 @@ def build_infinidopamine_config(
     Returns:
         Any: A ``InfiniDopamineTextConfig`` instance.
     """
-    from qwendopamine.models.infinidopamine import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
 
     return InfiniDopamineTextConfig(
         hidden_size=hidden_size,
@@ -58,10 +58,8 @@ def build_infinidopamine_model(
     Returns:
         Any: An ``InfiniDopamineForCausalLM`` instance.
     """
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-        InfiniDopamineTextConfig,
-    )
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 
     if config is None:
         text_cfg = InfiniDopamineTextConfig(**kwargs)

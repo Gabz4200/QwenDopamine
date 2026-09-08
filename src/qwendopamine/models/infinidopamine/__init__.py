@@ -15,7 +15,7 @@ from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineVisionConfig,
 )
 from qwendopamine.models.infinidopamine.decoder_layer import InfiniDopamineDecoderLayer
-from qwendopamine.models.infinidopamine.model import (
+from qwendopamine.models.infinidopamine.model_impl import (
     InfiniDopamineForCausalLM,
     InfiniDopamineForConditionalGeneration,
     InfiniDopamineForSequenceClassification,

@@ -47,17 +47,23 @@ from qwendopamine.models.infinidopamine.rotary_embeddings import (
     InfiniDopamineTextRotaryEmbedding,
     InfiniDopamineVisionRotaryEmbedding,
 )
-from qwendopamine.models.shared.model_family import (
-    FamilyForCausalLM,
+from qwendopamine.models.shared.heads_causal_lm import FamilyForCausalLM
+from qwendopamine.models.shared.heads_conditional_generation import (
     FamilyForConditionalGeneration,
+)
+from qwendopamine.models.shared.heads_sequence_classification import (
     FamilyForSequenceClassification,
+)
+from qwendopamine.models.shared.heads_token_classification import (
     FamilyForTokenClassification,
-    FamilyModel,
-    FamilyPreTrainedModel,
+)
+from qwendopamine.models.shared.model import FamilyModel
+from qwendopamine.models.shared.pretrained import FamilyPreTrainedModel
+from qwendopamine.models.shared.text import (
     FamilyTextForSequenceClassification,
     FamilyTextModel,
-    FamilyVisionModel,
 )
+from qwendopamine.models.shared.vision import FamilyVisionModel
 
 unwrap_gated_delta_rule_fns()
 

@@ -151,7 +151,7 @@ def test_when_build_block_unknown_then_raises_key_error() -> None:
 
 def test_when_build_block_returns_nn_module_instance() -> None:
     """Building any registered block must return an ``nn.Module``."""
-    from qwendopamine.models.infinidopamine import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
 
     cfg = InfiniDopamineTextConfig(
         hidden_size=32,

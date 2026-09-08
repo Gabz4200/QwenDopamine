@@ -81,7 +81,7 @@ def test_when_load_truncated_state_dict_then_load_state_dict_reports_missing() -
 
 def _tiny_infini_text_config() -> Any:  # pyrefly: ignore[unannotated-return]
     """Tiny InfiniDopamine config for synthetic round-trip without network."""
-    from qwendopamine.models.infinidopamine import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
 
     return InfiniDopamineTextConfig(
         hidden_size=32,
@@ -100,7 +100,7 @@ def _tiny_infini_text_config() -> Any:  # pyrefly: ignore[unannotated-return]
 
 def test_when_infini_load_random_state_dict_then_forward_deterministic() -> None:
     """Synthetic InfiniDopamine round-trip: verify strict load, finite and deterministic forward."""
-    from qwendopamine.models.infinidopamine import InfiniDopamineForCausalLM
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 
     config = _tiny_infini_text_config()
     torch.manual_seed(0)

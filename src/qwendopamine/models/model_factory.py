@@ -137,7 +137,7 @@ def _qwen35_builder(config: Any, **kwargs: Any) -> nn.Module:
 
 
 def _infinidopamine_builder(config: Any, **kwargs: Any) -> nn.Module:
-    from qwendopamine.models.infinidopamine import InfiniDopamineForCausalLM
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 
     return InfiniDopamineForCausalLM(config, **kwargs)
 
@@ -160,7 +160,7 @@ def _resolve_model_family(config: Any) -> tuple[str, Any]:
     """
     # Review H1: lazy import the HF model families inside the function
     # so the top-level ``import qwendopamine.models`` stays cheap.
-    from qwendopamine.models.infinidopamine import (
+    from qwendopamine.models.infinidopamine.configs import (
         InfiniDopamineConfig,
         InfiniDopamineTextConfig,
     )
@@ -250,7 +250,7 @@ def build_reference_model(
     """
     # Review H1: lazy import so the top-level ``import qwendopamine.models``
     # does not eagerly pull the HF model families.
-    from qwendopamine.models.infinidopamine import InfiniDopamineForCausalLM
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
     from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM
 
     family, config = _resolve_model_family(config)

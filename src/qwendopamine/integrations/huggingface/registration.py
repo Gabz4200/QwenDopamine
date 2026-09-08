@@ -103,17 +103,19 @@ def register_infinidopamine_hf() -> None:
     .. note:: This is a direct copy of the original
         :meth:`HFIntegration.register_infinidopamine_hf` static method body.
     """
-    from qwendopamine.models.infinidopamine import (
+    from qwendopamine.models.infinidopamine.configs import (
         InfiniDopamineConfig,
+        InfiniDopamineTextConfig,
+        InfiniDopamineVisionConfig,
+    )
+    from qwendopamine.models.infinidopamine.model_impl import (
         InfiniDopamineForCausalLM,
         InfiniDopamineForConditionalGeneration,
         InfiniDopamineForSequenceClassification,
         InfiniDopamineForTokenClassification,
         InfiniDopamineModel,
-        InfiniDopamineTextConfig,
         InfiniDopamineTextForSequenceClassification,
         InfiniDopamineTextModel,
-        InfiniDopamineVisionConfig,
         InfiniDopamineVisionModel,
     )
 

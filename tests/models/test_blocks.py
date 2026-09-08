@@ -14,12 +14,12 @@ from qwendopamine.models.blocks import (
     RewardStatisticsExtractor,
     build_block,
 )
-from qwendopamine.models.infinidopamine import (
-    InfiniDopamineDecoderLayer,
-    InfiniDopamineForCausalLM,
+from qwendopamine.models.infinidopamine._gated_delta_net import (
     InfiniDopamineGatedDeltaNet,
-    InfiniDopamineTextConfig,
 )
+from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+from qwendopamine.models.infinidopamine.decoder_layer import InfiniDopamineDecoderLayer
+from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 from qwendopamine.models.model_factory import (
     ResearchDecoder,
     build_model,

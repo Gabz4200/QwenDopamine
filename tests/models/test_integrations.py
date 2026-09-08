@@ -89,10 +89,8 @@ def test_when_composite_multimodal_config_passed_to_causal_lm_then_unwraps_text_
     r"""Ensure Qwen3_5ForCausalLM and InfiniDopamineForCausalLM unwrap text_config if given a composite config."""
     from types import SimpleNamespace
 
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-        InfiniDopamineTextConfig,
-    )
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
     from qwendopamine.models.qwen35 import Qwen3_5ForCausalLM, Qwen3_5TextConfig
 
     text_cfg = Qwen3_5TextConfig(
@@ -161,10 +159,8 @@ def test_when_register_infinidopamine_hf_called_then_autoconfig_and_automodel_re
 ):
     from transformers import AutoModelForCausalLM
 
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-        InfiniDopamineTextConfig,
-    )
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 
     HFIntegration.register_infinidopamine_hf()
 
@@ -192,10 +188,8 @@ def test_when_register_infinidopamine_hf_called_then_autoconfig_and_automodel_re
 def test_when_build_infinidopamine_helpers_called_then_instantiates_working_causal_lm() -> (
     None
 ):
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-        InfiniDopamineTextConfig,
-    )
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 
     cfg = HFIntegration.build_infinidopamine_config(
         hidden_size=64,
@@ -224,10 +218,8 @@ def test_when_build_infinidopamine_helpers_called_then_instantiates_working_caus
 def test_when_prepare_model_for_trl_training_called_then_configures_gradient_checkpointing_and_cache() -> (
     None
 ):
-    from qwendopamine.models.infinidopamine import (
-        InfiniDopamineForCausalLM,
-        InfiniDopamineTextConfig,
-    )
+    from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+    from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 
     cfg = InfiniDopamineTextConfig(
         hidden_size=64,

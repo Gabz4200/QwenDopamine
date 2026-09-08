@@ -59,18 +59,24 @@ from qwendopamine.models.qwen35.rotary_embeddings import (
     Qwen3_5TextRotaryEmbedding,
     Qwen3_5VisionRotaryEmbedding,
 )
-from qwendopamine.models.shared.model_family import (
-    FamilyForCausalLM,
+from qwendopamine.models.shared.heads_causal_lm import FamilyForCausalLM
+from qwendopamine.models.shared.heads_conditional_generation import (
     FamilyForConditionalGeneration,
+)
+from qwendopamine.models.shared.heads_sequence_classification import (
     FamilyForSequenceClassification,
+)
+from qwendopamine.models.shared.heads_token_classification import (
     FamilyForTokenClassification,
-    FamilyModel,
-    FamilyModelOutputWithPast,
-    FamilyPreTrainedModel,
+)
+from qwendopamine.models.shared.model import FamilyModel
+from qwendopamine.models.shared.outputs import FamilyModelOutputWithPast
+from qwendopamine.models.shared.pretrained import FamilyPreTrainedModel
+from qwendopamine.models.shared.text import (
     FamilyTextForSequenceClassification,
     FamilyTextModel,
-    FamilyVisionModel,
 )
+from qwendopamine.models.shared.vision import FamilyVisionModel
 
 
 @use_kernel_forward_from_hub("Qwen3_5GatedDeltaNet")

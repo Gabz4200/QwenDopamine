@@ -5,10 +5,8 @@ from __future__ import annotations
 import torch
 from transformers.cache_utils import DynamicCache
 
-from qwendopamine.models.infinidopamine import (
-    InfiniDopamineForCausalLM,
-    InfiniDopamineTextConfig,
-)
+from qwendopamine.models.infinidopamine.configs import InfiniDopamineTextConfig
+from qwendopamine.models.infinidopamine.model_impl import InfiniDopamineForCausalLM
 from qwendopamine.training import (
     collect_parallel_reward_metrics,
     maybe_warn_branch_ratio,

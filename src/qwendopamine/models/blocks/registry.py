@@ -31,10 +31,14 @@ class BlockRegistry:
         if self._populated:
             return
         from qwendopamine.models.gdn2 import GatedDeltaNet2
-        from qwendopamine.models.infinidopamine import (
-            InfiniDopamineDecoderLayer,
+        from qwendopamine.models.infinidopamine._gated_delta_net import (
             InfiniDopamineGatedDeltaNet,
+        )
+        from qwendopamine.models.infinidopamine._gated_reward_net import (
             InfiniDopamineGatedRewardNet,
+        )
+        from qwendopamine.models.infinidopamine.decoder_layer import (
+            InfiniDopamineDecoderLayer,
         )
         from qwendopamine.models.qwen35.modular_qwen3_5 import (
             Qwen3_5DecoderLayer,

@@ -11,11 +11,13 @@ from transformers import AutoConfig
 from transformers.models.qwen3_5 import Qwen3_5ForConditionalGeneration
 
 from qwendopamine.integrations.huggingface import HFIntegration
-from qwendopamine.models.infinidopamine import (
+from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,
+    InfiniDopamineTextConfig,
+)
+from qwendopamine.models.infinidopamine.model_impl import (
     InfiniDopamineForCausalLM,
     InfiniDopamineForConditionalGeneration,
-    InfiniDopamineTextConfig,
     InfiniDopamineTextModel,
 )
 

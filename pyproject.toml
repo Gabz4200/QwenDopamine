@@ -19,35 +19,35 @@ dependencies = [
     "safetensors>=0.8.0",
     "taichi>=1.7.4",
     "tokenizers>=0.22.0",
-    "torch>=2.11.0",
     "tqdm>=4.70.0",
     "transformers>=5.15.0",
 ]
 include-package-data = true
 
-
-[[tool.uv.index]]
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch" }
-torchvision = { index = "pytorch" }
-torchao = { index = "pytorch" }
-
 [project.optional-dependencies]
 cpu = [
+    "torch>=2.11.0",
+    "torchvision>=0.20.0",
+    "torchao>=0.18.0",
     "accelerate>=1.14.0",
     "bitsandbytes>=0.50.2",
-    "gguf>=0.19.0",
     "sentencepiece>=0.2.2",
-    "torchao>=0.18.0",
-    "torchvision>=0.26.0",
 ]
-gpu = [
+cu128 = [
+    "torch>=2.11.0",
+    "torchvision>=0.20.0",
+    "torchao>=0.17.0",
     "accelerate>=1.14.0",
     "trl>=0.24.0",
+    "tensorboard>=2.21.0",
+]
+gpu = [
+    "torch>=2.11.0",
+    "torchvision>=0.20.0",
+    "torchao>=0.17.0",
+    "accelerate>=1.14.0",
+    "trl>=0.24.0",
+    "tensorboard>=2.21.0",
 ]
 hf = [
     "datasets>=4.3.0",
@@ -62,7 +62,7 @@ cpt = [
     "Pillow>=12.3.0",
     "peft>=0.20.0",
     "tokenizers>=0.22.0",
-    "torchvision>=0.26.0",
+    "torchvision>=0.20.0",
     "trl>=0.24.0",
 ]
 dev = [
@@ -70,6 +70,40 @@ dev = [
     "pyrefly>=1.2.0",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
+]
+
+[tool.uv]
+conflicts = [
+    [{ extra = "cpu" }, { extra = "cu128" }],
+    [{ extra = "cpu" }, { extra = "gpu" }],
+    [{ extra = "cu128" }, { extra = "gpu" }],
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "cu128" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "cu128" },
+    { index = "pytorch-cu128", extra = "gpu" },
+]
+torchao = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "cu128" },
+    { index = "pytorch-cu128", extra = "gpu" },
 ]
 
 [project.scripts]

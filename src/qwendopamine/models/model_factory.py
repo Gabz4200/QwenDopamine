@@ -8,10 +8,13 @@ import torch
 from torch import nn
 
 from qwendopamine.models.blocks import build_block
-from qwendopamine.models.core.config_adapter import ConfigAdapter
-from qwendopamine.models.core.embeddings import PositionEmbeddings, TokenEmbeddings
-from qwendopamine.models.core.normalization import RMSNorm
-from qwendopamine.models.core.output_head import LMHead
+from qwendopamine.models.core import (
+    ConfigAdapter,
+    LMHead,
+    PositionEmbeddings,
+    RMSNorm,
+    TokenEmbeddings,
+)
 
 # Lazy imports (review H1): the HF model families are heavy and not
 # needed for callers that only build a :class:`ResearchDecoder`. They

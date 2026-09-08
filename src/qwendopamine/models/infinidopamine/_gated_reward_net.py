@@ -15,10 +15,7 @@ from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,
     InfiniDopamineTextConfig,
 )
-from qwendopamine.models.reinforced import (
-    GatedRewardNet,
-    GatedRewardNetConfig,
-)
+from qwendopamine.models.reinforced import GatedRewardNet, GatedRewardNetConfig
 
 
 class InfiniDopamineGatedRewardNet(GatedRewardNet):

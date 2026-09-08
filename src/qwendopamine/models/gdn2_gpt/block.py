@@ -8,7 +8,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from qwendopamine.models.core.normalization import RMSNorm
+from qwendopamine.models.core import RMSNorm
 from qwendopamine.models.gdn2 import GatedDeltaNet2
 from qwendopamine.models.gdn2_gpt.attention import CausalSelfAttention
 from qwendopamine.models.gdn2_gpt.config import GDN2GPTConfig

@@ -24,7 +24,7 @@ from transformers.models.qwen3_next.modeling_qwen3_next import (
 )
 from transformers.utils.generic import TransformersKwargs
 
-from qwendopamine.models.core.normalization import apply_mask_to_padding_states
+from qwendopamine.models.core import apply_mask_to_padding_states
 from qwendopamine.models.gdn2 import torch_chunk_gdn2, torch_recurrent_gdn2
 from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,

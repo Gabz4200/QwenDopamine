@@ -10,9 +10,7 @@ import torch
 from qwendopamine.utils import get_model_device, move_to_device
 
 
-def compute_perplexity(
-    model: Any, dataloader: Any, max_steps: int = 500
-) -> float:
+def compute_perplexity(model: Any, dataloader: Any, max_steps: int = 500) -> float:
     r"""compute_perplexity(model: Any, dataloader: Any, max_steps: int = 500) -> float
 
     Estimate perplexity over a dataloader by accumulating token-weighted

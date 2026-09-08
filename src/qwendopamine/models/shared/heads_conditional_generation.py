@@ -213,5 +213,3 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         """
         result: torch.Tensor = self.model.get_gate_regularization_loss(target=target)
         return result
-
-

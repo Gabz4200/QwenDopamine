@@ -327,4 +327,3 @@ class GDN2GPT(nn.Module):
                     )
                 )
         return caches
-

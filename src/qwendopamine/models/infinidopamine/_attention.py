@@ -28,5 +28,7 @@ class InfiniDopamineAttention(Qwen3NextAttention):
             config, "attention_dropout", getattr(config, "attention_dropout_prob", 0.0)
         )
 
-    def forward(self, hidden_states: torch.Tensor, **kwargs) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def forward(
+        self, hidden_states: torch.Tensor, **kwargs
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         return super().forward(hidden_states, **kwargs)

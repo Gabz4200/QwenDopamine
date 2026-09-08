@@ -401,9 +401,7 @@ def test_when_linear_layer_precedes_attention_then_does_not_implicitly_use_gated
     explicit_model = InfiniDopamineTextModel(cfg_explicit)
     assert isinstance(explicit_model.layers[2].linear_attn, InfiniDopamineGatedDeltaNet)
     assert hasattr(explicit_model.layers[2], "reward_branch")
-    assert isinstance(
-        explicit_model.layers[2].reward_branch, ParallelRewardBranch
-    )
+    assert isinstance(explicit_model.layers[2].reward_branch, ParallelRewardBranch)
     assert isinstance(
         explicit_model.layers[2].reward_branch.reward_branch,
         InfiniDopamineGatedRewardNet,

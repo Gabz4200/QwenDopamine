@@ -89,4 +89,5 @@ def compute_model_params(cfg: GDN2GPTConfig) -> dict[str, int]:
         "num_gdn2_layers": num_gdn2_layers,
     }
 
+
 __all__ = ["compute_model_params"]

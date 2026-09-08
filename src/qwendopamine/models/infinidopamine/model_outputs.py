@@ -21,5 +21,3 @@ from qwendopamine.models.shared.outputs import FamilyModelOutputWithPast
 
 class InfiniDopamineModelOutputWithPast(FamilyModelOutputWithPast):
     r"""InfiniDopamineModelOutputWithPast: output container with past-key states."""
-
-

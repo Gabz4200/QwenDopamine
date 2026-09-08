@@ -21,20 +21,36 @@ def _get_qwen35_hub_config() -> AutoConfig:
     model_id = "Qwen/Qwen3.5-0.8B"
     try:
         cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    except (OSError, urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as exc:  # pragma: no cover
+    except (
+        OSError,
+        urllib.error.URLError,
+        TimeoutError,
+        RuntimeError,
+        ValueError,
+    ) as exc:  # pragma: no cover
         pytest.skip(f"Skipping remote Qwen3.5-0.8B test due to network/HF issue: {exc}")
     return cfg  # type: ignore[no-any-return]
 
 
 @pytest.mark.slow
-def test_when_qwen35_model_loads_qwen35_08b_via_hf_integration_then_forward_finite() -> None:
+def test_when_qwen35_model_loads_qwen35_08b_via_hf_integration_then_forward_finite() -> (
+    None
+):
     r"""Ensure Qwen3.5 model via HFIntegration loads hub weights and forward is finite."""
     HFIntegration.register_all_hf()
     model_id = "Qwen/Qwen3.5-0.8B"
     try:
-        model = HFIntegration.load_model(model_id, device_map="cpu", dtype=torch.float32)
+        model = HFIntegration.load_model(
+            model_id, device_map="cpu", dtype=torch.float32
+        )
         tokenizer = HFIntegration.load_tokenizer(model_id)
-    except (OSError, RuntimeError, ValueError, ImportError, AttributeError) as exc:  # pragma: no cover
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        ImportError,
+        AttributeError,
+    ) as exc:  # pragma: no cover
         pytest.skip(f"Skipping HF load due to failure: {exc}")
     assert tokenizer is not None
     model.eval()
@@ -53,7 +69,9 @@ def test_when_qwen35_model_loads_qwen35_08b_via_hf_integration_then_forward_fini
 
 
 @pytest.mark.slow
-def test_when_qwen35_for_causal_lm_loads_hub_config_state_dict_then_missing_filtered() -> None:
+def test_when_qwen35_for_causal_lm_loads_hub_config_state_dict_then_missing_filtered() -> (
+    None
+):
     r"""Load hub state dict into Qwen3.5 model via meta device and check keys."""
     hf_config = _get_qwen35_hub_config()
     with torch.device("meta"):

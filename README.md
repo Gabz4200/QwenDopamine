@@ -54,7 +54,10 @@ uv run src/qwendopamine/cli/train.py train=single_gpu model=qwen35_gdn2
 
 ```python
 import torch
-from qwendopamine.models.infinidopamine import InfiniDopamineConfig, InfiniDopamineForCausalLM
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineConfig,
+    InfiniDopamineForCausalLM,
+)
 
 config = InfiniDopamineConfig.from_pretrained("Qwen/Qwen3.5-0.8B")
 model = InfiniDopamineForCausalLM.from_pretrained("Qwen/Qwen3.5-0.8B", config=config)

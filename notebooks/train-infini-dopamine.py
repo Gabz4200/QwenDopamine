@@ -76,95 +76,71 @@ if LOCAL_TEST:
         if importlib.util.find_spec(mod) is None
     ]
     if _missing:
-        raise RuntimeError(
-            "[setup] Local runtime is missing dependencies: "
-            + ", ".join(sorted(_missing))
-            + ". Provision the uv environment first:\n"
-            "    uv sync --extra cpu --extra dev --extra hf --extra cpt\n"
-            "Do NOT pip install into the uv-managed virtualenv."
+        print(
+            f"[setup] WARNING: local runtime missing {', '.join(sorted(_missing))}; "
+            "provision with `uv sync --extra cpu --extra dev --extra hf --extra cpt` "
+            "if running via uv."
         )
-    _tf_ver = importlib.metadata.version("transformers")
-    if Version(_tf_ver) < _MIN_TRANSFORMERS:
+    try:
+        _tf_ver = importlib.metadata.version("transformers")
+    except importlib.metadata.PackageNotFoundError:
+        _tf_ver = "not installed"
+    if _tf_ver != "not installed" and Version(_tf_ver) < _MIN_TRANSFORMERS:
         print(
             f"[setup] WARNING: transformers {_tf_ver} < {_MIN_TRANSFORMERS}; "
             "refresh the environment with `uv sync --extra cpt`."
         )
-    print("[setup] Local runtime detected; uv environment OK, skipping pip.")
+    print("[setup] Local runtime detected; skipping pip (Kaggle-only).")
 else:
-    _NEEDS_INSTALL = importlib.util.find_spec("qwendopamine") is None
-    _NEEDS_TF_UPGRADE = False
-    if importlib.util.find_spec("transformers") is None:
-        _NEEDS_TF_UPGRADE = True
-        _tf_ver = "not installed"
-    else:
-        _tf_ver = importlib.metadata.version("transformers")
-        _NEEDS_TF_UPGRADE = Version(_tf_ver) < _MIN_TRANSFORMERS
-
-    if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
-        print("[setup] Installing dependencies for Kaggle runtime...")
-        _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
-        _base_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "-q"]
-        _pkgs = [
-            *_base_cmd,
-            "accelerate>=1.14.0",
-            "bitsandbytes>=0.50.2",
-            "datasets>=4.3.0",
-            "einops>=0.8.2",
-            "gguf>=0.19.0",
-            "huggingface-hub>=1.30.0",
-            "hydra-core>=1.3.6",
-            "ipykernel>=7.3.0",
-            "jupyterlab>=4.6.3",
-            "jupytext>=1.19.5",
-            "matplotlib>=3.11.1",
-            "notebook>=7.6.2",
-            "numpy>=2.0.0",
-            "scipy>=1.13.0",
-            "omegaconf>=2.3.1",
-            "peft>=0.20.0",
-            "Pillow>=12.3.0",
-            "pyrefly>=1.2.0",
-            "pytest>=9.1.1",
-            "ruff>=0.16.6",
-            "safetensors>=0.8.0",
-            "sentencepiece>=0.2.2",
-            "taichi>=1.7.4",
-            "tensorboard>=2.21.0",
-            "tokenizers>=0.22.0",
-            "torch>=2.11.0",
-            "torchao>=0.18.0",
-            "torchvision>=0.26.0",
-            "tqdm>=4.70.0",
-            "transformers>=5.15.0",
-            "trl>=0.24.0",
-        ]
-        if not _NEEDS_INSTALL:
-            print(
-                f"[setup] qwendopamine present but transformers {_tf_ver} < {_MIN_TRANSFORMERS} — upgrading transformers."
-            )
-        else:
-            _pkgs.append(_WHEEL_URL)
-        if _NEEDS_INSTALL and _NEEDS_TF_UPGRADE:
-            pass
-        elif not _NEEDS_INSTALL:
-            _pkgs = [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "-q",
-                "transformers>=5.15.0",
-            ]
-        _proc = subprocess.run(_pkgs, check=False)
-        if _proc.returncode != 0:
-            raise RuntimeError(
-                "pip install failed. On Kaggle, ensure Internet is ON and "
-                "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
-            )
-        print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
-    else:
-        print("[setup] qwendopamine already installed; skipping pip.")
+    print("[setup] Kaggle runtime detected — installing all dependencies via pip...")
+    _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
+    _pkgs = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "-q",
+        "accelerate>=1.14.0",
+        "bitsandbytes>=0.50.2",
+        "datasets>=4.3.0",
+        "einops>=0.8.2",
+        "gguf>=0.19.0",
+        "huggingface-hub>=1.30.0",
+        "hydra-core>=1.3.6",
+        "ipykernel>=7.3.0",
+        "jupyterlab>=4.6.3",
+        "jupytext>=1.19.5",
+        "matplotlib>=3.11.1",
+        "notebook>=7.6.2",
+        "numpy>=2.0.0",
+        "scipy>=1.13.0",
+        "omegaconf>=2.3.1",
+        "peft>=0.20.0",
+        "Pillow>=12.3.0",
+        "pyrefly>=1.2.0",
+        "pytest>=9.1.1",
+        "ruff>=0.16.6",
+        "safetensors>=0.8.0",
+        "sentencepiece>=0.2.2",
+        "taichi>=1.7.4",
+        "tensorboard>=2.21.0",
+        "tokenizers>=0.22.0",
+        "torch>=2.11.0",
+        "torchao>=0.18.0",
+        "torchvision>=0.26.0",
+        "tqdm>=4.70.0",
+        "transformers>=5.15.0",
+        "trl>=0.24.0",
+        _WHEEL_URL,
+    ]
+    _proc = subprocess.run(_pkgs, check=False)
+    if _proc.returncode != 0:
+        raise RuntimeError(
+            "pip install failed. On Kaggle, ensure Internet is ON and "
+            "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
+        )
+    print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
 
 
 # %% [code.2]
@@ -376,7 +352,9 @@ WEIGHT_DECAY: float = 0.01
 LR_SCHEDULER_TYPE: str = "cosine"
 WARMUP_STEPS: int = 100
 NUM_TRAIN_EPOCHS: int = 1
-MAX_TRAIN_STEPS: int | None = None  # None = rely on num_train_epochs with a finite dataset
+MAX_TRAIN_STEPS: int | None = (
+    None  # None = rely on num_train_epochs with a finite dataset
+)
 if LOCAL_TEST:
     MAX_TRAIN_STEPS = int(os.environ.get("QWD_LOCAL_STEPS", "2"))
 
@@ -459,7 +437,9 @@ if tokenizer.pad_token is None:
 if IS_KAGGLE:
     # Only needed for multimodal (image/video) inputs on Kaggle; the text
     # training path never touches the processor.
-    processor: Any = AutoProcessor.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+    processor: Any = AutoProcessor.from_pretrained(
+        BASE_MODEL_NAME, trust_remote_code=True
+    )
 
 HFIntegration.register_infinidopamine_hf()
 
@@ -549,6 +529,43 @@ def ensure_all_trainable(model: Any, missing_keys: list[str]) -> None:
         print(f"Unfrozen {unfrozen} newly initialized parameters.")
 
 
+def _should_unfreeze(name: str) -> bool:
+    if "embed_tokens" in name or "lm_head" in name:
+        return True
+    if any(
+        k in name
+        for k in (
+            "input_layernorm",
+            "post_attention_layernorm",
+            "q_norm",
+            "k_norm",
+            "model.norm",
+        )
+    ):
+        return True
+    if "linear_attn" in name and any(
+        k in name for k in ("dt_bias", "A_log", "betas", "conv1d", ".norm")
+    ):
+        return True
+    if "reward_branch" in name:
+        if ".norm" in name:
+            return True
+        if any(
+            k in name
+            for k in (
+                "scaler.raw_alpha",
+                "stats_normalizer.gamma",
+                "k_conv1d",
+                "v_conv1d",
+                "reward_branch_norm",
+                "q_norm",
+                "k_norm",
+            )
+        ):
+            return True
+    return False
+
+
 def re_unfreeze_reward_branch(model: Any) -> int:
     """Re-unfreeze direct-trained params PEFT froze.
 
@@ -562,29 +579,7 @@ def re_unfreeze_reward_branch(model: Any) -> int:
     for name, param in model.named_parameters():
         if param.requires_grad or "lora" in name.lower():
             continue
-        should_unfreeze = (
-            "embed_tokens" in name
-            or "lm_head" in name
-            or ("linear_attn" in name and any(k in name for k in ("dt_bias", "A_log", "betas", "conv1d", ".norm")))
-            or (
-                "reward_branch" in name
-                and any(
-                    k in name
-                    for k in (
-                        "scaler.raw_alpha",
-                        "stats_normalizer.gamma",
-                        "k_conv1d",
-                        "v_conv1d",
-                        "reward_branch_norm",
-                        "q_norm",
-                        "k_norm",
-                    )
-                )
-            )
-            or ("reward_branch" in name and ".norm" in name)
-            or any(k in name for k in ("input_layernorm", "post_attention_layernorm", "q_norm", "k_norm", "model.norm"))
-        )
-        if should_unfreeze:
+        if _should_unfreeze(name):
             param.requires_grad = True
             unfrozen += 1
     if unfrozen:
@@ -940,7 +935,9 @@ def format_example(example: dict, dataset_name: str) -> dict:
 
 
 # %% [code.12]
-def build_synthetic_dataset(num_docs: int = 512, words_per_doc: int = 48) -> IterableDataset:
+def build_synthetic_dataset(
+    num_docs: int = 512, words_per_doc: int = 48
+) -> IterableDataset:
     """Offline smoke-test dataset: deterministic pseudo-random text rows.
 
     Only used in local test mode so the run never touches the Hub. The
@@ -1049,6 +1046,7 @@ DATASET_SUBSET_MAP = {
     "Salesforce/wikitext": WIKITEXT_MAX_ROWS,
 }
 
+
 def _capped_rows() -> int:
     return int(os.environ.get("QWD_CAPPED_ROWS", "5"))
 
@@ -1056,45 +1054,113 @@ def _capped_rows() -> int:
 def _mock_stream_for_dataset(name: str, n: int | None = None) -> IterableDataset:
     if n is None:
         n = _capped_rows()
+
     def _gen() -> "Iterator[dict]":
         for i in range(n):
             if name == "DylanRiden/smb-worldmodel-data":
                 raw: dict = {"text": f"SMB Frame Action: [Up={i}.0, Down=0.0]"}
             elif name == "Kalso42/WorldModelForMaze":
                 raw = {"text": f"maze {i}\n###\n# {i} #\n###"}
-            elif name == "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg":
-                raw = {"messages": json.dumps([{"role": "user", "content": f"sokoban {i}"}]), "task": "t", "seed": str(i), "env_id": "e"}
+            elif (
+                name
+                == "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg"
+            ):
+                raw = {
+                    "messages": json.dumps(
+                        [{"role": "user", "content": f"sokoban {i}"}]
+                    ),
+                    "task": "t",
+                    "seed": str(i),
+                    "env_id": "e",
+                }
             elif name == "thuml/bytesized32-world-model-cot":
-                raw = {"prompt": [{"role": "user", "content": f"bytesized {i}"}], "reward_model": "rm", "extra_info": "{}"}
+                raw = {
+                    "prompt": [{"role": "user", "content": f"bytesized {i}"}],
+                    "reward_model": "rm",
+                    "extra_info": "{}",
+                }
             elif name == "PatronusAI/world_model_corpus":
                 raw = {"messages": [{"role": "user", "content": f"patronus {i}"}]}
             elif name == "schema-harness/arc-agi-3-schema-traces":
-                raw = {"task": f"arc{i}", "status": "ok", "win_levels": "1", **{f"level{j}": j for j in range(3)}}
+                raw = {
+                    "task": f"arc{i}",
+                    "status": "ok",
+                    "win_levels": "1",
+                    **{f"level{j}": j for j in range(3)},
+                }
             elif name == "laion/strategic_game_chess":
                 raw = {"Moves": ["e4", "e5"], "Termination": "*", "Result": "1-0"}
             elif name == "ryanmarten/OpenThoughts-1k-sample":
-                raw = {"system": "sys", "conversations": [{"from": "human", "value": f"thought {i}"}, {"from": "gpt", "value": "ans"}]}
+                raw = {
+                    "system": "sys",
+                    "conversations": [
+                        {"from": "human", "value": f"thought {i}"},
+                        {"from": "gpt", "value": "ans"},
+                    ],
+                }
             elif name == "Decix/ReBel-ALFWorld-SFT-Trajectories":
-                raw = {"steps": json.dumps([{"idx": 0, "obs": f"obs {i}", "action": "act"}]), "task": f"alf {i}", "task_type": "t"}
+                raw = {
+                    "steps": json.dumps(
+                        [{"idx": 0, "obs": f"obs {i}", "action": "act"}]
+                    ),
+                    "task": f"alf {i}",
+                    "task_type": "t",
+                }
             elif name == "greghavens/kimi-k3-coding-and-debugging-traces":
                 raw = {"messages": [{"role": "user", "content": f"kimi {i}"}]}
             elif name == "cot-leaderboard/cot-eval-traces-2.0":
-                raw = {"passage": f"p {i}", "question": "q?", "options": ["a", "b"], "answer": "a", "reasoning_trace": "trace"}
+                raw = {
+                    "passage": f"p {i}",
+                    "question": "q?",
+                    "options": ["a", "b"],
+                    "answer": "a",
+                    "reasoning_trace": "trace",
+                }
             elif name == "Lichess/standard-chess-games":
-                raw = {"movetext": "1. e4 e5", "White": "A", "Black": "B", "Result": "*", "Opening": "o", "ECO": "C20", "Event": "ev", "Site": "s", "UTCDate": "2024.01.01"}
+                raw = {
+                    "movetext": "1. e4 e5",
+                    "White": "A",
+                    "Black": "B",
+                    "Result": "*",
+                    "Opening": "o",
+                    "ECO": "C20",
+                    "Event": "ev",
+                    "Site": "s",
+                    "UTCDate": "2024.01.01",
+                }
             elif name == "lockon/ToolACE":
-                raw = {"system": "sys", "conversations": [{"from": "human", "value": f"tool {i}"}]}
+                raw = {
+                    "system": "sys",
+                    "conversations": [{"from": "human", "value": f"tool {i}"}],
+                }
             elif name == "faunix/Qwen3.8-27B-Distillation-40K":
-                raw = {"messages": [{"role": "user", "content": f"distill {i}"}], "domain": "d", "category": "c", "source": "s"}
+                raw = {
+                    "messages": [{"role": "user", "content": f"distill {i}"}],
+                    "domain": "d",
+                    "category": "c",
+                    "source": "s",
+                }
             elif name == "Glint-Research/Fable-5-traces":
-                raw = {"messages": [{"role": "user", "content": f"fable {i}"}], "trace": "tr", "prompt": "p"}
+                raw = {
+                    "messages": [{"role": "user", "content": f"fable {i}"}],
+                    "trace": "tr",
+                    "prompt": "p",
+                }
             elif name == "Salesforce/wikitext":
                 raw = {"text": f"wikitext doc {i} with some language modeling text"}
             elif name == "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation":
-                raw = {"messages_json": json.dumps([{"role": "user", "content": f"r0b0t {i}"}]), "task_type": "t", "source": "s", "domain": "d"}
+                raw = {
+                    "messages_json": json.dumps(
+                        [{"role": "user", "content": f"r0b0t {i}"}]
+                    ),
+                    "task_type": "t",
+                    "source": "s",
+                    "domain": "d",
+                }
             else:
                 raw = {"text": f"fallback {name} {i}"}
             yield {"text": format_example(raw, name)["text"]}
+
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
@@ -1105,54 +1171,49 @@ def _apply_subset(ds: Any, dataset_name: str) -> IterableDataset:
         return result
 
     def _gen() -> Iterator[dict]:
-        for count, ex in enumerate(ds):
+        for i, ex in enumerate(ds):
             yield ex
-            if count >= max_rows:
+            if i >= max_rows:
                 break
 
     return IterableDataset.from_generator(_gen, gen_kwargs={})
+
+
+def _stream_for(name: str, use_capped: bool) -> IterableDataset:
+    if use_capped:
+        return _mock_stream_for_dataset(name)
+    if name == LOCAL_SYNTHETIC_DATASET:
+        return build_synthetic_dataset()
+    if name == "DylanRiden/smb-worldmodel-data":
+        return load_smb_dataset()
+    if name == "Kalso42/WorldModelForMaze":
+        return load_maze_dataset()
+    cfg, split = DATASET_CONFIG_MAP.get(name, ("default", "train"))
+    ds = load_dataset(name, config=cfg, split=split, streaming=True)
+
+    def _fmt(ex: dict, dataset_name: str = name) -> dict:
+        return format_example(ex, dataset_name)
+
+    fmt = DATASET_FORMATTERS.get(name)
+    if fmt is not None:
+        ds = ds.map(_fmt, batched=False)
+    result: IterableDataset = _apply_subset(ds, name)
+    return result
 
 
 def build_streaming_dataset(
     dataset_names: list[str],
     seed: int = 42,
 ) -> IterableDataset:
-    _use_capped = LOCAL_TEST and _CAPPED_FULL
-    if _use_capped:
-        print(f"[capped-full] using {_capped_rows()} mocked rows per dataset for {len(dataset_names)} datasets")
-    streams = []
-
-    for name in dataset_names:
-        if _use_capped:
-            streams.append(_mock_stream_for_dataset(name))
-        elif name == LOCAL_SYNTHETIC_DATASET:
-            streams.append(build_synthetic_dataset())
-        elif name == "DylanRiden/smb-worldmodel-data":
-            streams.append(load_smb_dataset())
-        elif name == "Kalso42/WorldModelForMaze":
-            streams.append(load_maze_dataset())
-        else:
-            cfg, split = DATASET_CONFIG_MAP.get(name, ("default", "train"))
-            ds = load_dataset(name, config=cfg, split=split, streaming=True)
-            formatter = DATASET_FORMATTERS.get(name)
-            if formatter is not None:
-
-                def _fmt(ex: dict, dataset_name: str = name) -> dict:
-                    return format_example(ex, dataset_name)
-
-                ds = ds.map(_fmt, batched=False)
-            ds = _apply_subset(ds, name)
-            streams.append(ds)
-
+    use_capped = LOCAL_TEST and _CAPPED_FULL
+    if use_capped:
+        print(
+            f"[capped-full] using {_capped_rows()} mocked rows per dataset for {len(dataset_names)} datasets"
+        )
+    streams = [_stream_for(n, use_capped) for n in dataset_names]
     if len(streams) == 1:
         return streams[0]
-
-    result_ds: IterableDataset = interleave_datasets(
-        streams,
-        seed=seed,
-        stopping_strategy="all_exhausted",
-    )
-    return result_ds
+    return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted")
 
 
 def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> IterableDataset:
@@ -1173,15 +1234,10 @@ train_dataset = peek_streaming_dataset(CPT_DATASETS)
 
 # %% [code.13]
 def tokenize_fn(example: dict) -> dict:
-    text = example.get("text") or ""
-    text = text.strip()
+    text = (example.get("text") or "").strip()
     if not text:
         return {"input_ids": [], "attention_mask": [], "labels": []}
-    tok = tokenizer(
-        text,
-        truncation=True,
-        max_length=MAX_SEQ_LENGTH,
-    )
+    tok = tokenizer(text, truncation=True, max_length=MAX_SEQ_LENGTH)
     if not tok["input_ids"]:
         return {"input_ids": [], "attention_mask": [], "labels": []}
     return {
@@ -1191,19 +1247,15 @@ def tokenize_fn(example: dict) -> dict:
     }
 
 
-cols_to_remove: list[str] = []
-if hasattr(train_dataset, "column_names") and train_dataset.column_names is not None:
-    cols_to_remove = [
-        c
-        for c in train_dataset.column_names
-        if c not in {"text", "input_ids", "attention_mask", "labels"}
-    ]
+cols_to_remove = [
+    c
+    for c in (getattr(train_dataset, "column_names", None) or [])
+    if c not in {"text", "input_ids", "attention_mask", "labels"}
+]
 
 from transformers import DataCollatorWithPadding
 
-data_collator = DataCollatorWithPadding(
-    tokenizer=tokenizer,
-)
+data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 
 train_dataset = train_dataset.map(
@@ -1277,18 +1329,17 @@ def build_reward_values(
 
 class CPTSFTTrainer(SFTTrainer):
     def create_optimizer(self, model: Any = None) -> Any:
-        """Create optimizer with lower LR for embedding layers, per Unsloth CPT guidance."""
+        """Create optimizer with lower LR for embedding layers."""
         opt_model = self.model if model is None else model
         if self.optimizer is not None:
             return self.optimizer
 
-        embed_param_names = {"embed_tokens", "lm_head"}
         embed_params: list[torch.nn.Parameter] = []
         other_params: list[torch.nn.Parameter] = []
         for name, param in opt_model.named_parameters():
             if not param.requires_grad:
                 continue
-            if any(k in name for k in embed_param_names):
+            if any(k in name for k in ("embed_tokens", "lm_head")):
                 embed_params.append(param)
             else:
                 other_params.append(param)
@@ -1493,10 +1544,14 @@ if IS_MAIN:
         merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
         merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
         tokenizer.save_pretrained(_FINAL_DIR)
-        print(f"Full model saved to {_FINAL_DIR} — all LoRA + directly trained weights fused, no loss")
+        print(
+            f"Full model saved to {_FINAL_DIR} — all LoRA + directly trained weights fused, no loss"
+        )
         _merged_for_hub = merged
     else:
-        print("MERGE_LORA_AFTER_TRAINING=False; saving adapter and also full fused model for verification")
+        print(
+            "MERGE_LORA_AFTER_TRAINING=False; saving adapter and also full fused model for verification"
+        )
         model.save_pretrained(_PEFT_DIR)
         tokenizer.save_pretrained(_PEFT_DIR)
         print(f"Adapter saved to {_PEFT_DIR}")
@@ -1505,7 +1560,9 @@ if IS_MAIN:
             _merged_local_dir = os.path.join(OUTPUT_DIR, "merged-final-local")
             merged_local.save_pretrained(_merged_local_dir)  # pyrefly: ignore[not-callable]
             tokenizer.save_pretrained(_merged_local_dir)
-            print(f"Full fused model also saved to {_merged_local_dir} for no-loss verification")
+            print(
+                f"Full fused model also saved to {_merged_local_dir} for no-loss verification"
+            )
             _merged_for_hub = merged_local
         except (OSError, RuntimeError) as exc:
             print(f"Warning: could not save merged full model locally: {exc}")

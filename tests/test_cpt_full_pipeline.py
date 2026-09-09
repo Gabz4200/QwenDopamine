@@ -20,7 +20,9 @@ from qwendopamine.testing.cpt_helpers import losses_from_trainer_state, run_cpt_
 def test_when_capped_full_pipeline_then_all_formatters_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    out, run_dir = run_cpt_notebook(tmp_path, capsys, extra_env={"QWD_CAPPED_FULL_PIPELINE": "1"})
+    out, run_dir = run_cpt_notebook(
+        tmp_path, capsys, extra_env={"QWD_CAPPED_FULL_PIPELINE": "1"}
+    )
 
     assert "[capped-full]" in out, "capped-full pipeline marker missing"
     assert "Taichi arch" in out, "Taichi arch line missing"

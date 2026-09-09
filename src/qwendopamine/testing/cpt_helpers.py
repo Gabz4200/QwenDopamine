@@ -6,11 +6,11 @@ Tests import from here directly; tests/conftest re-exports for convenience.
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import math
 import os
-import runpy
 import sys
 from pathlib import Path
 
@@ -33,19 +33,49 @@ def run_cpt_notebook(
     env["QWD_LOCAL_STEPS"] = "2"
     env["QWD_LOCAL_RUN_DIR"] = str(tmp_path)
     env.pop("KAGGLE_KERNEL_RUN", None)
+    for _k in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT"):
+        env.pop(_k, None)
     if extra_env:
         env.update(extra_env)
+
+    try:
+        from accelerate.state import PartialState
+
+        PartialState._reset_state()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PartialState reset skipped: %s", exc)
+    try:
+        import torch.distributed
+
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Destroy process group skipped: %s", exc)
 
     old_argv, old_env = sys.argv, dict(os.environ)
     sys.argv = [str(notebook)]
     os.environ.clear()
     os.environ.update(env)
     try:
+        runpy = importlib.import_module("runpy")
         runpy.run_path(str(notebook), run_name="__main__")
     finally:
         sys.argv = old_argv
         os.environ.clear()
         os.environ.update(old_env)
+        try:
+            from accelerate.state import PartialState
+
+            PartialState._reset_state()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("PartialState reset skipped: %s", exc)
+        try:
+            import torch.distributed
+
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Destroy process group skipped: %s", exc)
 
     out = capsys.readouterr().out
     runs = list(tmp_path.iterdir())
@@ -70,7 +100,9 @@ def losses_from_trainer_state(run_dir: Path) -> list[float]:
                 try:
                     v = float(entry["loss"])
                 except (ValueError, TypeError) as exc:
-                    logger.debug("Skipping non-numeric loss %r: %s", entry.get("loss"), exc)
+                    logger.debug(
+                        "Skipping non-numeric loss %r: %s", entry.get("loss"), exc
+                    )
                     continue
                 if math.isfinite(v):
                     losses.append(v)
@@ -80,7 +112,9 @@ def losses_from_trainer_state(run_dir: Path) -> list[float]:
                     try:
                         v = float(entry[k])
                     except (ValueError, TypeError) as exc:
-                        logger.debug("Skipping non-numeric %s %r: %s", k, entry.get(k), exc)
+                        logger.debug(
+                            "Skipping non-numeric %s %r: %s", k, entry.get(k), exc
+                        )
                         continue
                     if math.isfinite(v):
                         losses.append(v)

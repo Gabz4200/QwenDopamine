@@ -49,7 +49,9 @@ def format_sokoban(example: dict) -> dict:
     task = example.get("task", "")
     seed = example.get("seed", "")
     env_id = example.get("env_id", "")
-    header = " | ".join(x for x in [f"task={task}", f"seed={seed}", f"env_id={env_id}"] if x)
+    header = " | ".join(
+        x for x in [f"task={task}", f"seed={seed}", f"env_id={env_id}"] if x
+    )
     if header:
         text = f"[{header}]\n{text}"
     return {"text": text}
@@ -207,7 +209,9 @@ def format_qwen3_distill(example: dict) -> dict:
     domain = example.get("domain", "")
     category = example.get("category", "")
     source = example.get("source", "")
-    meta = " | ".join(x for x in [f"domain={domain}", f"category={category}", f"source={source}"] if x)
+    meta = " | ".join(
+        x for x in [f"domain={domain}", f"category={category}", f"source={source}"] if x
+    )
     if meta:
         text = f"[{meta}]\n{text}"
     return {"text": text}
@@ -248,7 +252,11 @@ def format_r0b0tlab(example: dict) -> dict:
     task_type = example.get("task_type", "")
     source = example.get("source", "")
     domain = example.get("domain", "")
-    meta = " | ".join(x for x in [f"task_type={task_type}", f"source={source}", f"domain={domain}"] if x)
+    meta = " | ".join(
+        x
+        for x in [f"task_type={task_type}", f"source={source}", f"domain={domain}"]
+        if x
+    )
     if meta:
         text = f"[{meta}]\n{text}"
     return {"text": text}
@@ -282,7 +290,11 @@ def format_example(example: dict, dataset_name: str) -> dict:
     for col in ["text", "content", "prompt", "problem", "solution"]:
         if example.get(col):
             return {"text": str(example[col])}
-    text = " ".join(str(v) for v in example.values() if isinstance(v, (str, int, float)) and not str(v).startswith("_"))
+    text = " ".join(
+        str(v)
+        for v in example.values()
+        if isinstance(v, (str, int, float)) and not str(v).startswith("_")
+    )
     return {"text": text}
 
 

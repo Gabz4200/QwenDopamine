@@ -1365,8 +1365,20 @@ def build_reward_values(
     Alignment: when generating x(t+1) from input x(t), we consume
     the reward of token x(t). This is achieved by shifting rewards
     one position forward: reward_values[:, 1:] = rewards.
+
+    When ``model_ref`` is provided it is set to eval mode (so dropout is
+    disabled during reward estimation) and restored to its prior training
+    state afterwards. The global ``model`` (passed implicitly when
+    ``model_ref`` is ``None``) is left untouched — callers must manage its
+    mode externally.
     """
-    _model = model if model_ref is None else model_ref
+    if model_ref is not None:
+        _model = model_ref
+        _was_training = _model.training
+        _model.eval()
+    else:
+        _model = model
+        _was_training = None
     with torch.no_grad():
         base_outputs = _model(
             input_ids=input_ids,
@@ -1389,6 +1401,9 @@ def build_reward_values(
         reward_values = torch.zeros_like(input_ids, dtype=TORCH_DTYPE)
         reward_values[:, 1:] = rewards.to(TORCH_DTYPE)
         reward_values = reward_values * attention_mask
+
+    if _was_training:
+        _model.train()
     return reward_values
 
 

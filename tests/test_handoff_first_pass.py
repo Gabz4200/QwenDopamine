@@ -23,8 +23,9 @@ def test_h1_when_import_qwendopamine_models_then_transformers_not_loaded() -> No
     # test imported it), drop it so we measure only the import under test.
     saved = sys.modules.pop("transformers", None)
     try:
-        import qwendopamine.models  # noqa: F401
+        import qwendopamine.models
 
+        assert qwendopamine.models.__name__ == "qwendopamine.models"
         assert "transformers" not in sys.modules, (
             "import qwendopamine.models pulled in transformers; "
             "review H1: lazy import of the HF model families."
@@ -192,7 +193,7 @@ def test_h5_when_delta_bwd_then_dk_includes_read_back_term() -> None:
     import torch
 
     from qwendopamine.integrations.pytorch import delta as delta_mod
-    from qwendopamine.models.reinforced.hand_derived_reference import (
+    from qwendopamine.ops.references.reward_reference import (
         canonical_delta_step_with_grad as hand_step,
     )
 

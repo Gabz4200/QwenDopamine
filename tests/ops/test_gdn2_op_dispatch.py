@@ -20,14 +20,12 @@ import pytest
 import torch
 from torch.library import opcheck
 
-from qwendopamine.integrations.pytorch import (
-    custom_ops,  # noqa: F401  # triggers op registration
-)
-from qwendopamine.integrations.pytorch.chunk import (  # noqa: F401  # registers the @custom_op-decorated ops
+from qwendopamine.integrations.pytorch import custom_ops
+from qwendopamine.integrations.pytorch.chunk import (
     chunk_gdn2_op,
     chunk_gdn2_with_state_op,
 )
-from qwendopamine.integrations.pytorch.recurrent import (  # noqa: F401
+from qwendopamine.integrations.pytorch.recurrent import (
     recurrent_gdn2_op,
     recurrent_gdn2_with_state_op,
 )
@@ -37,6 +35,12 @@ from qwendopamine.ops.gdn2 import (
     recurrent_taichi_gdn2,
     set_backend,
 )
+
+assert custom_ops is not None
+assert chunk_gdn2_op is not None
+assert chunk_gdn2_with_state_op is not None
+assert recurrent_gdn2_op is not None
+assert recurrent_gdn2_with_state_op is not None
 
 
 @pytest.mark.skipif(

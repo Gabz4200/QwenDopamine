@@ -25,97 +25,146 @@
 #
 # Continued pretraining pipeline for `InfiniDopamineForConditionalGeneration` initialized from `Qwen/Qwen3.5-0.8B`.
 # Streams and interleaves tokenized trajectory, reasoning, and world-model datasets with reward-conditioned forward passes.
+#
+# Runtime modes:
+#   * **Kaggle** (`KAGGLE_KERNEL_RUN=true`, default on Kaggle): full run — 17 streaming datasets, real Qwen3.5-0.8B weights, GPU 4-bit AdamW.
+#   * **Local** (any machine without `KAGGLE_KERNEL_RUN`): smoke-test run — synthetic offline dataset, tiny random-init text model, 2 steps (override with `QWD_LOCAL_STEPS`).
 
 # %% [code.1]
-# Install dependencies on Kaggle. Ensures transformers>=5.15.0 even on reruns.
+# Runtime setup. Two environments are supported:
+#
+#   * Kaggle (KAGGLE_KERNEL_RUN=true): full continued-pretraining run — 17
+#     streaming Hub datasets, real Qwen/Qwen3.5-0.8B weights transferred into
+#     the InfiniDopamine architecture, 4-bit paged AdamW on GPU.
+#   * Local (anything else): smoke-test run — a synthetic offline dataset, a
+#     tiny random-init text-only model (fits a CPU/RAM-limited laptop), and
+#     ``QWD_LOCAL_STEPS`` training steps (default 2).
+#
+# On Kaggle this cell installs/upgrades every dependency (including the
+# package wheel) with pip. Locally it only verifies that the uv-provisioned
+# environment is complete and never touches pip (that would fight ``uv sync``).
 #
 # NumPy 2.x changed private C-API symbols used by older SciPy builds.
-# This notebook pins SciPy>=1.13.0 so the Kaggle runtime does not hit
+# The SciPy pin below keeps Kaggle from hitting
 # ``ImportError: cannot import name '_center' from 'numpy._core.umath'``
 # through ``peft -> transformers -> sklearn -> scipy -> numpy``.
 import importlib.metadata
 import importlib.util
+import os
 import subprocess
 import sys
 
 from packaging.version import Version
 
+IS_KAGGLE: bool = os.environ.get("KAGGLE_KERNEL_RUN") == "true"
+LOCAL_TEST: bool = not IS_KAGGLE
+_CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE") == "1"
 _MIN_TRANSFORMERS = Version("5.15.0")
 
-_NEEDS_INSTALL = importlib.util.find_spec("qwendopamine") is None
-_NEEDS_TF_UPGRADE = False
-if importlib.util.find_spec("transformers") is None:
-    _NEEDS_TF_UPGRADE = True
-    _tf_ver = "not installed"
-else:
-    _tf_ver = importlib.metadata.version("transformers")
-    _NEEDS_TF_UPGRADE = Version(_tf_ver) < _MIN_TRANSFORMERS
-
-if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
-    print("[setup] Installing dependencies for Kaggle runtime...")
-    _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
-    _base_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "-q"]
-    _pkgs = [
-        *_base_cmd,
-        "accelerate>=1.14.0",
-        "bitsandbytes>=0.50.2",
-        "datasets>=4.3.0",
-        "einops>=0.8.2",
-        "gguf>=0.19.0",
-        "huggingface-hub>=1.30.0",
-        "hydra-core>=1.3.6",
-        "ipykernel>=7.3.0",
-        "jupyterlab>=4.6.3",
-        "jupytext>=1.19.5",
-        "matplotlib>=3.11.1",
-        "notebook>=7.6.2",
-        "numpy>=2.0.0",
-        "scipy>=1.13.0",
-        "omegaconf>=2.3.1",
-        "peft>=0.20.0",
-        "Pillow>=12.3.0",
-        "pyrefly>=1.2.0",
-        "pytest>=9.1.1",
-        "ruff>=0.16.6",
-        "safetensors>=0.8.0",
-        "sentencepiece>=0.2.2",
-        "taichi>=1.7.4",
-        "tensorboard>=2.21.0",
-        "tokenizers>=0.22.0",
-        "torch>=2.11.0",
-        "torchao>=0.18.0",
-        "torchvision>=0.26.0",
-        "tqdm>=4.70.0",
-        "transformers>=5.15.0",
-        "trl>=0.24.0",
+if LOCAL_TEST:
+    _REQUIRED_IMPORTS = {
+        "qwendopamine": "qwendopamine",
+        "accelerate": "accelerate",
+        "datasets": "datasets",
+        "peft": "peft",
+        "trl": "trl",
+        "transformers": "transformers",
+    }
+    _missing = [
+        name
+        for name, mod in _REQUIRED_IMPORTS.items()
+        if importlib.util.find_spec(mod) is None
     ]
-    if not _NEEDS_INSTALL:
-        print(
-            f"[setup] qwendopamine present but transformers {_tf_ver} < {_MIN_TRANSFORMERS} — upgrading transformers."
-        )
-    else:
-        _pkgs.append(_WHEEL_URL)
-    if _NEEDS_INSTALL and _NEEDS_TF_UPGRADE:
-        pass
-    elif not _NEEDS_INSTALL:
-        _pkgs = [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "-q",
-            "transformers>=5.15.0",
-        ]
-    _proc = subprocess.run(_pkgs, check=False)
-    if _proc.returncode != 0:
+    if _missing:
         raise RuntimeError(
-            "pip install failed. On Kaggle, ensure Internet is ON and "
-            "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
+            "[setup] Local runtime is missing dependencies: "
+            + ", ".join(sorted(_missing))
+            + ". Provision the uv environment first:\n"
+            "    uv sync --extra cpu --extra dev --extra hf --extra cpt\n"
+            "Do NOT pip install into the uv-managed virtualenv."
         )
-    print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
+    _tf_ver = importlib.metadata.version("transformers")
+    if Version(_tf_ver) < _MIN_TRANSFORMERS:
+        print(
+            f"[setup] WARNING: transformers {_tf_ver} < {_MIN_TRANSFORMERS}; "
+            "refresh the environment with `uv sync --extra cpt`."
+        )
+    print("[setup] Local runtime detected; uv environment OK, skipping pip.")
 else:
-    print("[setup] qwendopamine already installed; skipping pip.")
+    _NEEDS_INSTALL = importlib.util.find_spec("qwendopamine") is None
+    _NEEDS_TF_UPGRADE = False
+    if importlib.util.find_spec("transformers") is None:
+        _NEEDS_TF_UPGRADE = True
+        _tf_ver = "not installed"
+    else:
+        _tf_ver = importlib.metadata.version("transformers")
+        _NEEDS_TF_UPGRADE = Version(_tf_ver) < _MIN_TRANSFORMERS
+
+    if _NEEDS_INSTALL or _NEEDS_TF_UPGRADE:
+        print("[setup] Installing dependencies for Kaggle runtime...")
+        _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
+        _base_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "-q"]
+        _pkgs = [
+            *_base_cmd,
+            "accelerate>=1.14.0",
+            "bitsandbytes>=0.50.2",
+            "datasets>=4.3.0",
+            "einops>=0.8.2",
+            "gguf>=0.19.0",
+            "huggingface-hub>=1.30.0",
+            "hydra-core>=1.3.6",
+            "ipykernel>=7.3.0",
+            "jupyterlab>=4.6.3",
+            "jupytext>=1.19.5",
+            "matplotlib>=3.11.1",
+            "notebook>=7.6.2",
+            "numpy>=2.0.0",
+            "scipy>=1.13.0",
+            "omegaconf>=2.3.1",
+            "peft>=0.20.0",
+            "Pillow>=12.3.0",
+            "pyrefly>=1.2.0",
+            "pytest>=9.1.1",
+            "ruff>=0.16.6",
+            "safetensors>=0.8.0",
+            "sentencepiece>=0.2.2",
+            "taichi>=1.7.4",
+            "tensorboard>=2.21.0",
+            "tokenizers>=0.22.0",
+            "torch>=2.11.0",
+            "torchao>=0.18.0",
+            "torchvision>=0.26.0",
+            "tqdm>=4.70.0",
+            "transformers>=5.15.0",
+            "trl>=0.24.0",
+        ]
+        if not _NEEDS_INSTALL:
+            print(
+                f"[setup] qwendopamine present but transformers {_tf_ver} < {_MIN_TRANSFORMERS} — upgrading transformers."
+            )
+        else:
+            _pkgs.append(_WHEEL_URL)
+        if _NEEDS_INSTALL and _NEEDS_TF_UPGRADE:
+            pass
+        elif not _NEEDS_INSTALL:
+            _pkgs = [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "-q",
+                "transformers>=5.15.0",
+            ]
+        _proc = subprocess.run(_pkgs, check=False)
+        if _proc.returncode != 0:
+            raise RuntimeError(
+                "pip install failed. On Kaggle, ensure Internet is ON and "
+                "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
+            )
+        print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
+    else:
+        print("[setup] qwendopamine already installed; skipping pip.")
 
 
 # %% [code.2]
@@ -147,7 +196,9 @@ from trl import SFTTrainer
 from qwendopamine.integrations.huggingface import HFIntegration
 from qwendopamine.models.infinidopamine import (
     InfiniDopamineConfig,
+    InfiniDopamineForCausalLM,
     InfiniDopamineForConditionalGeneration,
+    InfiniDopamineTextConfig,
 )
 
 HFIntegration.register_infinidopamine_hf()
@@ -170,6 +221,18 @@ if IS_MAIN:
         for i in range(torch.cuda.device_count()):
             print(f"Device         : {torch.cuda.get_device_name(i)}")
     print(f"World size     : {WORLD_SIZE}")
+
+# Taichi backend: both mixers dispatch through qwendopamine.ops, which resolves
+# to Taichi. The GDN-2 path (linear_attention mixer) needs the chunk Taichi op;
+# the reward path (main mixer when layer_types selects it, plus the parallel
+# branch) needs the delta Taichi op. Taichi works on any hardware, so we import
+# and use it directly — a misconfigured env fails fast on its own.
+from qwendopamine.kernels.taichi import taichi_arch
+from qwendopamine.ops.reward import delta_core_step
+
+_TAICHI_ARCH = taichi_arch()
+if IS_MAIN:
+    print(f"Taichi arch     : {_TAICHI_ARCH}")
 
 # %% [markdown.3]
 # ## Dataset Sources & Schema Mapping
@@ -217,10 +280,24 @@ CPT_DATASETS: list[str] = [
     "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
 ]
 
+# ---------------------------------------------------------------------------
+# Local smoke-test mode: bound the run size and use an offline synthetic
+# dataset (see the dataset cell below).
+# ---------------------------------------------------------------------------
+LOCAL_SYNTHETIC_DATASET: str = "__local_synthetic__"
+if LOCAL_TEST and not _CAPPED_FULL:
+    CPT_DATASETS = [LOCAL_SYNTHETIC_DATASET]
+
 DATASET_TEXT_COLUMN: str = "text"
 MAX_SEQ_LENGTH: int = 1024
 
-TORCH_DTYPE = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+if LOCAL_TEST:
+    # CPU smoke tests: fp32 only (no bf16/fp16 hardware paths on CPU).
+    TORCH_DTYPE = torch.float32
+elif torch.cuda.is_bf16_supported():
+    TORCH_DTYPE = torch.bfloat16
+else:
+    TORCH_DTYPE = torch.float16
 LOAD_IN_4BIT: bool = False
 
 USE_LORA: bool = True
@@ -230,8 +307,11 @@ LORA_DROPOUT: float = 0.05
 USE_RSLORA: bool = True
 # Targets resolved to nn.Linear in InfiniDopamineDecoderLayer; non-Linear
 # reward-branch modules are trained directly instead.
+#
+# trl>=0.24 defaults loss_type to chunked_nll, which is incompatible with a
+# PEFT-wrapped lm_head. lm_head stays out of LoRA targets; it still trains
+# via the EMBEDDING_LR_SCALE param group in CPTSFTTrainer.create_optimizer.
 LORA_TARGET_MODULES = [
-    "lm_head",
     "in_proj_qkv",
     "in_proj_z",
     "in_proj_a",
@@ -247,7 +327,9 @@ LORA_TARGET_MODULES = [
     "reward_branch.delta_layer.memory_core.w_proj",
     "reward_branch.delta_layer.memory_core.e_proj",
     "reward_branch.delta_layer.baseline_tracker.alpha_proj",
-    "reward_branch.delta_layer.advantage_gate.advantage_proj",
+    "reward_branch.delta_layer.advantage_gate.plasticity_proj",
+    "reward_branch.delta_layer.advantage_gate.write_proj",
+    "reward_branch.delta_layer.advantage_gate.erase_proj",
 ]
 
 # Parallel GatedRewardNet branch configuration.
@@ -274,16 +356,20 @@ WEIGHT_DECAY: float = 0.01
 LR_SCHEDULER_TYPE: str = "cosine"
 WARMUP_STEPS: int = 100
 NUM_TRAIN_EPOCHS: int = 1
-MAX_TRAIN_STEPS: int | None = (
-    None  # None = rely on num_train_epochs with finite dataset
-)
+MAX_TRAIN_STEPS: int | None = None  # None = rely on num_train_epochs with a finite dataset
+if LOCAL_TEST:
+    MAX_TRAIN_STEPS = int(os.environ.get("QWD_LOCAL_STEPS", "2"))
+
 LOGGING_STEPS: int = 10
 SAVE_STEPS: int = 500
 SAVE_TOTAL_LIMIT: int = 2
 
-_KAGGLE_WORKING: str = os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
+if IS_KAGGLE:
+    _RUN_ROOT = os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
+else:
+    _RUN_ROOT = os.environ.get("QWD_LOCAL_RUN_DIR", os.path.join(os.getcwd(), "runs"))
 OUTPUT_DIR: str = os.path.join(
-    _KAGGLE_WORKING,
+    _RUN_ROOT,
     f"infini-dopamine-cpt-{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}-{os.getpid()}",
 )
 RESUME_FROM_CHECKPOINT: str | None = None
@@ -291,6 +377,20 @@ HUB_MODEL_ID: str = os.environ.get("HUB_MODEL_ID", "")
 PUSH_TO_HUB: bool = bool(HUB_MODEL_ID)
 HF_TOKEN: str | None = os.environ.get("HF_TOKEN")
 MERGE_LORA_AFTER_TRAINING: bool = True
+
+if LOCAL_TEST:
+    # Bounded CPU/footprint run: batch 1, no gradient accumulation, no warmup,
+    # no Hub push, adapter-only checkpoint (no multi-GB merged model write).
+    PER_DEVICE_TRAIN_BATCH_SIZE = 1
+    GRADIENT_ACCUMULATION_STEPS = 1
+    WARMUP_STEPS = 0
+    LOGGING_STEPS = 1
+    SAVE_STEPS = 2
+    SAVE_TOTAL_LIMIT = 1
+    USE_PARALLEL_REWARD = False
+    PARALLEL_REWARD_LAYERS = ()
+    PUSH_TO_HUB = False
+    MERGE_LORA_AFTER_TRAINING = False
 
 SMB_CACHE_DIR: str = "./smb-cache"
 MAZE_CACHE_DIR: str = "./maze-cache"
@@ -336,33 +436,59 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
-processor: Any = AutoProcessor.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+if IS_KAGGLE:
+    # Only needed for multimodal (image/video) inputs on Kaggle; the text
+    # training path never touches the processor.
+    processor: Any = AutoProcessor.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
 HFIntegration.register_infinidopamine_hf()
 
-qwen_cfg = AutoConfig.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+if LOCAL_TEST:
+    # --- Local smoke test: tiny random-init text-only model ----------------
+    # Uses the cached Qwen3.5 tokenizer (offline). Vocab size falls back to
+    # InfiniDopamineTextConfig's default (248320, matching Qwen3.5) so the
+    # tokenizer never emits out-of-range ids. No base-weight transfer, no
+    # vision tower, no network. Kept tiny so the run fits a CPU laptop.
+    infini_cfg = InfiniDopamineTextConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        layer_types=["linear_attention", "full_attention"],
+    )
+    model = InfiniDopamineForCausalLM(infini_cfg)
+    missing: list[str] = []
+    unexpected: list[str] = []
+else:
+    qwen_cfg = AutoConfig.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
 
-infini_cfg = _build_infini_cfg(qwen_cfg)
-model = InfiniDopamineForConditionalGeneration(infini_cfg)
+    infini_cfg = _build_infini_cfg(qwen_cfg)
+    model = InfiniDopamineForConditionalGeneration(infini_cfg)
 
-print("Loading base model weights...")
-base_model = AutoModelForCausalLM.from_pretrained(
-    BASE_MODEL_NAME,
-    torch_dtype=TORCH_DTYPE,
-    device_map="cpu",
-    trust_remote_code=True,
-    low_cpu_mem_usage=True,
-    load_in_4bit=LOAD_IN_4BIT,
-)
+    print("Loading base model weights...")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL_NAME,
+        torch_dtype=TORCH_DTYPE,
+        device_map="cpu",
+        trust_remote_code=True,
+        low_cpu_mem_usage=True,
+        load_in_4bit=LOAD_IN_4BIT,
+    )
 
-# Each rank loads from the shared HF cache. Rank 0 pays the network fetch,
-# the rest hit disk. Avoids pickling ~1.6 GB of weights over the process group.
-missing, unexpected = model.load_qwen35_weights(base_model, strict=False)
+    # Each rank loads from the shared HF cache. Rank 0 pays the network fetch,
+    # the rest hit disk. Avoids pickling ~1.6 GB of weights over the process group.
+    missing, unexpected = model.load_qwen35_weights(base_model, strict=False)
 
-del base_model
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
+    del base_model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 ACCEL_STATE.wait_for_everyone()
 
@@ -461,6 +587,8 @@ print("Model prepared for CPT.")
 
 
 # %% [code.10]
+# Canonical formatter implementations also live in
+# qwendopamine.integrations.cpt_datasets — keep in sync when editing.
 def _flatten_messages(messages: Any) -> str:
     if isinstance(messages, str):
         stripped = messages.strip()
@@ -760,6 +888,34 @@ def format_example(example: dict, dataset_name: str) -> dict:
 
 
 # %% [code.12]
+def build_synthetic_dataset(num_docs: int = 512, words_per_doc: int = 48) -> IterableDataset:
+    """Offline smoke-test dataset: deterministic pseudo-random text rows.
+
+    Only used in local test mode so the run never touches the Hub. The
+    rows flow through the exact same ``map``/``filter``/collator/trainer
+    pipeline as the Kaggle streaming datasets.
+    """
+    _words = [
+        "synthetic",
+        "reward",
+        "memory",
+        "delta",
+        "state",
+        "gate",
+        "token",
+        "world",
+        "model",
+        "smoke",
+    ]
+
+    def _gen() -> Iterator[dict]:
+        for i in range(num_docs):
+            text = " ".join(_words[(i + j) % len(_words)] for j in range(words_per_doc))
+            yield {"text": f"doc {i}: {text}"}
+
+    return IterableDataset.from_generator(_gen, gen_kwargs={})
+
+
 def load_smb_dataset() -> IterableDataset:
     import zipfile
 
@@ -841,6 +997,54 @@ DATASET_SUBSET_MAP = {
     "Salesforce/wikitext": WIKITEXT_MAX_ROWS,
 }
 
+def _capped_rows() -> int:
+    return int(os.environ.get("QWD_CAPPED_ROWS", "5"))
+
+
+def _mock_stream_for_dataset(name: str, n: int | None = None) -> IterableDataset:
+    if n is None:
+        n = _capped_rows()
+    def _gen() -> "Iterator[dict]":
+        for i in range(n):
+            if name == "DylanRiden/smb-worldmodel-data":
+                raw: dict = {"text": f"SMB Frame Action: [Up={i}.0, Down=0.0]"}
+            elif name == "Kalso42/WorldModelForMaze":
+                raw = {"text": f"maze {i}\n###\n# {i} #\n###"}
+            elif name == "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg":
+                raw = {"messages": json.dumps([{"role": "user", "content": f"sokoban {i}"}]), "task": "t", "seed": str(i), "env_id": "e"}
+            elif name == "thuml/bytesized32-world-model-cot":
+                raw = {"prompt": [{"role": "user", "content": f"bytesized {i}"}], "reward_model": "rm", "extra_info": "{}"}
+            elif name == "PatronusAI/world_model_corpus":
+                raw = {"messages": [{"role": "user", "content": f"patronus {i}"}]}
+            elif name == "schema-harness/arc-agi-3-schema-traces":
+                raw = {"task": f"arc{i}", "status": "ok", "win_levels": "1", **{f"level{j}": j for j in range(3)}}
+            elif name == "laion/strategic_game_chess":
+                raw = {"Moves": ["e4", "e5"], "Termination": "*", "Result": "1-0"}
+            elif name == "ryanmarten/OpenThoughts-1k-sample":
+                raw = {"system": "sys", "conversations": [{"from": "human", "value": f"thought {i}"}, {"from": "gpt", "value": "ans"}]}
+            elif name == "Decix/ReBel-ALFWorld-SFT-Trajectories":
+                raw = {"steps": json.dumps([{"idx": 0, "obs": f"obs {i}", "action": "act"}]), "task": f"alf {i}", "task_type": "t"}
+            elif name == "greghavens/kimi-k3-coding-and-debugging-traces":
+                raw = {"messages": [{"role": "user", "content": f"kimi {i}"}]}
+            elif name == "cot-leaderboard/cot-eval-traces-2.0":
+                raw = {"passage": f"p {i}", "question": "q?", "options": ["a", "b"], "answer": "a", "reasoning_trace": "trace"}
+            elif name == "Lichess/standard-chess-games":
+                raw = {"movetext": "1. e4 e5", "White": "A", "Black": "B", "Result": "*", "Opening": "o", "ECO": "C20", "Event": "ev", "Site": "s", "UTCDate": "2024.01.01"}
+            elif name == "lockon/ToolACE":
+                raw = {"system": "sys", "conversations": [{"from": "human", "value": f"tool {i}"}]}
+            elif name == "faunix/Qwen3.8-27B-Distillation-40K":
+                raw = {"messages": [{"role": "user", "content": f"distill {i}"}], "domain": "d", "category": "c", "source": "s"}
+            elif name == "Glint-Research/Fable-5-traces":
+                raw = {"messages": [{"role": "user", "content": f"fable {i}"}], "trace": "tr", "prompt": "p"}
+            elif name == "Salesforce/wikitext":
+                raw = {"text": f"wikitext doc {i} with some language modeling text"}
+            elif name == "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation":
+                raw = {"messages_json": json.dumps([{"role": "user", "content": f"r0b0t {i}"}]), "task_type": "t", "source": "s", "domain": "d"}
+            else:
+                raw = {"text": f"fallback {name} {i}"}
+            yield {"text": format_example(raw, name)["text"]}
+    return IterableDataset.from_generator(_gen, gen_kwargs={})
+
 
 def _apply_subset(ds: Any, dataset_name: str) -> IterableDataset:
     max_rows = DATASET_SUBSET_MAP.get(dataset_name)
@@ -861,10 +1065,17 @@ def build_streaming_dataset(
     dataset_names: list[str],
     seed: int = 42,
 ) -> IterableDataset:
+    _use_capped = LOCAL_TEST and _CAPPED_FULL
+    if _use_capped:
+        print(f"[capped-full] using {_capped_rows()} mocked rows per dataset for {len(dataset_names)} datasets")
     streams = []
 
     for name in dataset_names:
-        if name == "DylanRiden/smb-worldmodel-data":
+        if _use_capped:
+            streams.append(_mock_stream_for_dataset(name))
+        elif name == LOCAL_SYNTHETIC_DATASET:
+            streams.append(build_synthetic_dataset())
+        elif name == "DylanRiden/smb-worldmodel-data":
             streams.append(load_smb_dataset())
         elif name == "Kalso42/WorldModelForMaze":
             streams.append(load_maze_dataset())
@@ -873,10 +1084,11 @@ def build_streaming_dataset(
             ds = load_dataset(name, config=cfg, split=split, streaming=True)
             formatter = DATASET_FORMATTERS.get(name)
             if formatter is not None:
-                ds = ds.map(
-                    lambda ex, name=name: format_example(ex, name),  # pyrefly: ignore[implicit-any-lambda]
-                    batched=False,
-                )
+
+                def _fmt(ex: dict, dataset_name: str = name) -> dict:
+                    return format_example(ex, dataset_name)
+
+                ds = ds.map(_fmt, batched=False)
             ds = _apply_subset(ds, name)
             streams.append(ds)
 
@@ -892,11 +1104,10 @@ def build_streaming_dataset(
 
 
 def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> IterableDataset:
-    # Offset the interleave seed by rank so each rank samples a different slice.
     rank_seed = seed + RANK
     train_dataset = build_streaming_dataset(dataset_names, seed=rank_seed)
     if IS_MAIN:
-        sample = next(iter(train_dataset))
+        sample = next(iter(train_dataset.take(1)))
         print(f"Sample keys  : {list(sample.keys())}")
         print(f"Sample text  : {str(sample.get('text', ''))[:240]}")
         print(f"Sample length: {len(str(sample.get('text', '')))}")
@@ -978,6 +1189,7 @@ print(f"Max seq length    : {MAX_SEQ_LENGTH}")
 def build_reward_values(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
+    model_ref: Any | None = None,
 ) -> torch.Tensor:
     """Compute per-token pseudo-rewards from a detached base-model pass.
 
@@ -985,8 +1197,9 @@ def build_reward_values(
     the reward of token x(t). This is achieved by shifting rewards
     one position forward: reward_values[:, 1:] = rewards.
     """
+    _model = model if model_ref is None else model_ref
     with torch.no_grad():
-        base_outputs = model(
+        base_outputs = _model(
             input_ids=input_ids,
             attention_mask=attention_mask,
         )
@@ -1011,15 +1224,16 @@ def build_reward_values(
 
 
 class CPTSFTTrainer(SFTTrainer):
-    def create_optimizer(self) -> Any:
+    def create_optimizer(self, model: Any = None) -> Any:
         """Create optimizer with lower LR for embedding layers, per Unsloth CPT guidance."""
-        if hasattr(self, "optimizer") and self.optimizer is not None:
+        opt_model = self.model if model is None else model
+        if self.optimizer is not None:
             return self.optimizer
 
         embed_param_names = {"embed_tokens", "lm_head"}
         embed_params: list[torch.nn.Parameter] = []
         other_params: list[torch.nn.Parameter] = []
-        for name, param in self.model.named_parameters():
+        for name, param in opt_model.named_parameters():
             if not param.requires_grad:
                 continue
             if any(k in name for k in embed_param_names):
@@ -1035,9 +1249,11 @@ class CPTSFTTrainer(SFTTrainer):
             },
         ]
 
-        optimizer_cls = self.get_optimizer_cls()
-        result: Any = optimizer_cls(param_groups, **self.optimizer_kwargs)
-        return result
+        optimizer_cls, optimizer_kwargs = self.get_optimizer_cls_and_kwargs(
+            self.args, opt_model
+        )
+        self.optimizer = optimizer_cls(param_groups, **optimizer_kwargs)
+        return self.optimizer
 
     def __init__(self, *args, reward_every_n_steps: int = 1, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -1059,7 +1275,7 @@ class CPTSFTTrainer(SFTTrainer):
             labels = labels.to(model.device)
 
         if self._global_step % self.reward_every_n_steps == 0:
-            reward_values = build_reward_values(input_ids, attention_mask)
+            reward_values = build_reward_values(input_ids, attention_mask, model)
         else:
             reward_values = torch.zeros_like(
                 input_ids, dtype=TORCH_DTYPE, device=model.device
@@ -1130,6 +1346,21 @@ with torch.no_grad():
 if IS_MAIN:
     print("Reward-values forward pass OK.")
     print(f"Logits shape: {_out.logits.shape}")
+    # Reward-path probe: one Taichi delta step, so the reward kernel
+    # compiles and runs even when the local model has no parallel
+    # reward branch attached.
+    _probe_state = torch.zeros(1, 4, 4)
+    _probe_out = delta_core_step(
+        _probe_state,
+        torch.randn(1, 4),
+        torch.randn(1, 4),
+        torch.full((1, 1), 0.5),
+        torch.full((1, 1), 0.5),
+        torch.rand(1, 4),
+        torch.rand(1, 4),
+    )
+    print(f"Taichi delta probe : {tuple(_probe_out.shape)}")
+    del _probe_state, _probe_out
 del _dummy_ids, _dummy_mask, _dummy_rewards, _out
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
@@ -1138,8 +1369,15 @@ if torch.cuda.is_available():
 # ## Training
 
 # %% [code.17]
-_training_optim = "paged_adamw_8bit"
-import bitsandbytes  # noqa: F401
+if LOCAL_TEST:
+    # CPU smoke tests: plain AdamW (bitsandbytes is a CUDA dependency).
+    _training_optim = "adamw_torch"
+else:
+    import bitsandbytes
+
+    _ = bitsandbytes.__version__
+
+    _training_optim = "paged_adamw_8bit"
 
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
@@ -1162,7 +1400,7 @@ training_args = TrainingArguments(
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
     optim=_training_optim,
-    report_to=["tensorboard"] if IS_MAIN else "none",
+    report_to="none" if (LOCAL_TEST or not IS_MAIN) else ["tensorboard"],
     seed=42,
     data_seed=42,
     # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.

@@ -38,7 +38,7 @@ from qwendopamine.models.infinidopamine.decoder_layer import (
     InfiniDopamineAttention,
     InfiniDopamineDecoderLayer,
     InfiniDopamineGatedDeltaNet,
-    InfiniDopamineGatedRewardNet,  # noqa: F401 — re-exported for package API
+    InfiniDopamineGatedRewardNet,
 )
 from qwendopamine.models.infinidopamine.model_outputs import (
     InfiniDopamineModelOutputWithPast,
@@ -415,6 +415,7 @@ __all__ = [
     "InfiniDopamineForSequenceClassification",
     "InfiniDopamineForTokenClassification",
     "InfiniDopamineGatedDeltaNet",
+    "InfiniDopamineGatedRewardNet",
     "InfiniDopamineModel",
     "InfiniDopaminePreTrainedModel",
     "InfiniDopamineTextConfig",

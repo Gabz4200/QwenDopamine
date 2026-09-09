@@ -2,7 +2,7 @@
 
 The local torch recurrent reference and the Taichi kernels are both
 validated against a hand-derived canonical reference implemented in
-:mod:`qwendopamine.models.gdn2.recurrence.canonical_reference`. The
+:mod:`qwendopamine.ops.references.gdn2_reference`. The
 canonical reference is derived directly from the paper (arXiv
 2605.22791, Eq. 10) and the operational form documented in the
 handoff, NOT from either local implementation, so it breaks the
@@ -31,14 +31,14 @@ import torch
 from torch.nn import functional as F
 
 from qwendopamine.kernels.taichi import is_available, recurrent_taichi_gdn2
-from qwendopamine.models.gdn2.recurrence.canonical_reference import (
-    canonical_gdn2_sequence,
-    canonical_gdn2_step,
-    canonical_gdn2_step_with_grad,
-)
 from qwendopamine.models.gdn2.recurrence.recurrent import (
     gated_delta_2_step,
     torch_recurrent_gdn2,
+)
+from qwendopamine.ops.references import (
+    gdn2_reference_sequence,
+    gdn2_reference_step,
+    gdn2_reference_step_with_grad,
 )
 
 # Tolerance for fp32 accumulation noise (no L2 norm, no scale in canonical).
@@ -107,7 +107,7 @@ def test_torch_recurrent_single_step_matches_canonical(B, H, K, V) -> None:
         w_t=w_t,
         a_t=a,
     )
-    y_canon, S_next_canon = canonical_gdn2_step(
+    y_canon, S_next_canon = gdn2_reference_step(
         S=S.clone(),
         q_t=q_t,
         k_t=k_t,
@@ -157,14 +157,14 @@ def test_torch_recurrent_sequence_matches_canonical(B, T, H, K, V) -> None:
     )
     assert S_torch is not None
     q_scaled = q.float() * (K**-0.5)
-    y_canon, S_canon = canonical_gdn2_sequence(
+    y_canon, S_canon = gdn2_reference_sequence(
+        S0=init.clone(),
         q=q_scaled,
         k=k.float(),
         v=v.float(),
-        g=g.float(),
         b=b.float(),
         w=w.float(),
-        initial_state=init.clone(),
+        a=torch.exp(g.float()),
     )
     torch.testing.assert_close(
         y_torch.float(),
@@ -238,17 +238,33 @@ def test_torch_recurrent_per_step_grad_matches_canonical(B, H, K, V) -> None:
     dS_torch, dq_torch, dk_torch, dv_torch, db_torch, dw_torch, da_torch = grads
 
     # ---- canonical hand-derived path ----
-    y_c, S_next_c, dS_c, dq_c, dk_c, dv_c, db_c, dw_c, da_c = (
-        canonical_gdn2_step_with_grad(
-            S=S,
-            q_t=q_t,
-            k_t=k_t,
-            v_t=v_t,
-            b_t=b_t,
-            w_t=w_t,
-            a_t=a_t,
-            dy=dy,
-        )
+    y_c, S_next_c = gdn2_reference_step(
+        S=S,
+        q_t=q_t,
+        k_t=k_t,
+        v_t=v_t,
+        b_t=b_t,
+        w_t=w_t,
+        a_t=a_t,
+    )
+    grads = gdn2_reference_step_with_grad(
+        S=S,
+        q_t=q_t,
+        k_t=k_t,
+        v_t=v_t,
+        b_t=b_t,
+        w_t=w_t,
+        a_t=a_t,
+        dy=dy,
+    )
+    dS_c, dq_c, dk_c, dv_c, db_c, dw_c, da_c = (
+        grads.dS,
+        grads.dq,
+        grads.dk,
+        grads.dv,
+        grads.db,
+        grads.dw,
+        grads.da,
     )
 
     torch.testing.assert_close(y_t, y_c, atol=_F32_ATOL, rtol=_F32_RTOL)
@@ -296,11 +312,12 @@ def test_taichi_recurrent_forward_matches_canonical(B, T, H, K, V) -> None:
         output_final_state=False,
         use_qk_l2norm_in_kernel=False,
     )
-    y_c, _ = canonical_gdn2_sequence(
+    y_c, _ = gdn2_reference_sequence(
+        S0=torch.zeros(B, H, K, V, dtype=q_norm.dtype),
         q=q_norm,
         k=k_norm,
         v=v.float(),
-        g=g.float(),
+        a=torch.exp(g.float()),
         b=b.float(),
         w=w.float(),
         scale_qk=True,
@@ -383,7 +400,7 @@ def test_taichi_recurrent_per_step_backward_matches_canonical(B, H, K, V) -> Non
     # the canonical applies K**-0.5 to q_t internally (matching
     # the Function's convention) and the chain rule rescales
     # dq_t back to dL/dq_t.
-    _, _, dS_c, dq_c, dk_c, dv_c, db_c, dw_c, da_c = canonical_gdn2_step_with_grad(
+    grads = gdn2_reference_step_with_grad(
         S=S.float(),
         q_t=q_norm,
         k_t=k_norm,
@@ -393,6 +410,15 @@ def test_taichi_recurrent_per_step_backward_matches_canonical(B, H, K, V) -> Non
         a_t=a_canon,
         dy=dy.float(),
         scale_qk=True,
+    )
+    dS_c, dq_c, dk_c, dv_c, db_c, dw_c, da_c = (
+        grads.dS,
+        grads.dq,
+        grads.dk,
+        grads.dv,
+        grads.db,
+        grads.dw,
+        grads.da,
     )
 
     torch.testing.assert_close(dS_ta, dS_c, atol=_F32_ATOL, rtol=_F32_RTOL)
@@ -487,11 +513,12 @@ def test_taichi_chunkwise_forward_matches_canonical(B, T, H, K, V) -> None:
     # chunkwise is allowed up to 1.0 absolute difference from
     # canonical for short chunks because of the documented
     # float32 precision gap of the naive WY solve.
-    y_c, _ = canonical_gdn2_sequence(
+    y_c, _ = gdn2_reference_sequence(
+        S0=torch.zeros(B, H, K, V, dtype=q_norm.dtype),
         q=q_norm,
         k=k_norm,
         v=v.float(),
-        g=g.float(),
+        a=torch.exp(g.float()),
         b=b.float(),
         w=w.float(),
         scale_qk=True,

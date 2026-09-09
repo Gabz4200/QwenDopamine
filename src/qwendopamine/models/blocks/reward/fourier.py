@@ -1,8 +1,4 @@
-"""General-purpose reward conditioning building blocks.
-
-Contains scalers, Fourier feature encoders, and FiLM modulation modules
-that are not specific to any particular reward pipeline.
-"""
+"""Learnable Fourier feature encoding for reward conditioning."""
 
 import math
 
@@ -124,12 +120,6 @@ class LearnableFourierFeatures(nn.Module):
 
         Y = self.mlp(F)
         return rearrange(Y, "b l g d -> b l (g d)")
-
-    def _broadcast_cond(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        """Defer to the shared ``broadcast_cond`` helper (review N9)."""
-        from qwendopamine.models.blocks.reward.components import broadcast_cond
-
-        return broadcast_cond(x, cond)
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str

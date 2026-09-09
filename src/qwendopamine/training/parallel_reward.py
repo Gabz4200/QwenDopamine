@@ -81,8 +81,7 @@ def collect_parallel_reward_metrics(
 
     Args:
         model: The full model. The function locates the decoder layer list
-            and inspects each layer through :class:`ParallelRewardPort` or,
-            for backward compatibility, ``reward_branch`` /
+            and inspects each layer through its ``reward_branch`` /
             ``reward_gate_proj`` attributes.
         main_out: Optional tensor — the main mixer output for the current
             step. When provided, the branch-to-main ratio uses this tensor.

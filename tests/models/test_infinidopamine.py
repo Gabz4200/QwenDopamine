@@ -772,8 +772,9 @@ def test_when_infinidopamine_gated_reward_net_has_reward_dropout_then_regularize
         reward_dropout=0.5,
     )
     grn = InfiniDopamineGatedRewardNet(config, layer_idx=0)
-    # Enable non-zero reward modulation weights
-    grn.delta_layer.advantage_gate.advantage_proj.weight.data.fill_(1.0)
+    # Enable non-zero reward modulation weights.
+    grn.delta_layer.advantage_gate.write_proj.weight.data.fill_(1.0)
+    grn.delta_layer.advantage_gate.erase_proj.weight.data.fill_(1.0)
     gamma_proj = getattr(grn.delta_layer.reward_encoder, "gamma_proj", None)
     if isinstance(gamma_proj, nn.Linear):
         gamma_proj.weight.data.fill_(0.5)

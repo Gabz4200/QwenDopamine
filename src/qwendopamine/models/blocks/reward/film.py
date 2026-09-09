@@ -1,8 +1,4 @@
-"""General-purpose reward conditioning building blocks.
-
-Contains scalers, Fourier feature encoders, and FiLM modulation modules
-that are not specific to any particular reward pipeline.
-"""
+"""Token-wise FiLM modulation for reward conditioning."""
 
 import torch
 import torch.nn.functional as F

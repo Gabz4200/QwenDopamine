@@ -25,15 +25,19 @@ from qwendopamine.ops.references.gdn2_reference import (
     gdn2_reference_step_with_grad,
 )
 from qwendopamine.ops.references.reward_reference import (
+    canonical_delta_sequence,
+    canonical_delta_step,
+    canonical_delta_step_with_grad,
     reward_reference_step,
-    reward_reference_step_with_grad,
 )
 
 __all__ = [
+    "canonical_delta_sequence",
+    "canonical_delta_step",
+    "canonical_delta_step_with_grad",
     "gdn2_oracle_step",
     "gdn2_reference_sequence",
     "gdn2_reference_step",
     "gdn2_reference_step_with_grad",
     "reward_reference_step",
-    "reward_reference_step_with_grad",
 ]

@@ -75,7 +75,6 @@ class ReinforcedDeltaLayer(nn.Module):
         reward_dropout: float = 0.0,
         advantage_dropout: float = 0.0,
         memory_rank: int | None = None,
-        advantage_legacy_coupled: bool = False,
         reward_normalize: bool = False,
         reward_normalize_eps: float = 1e-5,
         reward_ema_alpha: float = 0.1,
@@ -105,7 +104,6 @@ class ReinforcedDeltaLayer(nn.Module):
         self.reward_dropout = reward_dropout
         self.advantage_dropout = advantage_dropout
         self.memory_rank = memory_rank
-        self.advantage_legacy_coupled = advantage_legacy_coupled
         self.reward_normalize = reward_normalize
         self.reward_normalize_eps = reward_normalize_eps
         self.reward_ema_alpha = reward_ema_alpha
@@ -129,7 +127,6 @@ class ReinforcedDeltaLayer(nn.Module):
         self.advantage_gate = AdvantageGate(
             k_stats,
             dropout=advantage_dropout,
-            legacy_coupled=advantage_legacy_coupled,
         )
         self.memory_core = DeltaMemoryCore(
             d_model=d_model,
@@ -192,14 +189,7 @@ class ReinforcedDeltaLayer(nn.Module):
         R_stats = self.stats_normalizer(R_stats).squeeze(1)  # (B, k_stats)
 
         V_t, A_t = self.baseline_tracker(x, R_stats, V_prev)  # (B, k_stats) each
-        gate_out = self.advantage_gate(A_t)
-        if self.advantage_legacy_coupled:
-            (omega_t,) = gate_out
-            plasticity_t = omega_t.clamp(max=1.0)
-            write_t = (omega_t >= 1.0).to(omega_t.dtype) * (2.0 - omega_t)
-            erase_t = (omega_t < 1.0).to(omega_t.dtype) * (2.0 - omega_t)
-        else:
-            plasticity_t, write_t, erase_t = gate_out
+        plasticity_t, write_t, erase_t = self.advantage_gate(A_t)
 
         q_t = self.q_proj(x)  # (B, d)
         gamma_t, beta_t = self.reward_encoder(R_stats)  # (B, d) each

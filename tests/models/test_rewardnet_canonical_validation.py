@@ -29,11 +29,11 @@ import torch
 
 from qwendopamine.kernels.taichi import is_available
 from qwendopamine.models.reinforced import ReinforcedDeltaLayer
-from qwendopamine.models.reinforced.canonical_reference import (
+from qwendopamine.models.reinforced.delta import _DefaultQueryFiLM
+from qwendopamine.ops.references.reward_reference import (
     canonical_delta_step,
     canonical_delta_step_with_grad,
 )
-from qwendopamine.models.reinforced.delta import _DefaultQueryFiLM
 
 # Tolerance for fp32 accumulation noise (no L2 norm, no scale in canonical).
 _F32_ATOL = 1e-5

@@ -3,36 +3,201 @@
 
 r"""Readable PyTorch reference for the Reinforced Delta memory core.
 
+Single source of truth for the RewardNet forward and per-token VJP.
 The RewardNet is structurally identical to Gated DeltaNet-2 with the
 following channel-wise gates in place of the GDN-2 ``b``/``w``:
 
 .. math::
 
-    e[d]        &= v[d] - \sum_{kk} S[d, kk] \cdot k[kk]
-    S_{t+1}[d,k] &= (1 - \omega_E[d]) \cdot S_t[d, k]
-                  + \omega_W \cdot e[d] \cdot k[k]
+    S_next[d, k] = (1 - omega_E[d]) * S[d, k] + omega_W * e[d] * k[k]
 
 where ``omega_W`` is a per-batch scalar, ``omega_E`` is a per-`d`
-column-wise scalar, and ``e[d]`` is the delta residual.
+column-wise scalar, and ``e[d] = v[d] - sum_kk S[d, kk] * k[kk]`` is
+the delta residual.
 
-This module exposes the **readable, autograd-friendly** implementation
-of the same math. It is independent of the Taichi kernel and of
-:mod:`qwendopamine.models.reinforced.delta`. The production path
-(``qwendopamine.ops.delta_core_step_out``) must match this
-reference within numerical tolerance.
+This module is **independent** of both the local torch reference
+(:mod:`qwendopamine.models.reinforced.delta`) and the Taichi kernel
+(:mod:`qwendopamine.kernels.taichi.reinforced_kernels`), so it can be
+used to validate them. The production path
+(``qwendopamine.ops.delta_core_step_out``) must match this reference
+within numerical tolerance.
 
-Shapes (per-step):
-
-    S       : ``[B, d, d]``
-    k_t     : ``[B, d]``
-    v_t     : ``[B, d]``
-    omega_W : ``[B]`` or ``[B, 1]``  (per-batch scalar)
-    omega_E : ``[B, d]``            (per-`d` column-wise scalar)
+The references are rank-agnostic (work for 2D ``[B, d, d]`` and
+higher-rank states).
 """
 
 from __future__ import annotations
 
 import torch
+
+
+def _resolve_sublabels(rank: int) -> tuple[str, str, str]:
+    """Build einsum subscripts from the (aligned) rank of the state."""
+    lead = "".join(chr(ord("a") + i) for i in range(rank - 2))  # "" for 2D
+    sub_state = f"{lead}dk"
+    sub_k = f"{lead}k"
+    sub_v = f"{lead}d"
+    return sub_state, sub_k, sub_v
+
+
+def _promote(
+    tensors: dict[str, torch.Tensor],
+    state: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """Promote per-token tensors to the rank of the state for einsum."""
+    rank = state.dim()
+    out: dict[str, torch.Tensor] = {}
+    for k, t in tensors.items():
+        if t.dim() == rank - 1:
+            out[k] = t
+        else:
+            out[k] = t.view(*([1] * (rank - 1 - t.dim())), *t.shape)
+    return out
+
+
+def canonical_delta_step(
+    S: torch.Tensor,
+    k_t: torch.Tensor,
+    v_t: torch.Tensor,
+    omega_W: torch.Tensor,
+    omega_E: torch.Tensor,
+) -> torch.Tensor:
+    r"""Hand-derived single-step RewardNet forward.
+
+    Shapes (per-step):
+
+        S       : ``[B, d, d]``
+        k_t     : ``[B, d]``
+        v_t     : ``[B, d]``
+        omega_W : ``[B]`` or ``[B, 1]``  (per-batch scalar)
+        omega_E : ``[B, d]``            (per-`d` column-wise scalar)
+
+    Returns:
+        S_next : ``[B, d, d]``
+    """
+    rank = S.dim()
+    if rank < 2:
+        raise ValueError("S must be at least 2D")
+    tensors = _promote({"k": k_t, "v": v_t, "omega_W": omega_W, "omega_E": omega_E}, S)
+    k = tensors["k"]
+    v = tensors["v"]
+    ow = tensors["omega_W"]
+    oe = tensors["omega_E"]
+    sub_state, sub_k, sub_v = _resolve_sublabels(rank)
+    # Read: e[d] = v[d] - sum_kk S[d, kk] * k[kk]
+    e = torch.einsum(f"{sub_state},{sub_k}->{sub_v}", S, k).neg().add(v)
+    # Rank-1 outer product + column-wise decay:
+    # S_next[d, k] = (1 - omega_E[d]) * S[d, k] + omega_W * e[d] * k[k]
+    outer = torch.einsum(f"{sub_v},{sub_k}->{sub_state}", e, k)
+    decay = (1.0 - oe).unsqueeze(-1)  # [B, d, 1] broadcast over k
+    scale = ow.unsqueeze(-1)  # [B, 1, 1]
+    return decay * S + scale * outer
+
+
+def canonical_delta_step_with_grad(
+    S: torch.Tensor,
+    k_t: torch.Tensor,
+    v_t: torch.Tensor,
+    omega_W: torch.Tensor,
+    omega_E: torch.Tensor,
+    dS_next: torch.Tensor,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    r"""Hand-derived single-step RewardNet forward + per-token VJP.
+
+    Shapes (per-step):
+
+        S       : ``[B, d, d]``
+        k_t     : ``[B, d]``
+        v_t     : ``[B, d]``
+        omega_W : ``[B]`` or ``[B, 1]``
+        omega_E : ``[B, d]``
+        dS_next : ``[B, d, d]``  (upstream gradient w.r.t. ``S_next``)
+
+    Returns:
+        S_next   : ``[B, d, d]``
+        dS       : ``[B, d, d]``  (gradient w.r.t. ``S``)
+        dk       : ``[B, d]``
+        dv       : ``[B, d]``
+        d_omega_W: ``[B]`` or ``[B, 1]`` (matches the input rank)
+        d_omega_E: ``[B, d]``
+    """
+    rank = S.dim()
+    tensors = _promote(
+        {
+            "k": k_t,
+            "v": v_t,
+            "omega_W": omega_W,
+            "omega_E": omega_E,
+            "dS_next": dS_next,
+        },
+        S,
+    )
+    k = tensors["k"]
+    v = tensors["v"]
+    ow = tensors["omega_W"]
+    oe = tensors["omega_E"]
+    dS = tensors["dS_next"]
+    sub_state, sub_k, sub_v = _resolve_sublabels(rank)
+    e = torch.einsum(f"{sub_state},{sub_k}->{sub_v}", S, k).neg().add(v)
+    outer = torch.einsum(f"{sub_v},{sub_k}->{sub_state}", e, k)
+    decay = (1.0 - oe).unsqueeze(-1)
+    scale = ow.unsqueeze(-1)
+    S_next = decay * S + scale * outer
+
+    r = torch.einsum(f"{sub_state},{sub_k}->{sub_v}", dS, k)  # [B, d]
+    # d_v[d] = omega_W[d] * r[d]
+    dv = ow * r  # [B, d]
+    # d_k_write[k] = sum_dd G[dd, k] * omega_W[dd] * e[dd]
+    d_k_write = torch.einsum(f"{sub_v},{sub_state},{sub_v}->{sub_k}", ow, dS, e)
+    # d_k_read[k] = - sum_dd S[dd, k] * omega_W[dd] * r[dd]
+    d_k_read = -torch.einsum(f"{sub_v},{sub_v},{sub_state}->{sub_k}", ow, r, S)
+    dk = d_k_write + d_k_read  # [B, k]
+    # d_omega_W[d] = r[d] * e[d]
+    d_omega_W_eff = r * e  # [B, d]  per-channel effective gate grad
+    # d_omega_E[d] = - sum_kk G[d, kk] * S[d, kk]
+    d_omega_E_eff = torch.einsum(
+        f"{sub_state},{sub_state}->{sub_v}", dS, S
+    ).neg()  # [B, d]
+    # d_S[d, k] = (1 - omega_E[d]) * G[d, k] - omega_W[d] * k[k] * r[d]
+    d_S = decay * dS - ow.unsqueeze(-1) * torch.einsum(
+        f"{sub_k},{sub_v}->{sub_state}", k, r
+    )
+    return S_next, d_S, dk, dv, d_omega_W_eff, d_omega_E_eff
+
+
+def canonical_delta_sequence(
+    S0: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    omega_W: torch.Tensor,
+    omega_E: torch.Tensor,
+) -> torch.Tensor:
+    r"""Hand-derived sequential RewardNet forward.
+
+    Operates on tensors of shape ``[B, T, d]`` for k/v/omega_W/omega_E.
+    The state is ``[B, d, d]``.
+
+    Returns:
+        S_final : ``[B, d, d]``
+    """
+    T = k.shape[1]
+    S = S0.clone()
+    for t in range(T):
+        S = canonical_delta_step(
+            S=S,
+            k_t=k[:, t, :],
+            v_t=v[:, t, :],
+            omega_W=omega_W[:, t] if omega_W.dim() > 1 else omega_W[:, t : t + 1],
+            omega_E=omega_E[:, t, :],
+        )
+    return S
 
 
 def reward_reference_step(
@@ -42,75 +207,19 @@ def reward_reference_step(
     omega_W: torch.Tensor,
     omega_E: torch.Tensor,
 ) -> torch.Tensor:
-    """Single-step RewardNet forward in the clearest form possible.
+    """Backward-compatible alias for :func:`canonical_delta_step`.
 
-    Returns the next state ``S_next``.
+    Accepts a per-batch scalar ``omega_W`` of shape ``[B]`` or ``[B, 1]``
+    in addition to the canonical per-channel ``[B, d]`` form.
     """
-    # Read the delta residual: e[d] = v[d] - sum_kk S[d, kk] * k[kk]
-    e = v_t - torch.einsum("bdk,bk->bd", S, k_t)
-
-    # Rank-1 outer product with column-wise decay.
-    decay = 1.0 - omega_E  # [B, d]
-    # omega_W is per-batch scalar [B]; promote to [B, 1, 1] for broadcast.
     if omega_W.dim() == 1:
-        omega_W = omega_W.unsqueeze(-1)  # [B, 1]
-    scale = omega_W.unsqueeze(-1)  # [B, 1, 1]
-    outer = torch.einsum("bd,bk->bdk", e, k_t)
-    S_next = decay.unsqueeze(-1) * S + scale * outer
-    return S_next
-
-
-def reward_reference_step_with_grad(
-    S: torch.Tensor,
-    k_t: torch.Tensor,
-    v_t: torch.Tensor,
-    omega_W: torch.Tensor,
-    omega_E: torch.Tensor,
-    dS_next: torch.Tensor,
-) -> dict[str, torch.Tensor]:
-    """Hand-derived per-step VJP for :func:`reward_reference_step`.
-
-    Useful for ``torch.autograd.gradcheck``-style tests.
-    """
-    S_next = reward_reference_step(S, k_t, v_t, omega_W, omega_E)  # noqa: F841
-
-    # Recompute the delta residual to keep this function stateless.
-    e = v_t - torch.einsum("bdk,bk->bd", S, k_t)
-
-    # S_next = decay * S + scale * outer
-    # dS = decay * dS_next
-    dS = (1.0 - omega_E).unsqueeze(-1) * dS_next
-    # de = scale * (dS_next collapsed over k) -- but only the outer term
-    # depends on e. S_next = decay * S + scale * (e ⊗ k) -> de = scale *
-    # dS_next @ k.
-    if omega_W.dim() == 1:
-        omega_W_b = omega_W.unsqueeze(-1)  # [B, 1]
-    else:
-        omega_W_b = omega_W
-    de = torch.einsum("bdk,bk->bd", dS_next, k_t) * omega_W_b
-    dk_from_outer = torch.einsum("bdk,bd->bk", dS_next, e) * omega_W_b
-    # dv: v_t contributes through e.  d(v - S @ k) -> dv = de
-    dv = de
-    # dS gets another -scale * (dS_next^T @ k ⊗ ?) for the S term in
-    # e. e = v - S @ k -> dS -= scale * de ⊗ k.
-    dS = dS - torch.einsum("bd,bk->bdk", de, k_t)
-    # dk: k_t appears in both e and the outer term.
-    dk = dk_from_outer - torch.einsum("bdk,bd->bk", S, de)
-    # Column-wise decay: omega_E is a per-dim scalar, S is [B, d, k]
-    # d_omega_E = -sum_k S[d, k] * dS_next[d, k]
-    d_omega_E = -(S * dS_next).sum(dim=-1)
-    # Per-batch scalar omega_W is per-dim outer, sum d_omega_W per-d:
-    d_omega_W = (de * e).sum(dim=-1, keepdim=True)
-    return {
-        "dS": dS,
-        "dk": dk,
-        "dv": dv,
-        "d_omega_W": d_omega_W,
-        "d_omega_E": d_omega_E,
-    }
+        omega_W = omega_W.unsqueeze(-1)
+    return canonical_delta_step(S, k_t, v_t, omega_W, omega_E)
 
 
 __all__ = [
+    "canonical_delta_sequence",
+    "canonical_delta_step",
+    "canonical_delta_step_with_grad",
     "reward_reference_step",
-    "reward_reference_step_with_grad",
 ]

@@ -780,22 +780,6 @@ def test_when_advantage_gate_default_then_returns_separated_triple() -> None:
         assert (s > 0.0).all() and (s < 1.0).all()
 
 
-def test_when_advantage_gate_legacy_coupled_then_returns_single_omega() -> None:
-    r"""When ``legacy_coupled=True`` the gate returns a single ``omega_t``
-    scalar in (0, 2) to match the previous coupled-gate behaviour.
-    """
-    from qwendopamine.models.reinforced import AdvantageGate
-
-    gate = AdvantageGate(k_stats=4, legacy_coupled=True)
-    A = torch.tensor([[1.0, -1.0, 0.5, -0.5]])
-    out = gate(A)
-    assert isinstance(out, tuple)
-    assert len(out) == 1
-    (omega_t,) = out
-    assert omega_t.shape == (1, 1)
-    assert (omega_t > 0.0).all() and (omega_t < 2.0).all()
-
-
 def test_when_advantage_gate_positive_then_write_high_erase_low() -> None:
     r"""Positive advantage should drive ``write`` up and ``erase`` down,
     so good outcomes strengthen memory. The projections start at zero, so
@@ -867,33 +851,6 @@ def test_when_reinforced_delta_layer_uses_separated_gates_then_no_smoke_error() 
     out, _, _ = grn(inputs, reward_values=rewards, use_cache=True)
     assert out.shape == (1, 4, 16)
     assert torch.isfinite(out).all()
-
-
-def test_when_reinforced_delta_layer_legacy_coupled_then_no_smoke_error() -> None:
-    r"""Backward-compat smoke test: ``advantage_legacy_coupled=True``
-    routes the gate back to the original single-scalar behaviour.
-    """
-    from qwendopamine.models.reinforced import (
-        GatedRewardNet,
-        GatedRewardNetConfig,
-    )
-
-    grn = GatedRewardNet(
-        GatedRewardNetConfig(
-            hidden_size=16,
-            k_stats=6,
-            use_short_conv=True,
-            conv_size=3,
-            advantage_legacy_coupled=True,
-        )
-    )
-    grn.eval()
-    inputs = torch.randn(1, 4, 16)
-    rewards = torch.randn(1, 4, 6)
-    out, _, _ = grn(inputs, reward_values=rewards, use_cache=True)
-    assert out.shape == (1, 4, 16)
-    assert torch.isfinite(out).all()
-    assert grn.advantage_legacy_coupled is True
 
 
 # --- Reward normalization (spec items 6.6 and 8) ---

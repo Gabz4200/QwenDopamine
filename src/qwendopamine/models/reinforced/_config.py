@@ -32,13 +32,6 @@ class GatedRewardNetConfig:
     reward_dropout: float = 0.0
     advantage_dropout: float = 0.0
     hidden_dropout: float = 0.0
-    advantage_legacy_coupled: bool = False
-    r"""When True the advantage gate keeps the original
-    ``omega_t = 2·σ(W A + b)`` single-scalar behaviour. When False (the
-    default) the gate splits into ``(plasticity, write, erase)`` so negative
-    advantage actively erases and large-magnitude advantage increases
-    plasticity. Set True only when loading a checkpoint that depends on the
-    old coupled gate output."""
     memory_rank: int | None = None
     r"""Optional low-rank factorization for the d×d fast-weight state.
 

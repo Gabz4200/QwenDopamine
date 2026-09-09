@@ -1,8 +1,4 @@
-"""Reward-specific extractor and FiLM modules.
-
-These modules depend on the general-purpose building blocks in
-:mod:`~qwendopamine.models.blocks.reward.components`.
-"""
+"""Reward FiLM modulation wrapper around :class:`TokenWiseFiLM`."""
 
 import torch
 from torch import nn
@@ -104,62 +100,10 @@ class RewardFiLM(nn.Module):
                 f"Expected x with shape (D,), (B, D), or (B, L, D), got {tuple(x.shape)}."
             )
 
-        batch_size, seq_len, _ = x.shape
-
-        # Align conditioning tensor to (B, L, hidden_dim) if needed.
-        # Handle 1D cond (hidden_dim,) -> (1, 1, hidden_dim) -> broadcast to (B, L, hidden_dim)
-        if cond.dim() == 1:
-            if cond.size(0) == self.hidden_dim:
-                cond = cond.view(1, 1, self.hidden_dim).expand(batch_size, seq_len, -1)
-            else:
-                raise ValueError(
-                    f"1D cond feature dimension {cond.size(0)} must be {self.hidden_dim}."
-                )
-        # Handle 2D cond (B, hidden_dim) or (L, hidden_dim) or (1, hidden_dim)
-        elif cond.dim() == 2:
-            if cond.size(0) == batch_size and cond.size(1) == self.hidden_dim:
-                # (B, hidden_dim) -> (B, 1, hidden_dim) -> broadcast to (B, L, hidden_dim)
-                cond = cond.unsqueeze(1).expand(-1, seq_len, -1)
-            elif cond.size(0) == seq_len and cond.size(1) == self.hidden_dim:
-                # (L, hidden_dim) -> (1, L, hidden_dim) -> broadcast to (B, L, hidden_dim)
-                cond = cond.unsqueeze(0).expand(batch_size, -1, -1)
-            elif cond.size(0) == 1 and cond.size(1) == self.hidden_dim:
-                # (1, hidden_dim) -> (1, 1, hidden_dim) -> broadcast to (B, L, hidden_dim)
-                cond = cond.unsqueeze(1).expand(batch_size, seq_len, -1)
-            else:
-                raise ValueError(
-                    f"Cannot broadcast cond shape {tuple(cond.shape)} to (B, L, {self.hidden_dim})."
-                )
-        elif cond.dim() == 3:
-            if cond.size(0) not in (1, batch_size):
-                raise ValueError(
-                    f"cond batch dimension {cond.size(0)} must be 1 or {batch_size}."
-                )
-            if cond.size(1) not in (1, seq_len):
-                raise ValueError(
-                    f"cond sequence dimension {cond.size(1)} must be 1 or {seq_len}."
-                )
-            if cond.size(2) != self.hidden_dim:
-                raise ValueError(
-                    f"cond feature dimension {cond.size(2)} must be {self.hidden_dim}."
-                )
-            # Broadcast if needed
-            if cond.size(0) == 1:
-                cond = cond.expand(batch_size, -1, -1)
-            if cond.size(1) == 1:
-                cond = cond.expand(-1, seq_len, -1)
-        else:
-            raise ValueError(f"cond must be 1D, 2D, or 3D tensor, got {cond.dim()}D.")
-
         x_hidden = self.x_proj(x)
 
-        if cond.shape[-1] != x_hidden.shape[-1]:
-            raise RuntimeError(
-                "Conditioning and input feature dimensions must match before TokenWiseFiLM. "
-                f"Got cond.shape[-1]={cond.shape[-1]}, "
-                f"x_hidden.shape[-1]={x_hidden.shape[-1]}."
-            )
-
+        # ``TokenWiseFiLM`` aligns any broadcastable cond rank internally
+        # via ``broadcast_cond``; no pre-expansion is needed here.
         output = self.film(x_hidden, cond)
 
         if orig_x_dim == 1:

@@ -1,8 +1,4 @@
-"""Reward-specific extractor and FiLM modules.
-
-These modules depend on the general-purpose building blocks in
-:mod:`~qwendopamine.models.blocks.reward.components`.
-"""
+"""Reward statistics extractor: normalises and summarises reward tensors."""
 
 import torch
 import torch.nn.functional as F

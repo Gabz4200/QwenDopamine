@@ -1,8 +1,4 @@
-"""Reward-specific extractor and FiLM modules.
-
-These modules depend on the general-purpose building blocks in
-:mod:`~qwendopamine.models.blocks.reward.components`.
-"""
+"""Reward Fourier encoder: learnable conditioning from reward statistics."""
 
 import torch
 from torch import nn

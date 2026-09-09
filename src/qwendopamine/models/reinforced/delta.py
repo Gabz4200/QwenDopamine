@@ -73,7 +73,6 @@ class GatedRewardNet(nn.Module):
         self.advantage_dropout = config.advantage_dropout
         self.hidden_dropout = config.hidden_dropout
         self.memory_rank = config.memory_rank
-        self.advantage_legacy_coupled = config.advantage_legacy_coupled
         self.reward_normalize = config.reward_normalize
         self.reward_normalize_eps = config.reward_normalize_eps
         self.reward_ema_alpha = config.reward_ema_alpha
@@ -96,7 +95,6 @@ class GatedRewardNet(nn.Module):
             reward_dropout=config.reward_dropout,
             advantage_dropout=config.advantage_dropout,
             memory_rank=config.memory_rank,
-            advantage_legacy_coupled=config.advantage_legacy_coupled,
             reward_normalize=config.reward_normalize,
             reward_normalize_eps=config.reward_normalize_eps,
             reward_ema_alpha=config.reward_ema_alpha,

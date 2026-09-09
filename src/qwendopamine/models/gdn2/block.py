@@ -42,6 +42,7 @@ try:
 except ImportError:
     LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
 
+from qwendopamine.models.gdn2._backend_helpers import _GATED_DELTA_NET_BACKENDS
 from qwendopamine.models.gdn2._block_meta import (
     _DEFAULT_ALLOW_NEG_EIGVAL,
     _DEFAULT_BACKEND,
@@ -79,6 +80,86 @@ def _taichi_ops_available() -> bool:
         except (ImportError, RuntimeError):
             _HAS_TAICHI_OPS = False
     return _HAS_TAICHI_OPS
+
+
+def _resolve_init_kwargs(
+    hidden_size_or_config: int | Any = _DEFAULT_HIDDEN_SIZE,
+    hidden_size: int | None = None,
+    num_heads: int | None = None,
+    head_dim: int | None = None,
+    layer_idx: int | None = None,
+    mode: Literal["chunk", "fused_recurrent"] = _DEFAULT_MODE,
+    expand_v: float = _DEFAULT_EXPAND_V,
+    num_v_heads: int | None = None,
+    use_short_conv: bool = _DEFAULT_USE_SHORT_CONV,
+    allow_neg_eigval: bool = _DEFAULT_ALLOW_NEG_EIGVAL,
+    conv_size: int = _DEFAULT_CONV_SIZE,
+    conv_bias: bool = _DEFAULT_CONV_BIAS,
+    norm_eps: float = _DEFAULT_NORM_EPS,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
+    backend: str = _DEFAULT_BACKEND,
+    compile_backend: bool = _DEFAULT_COMPILE_BACKEND,
+    fp32_decay: bool = _DEFAULT_FP32_DECAY,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    r"""Convert the public init signature into the kwargs dict for ``__init__``.
+
+    Accepts a config object as the first positional argument (anything
+    with ``hidden_size`` or ``n_embd``) or explicit field-by-field
+    overrides. Raises ``ValueError`` if ``backend`` is not in the known
+    set.
+    """
+    if hasattr(hidden_size_or_config, "hidden_size") or hasattr(
+        hidden_size_or_config, "n_embd"
+    ):
+        cfg = hidden_size_or_config
+        hidden_size = getattr(cfg, "hidden_size", getattr(cfg, "n_embd", 2048))
+        num_heads = getattr(cfg, "num_heads", getattr(cfg, "n_head", 16))
+        head_dim = getattr(cfg, "head_dim", getattr(cfg, "head_size", 128))
+        num_v_heads = getattr(
+            cfg,
+            "num_v_heads",
+            getattr(cfg, "n_query_groups", num_v_heads or num_heads),
+        )
+        conv_size = getattr(
+            cfg, "conv_size", getattr(cfg, "conv_kernel_size", conv_size)
+        )
+        norm_eps = getattr(cfg, "norm_eps", getattr(cfg, "rms_norm_eps", norm_eps))
+        allow_neg_eigval = getattr(cfg, "allow_neg_eigval", allow_neg_eigval)
+        expand_v = getattr(cfg, "expand_v", expand_v)
+        chunk_size = getattr(
+            cfg, "chunk_size", getattr(cfg, "train_chunk_size", chunk_size)
+        )
+        backend = getattr(cfg, "backend", backend)
+        compile_backend = getattr(cfg, "compile_backend", compile_backend)
+        fp32_decay = getattr(cfg, "fp32_decay", fp32_decay)
+    elif hidden_size is None:
+        hidden_size = int(hidden_size_or_config)
+
+    if backend not in _GATED_DELTA_NET_BACKENDS:
+        raise ValueError(
+            f"Invalid GDN-2 backend '{backend}'. "
+            f"Valid backends: {list(_GATED_DELTA_NET_BACKENDS)}"
+        )
+
+    return {
+        "hidden_size": hidden_size,
+        "num_heads": num_heads,
+        "head_dim": head_dim,
+        "num_v_heads": num_v_heads,
+        "layer_idx": layer_idx,
+        "mode": mode,
+        "expand_v": expand_v,
+        "use_short_conv": use_short_conv,
+        "allow_neg_eigval": allow_neg_eigval,
+        "conv_size": conv_size,
+        "conv_bias": conv_bias,
+        "norm_eps": norm_eps,
+        "chunk_size": chunk_size,
+        "backend": backend,
+        "compile_backend": compile_backend,
+        "fp32_decay": fp32_decay,
+    }
 
 
 class GatedDeltaNet2(nn.Module):
@@ -172,13 +253,11 @@ class GatedDeltaNet2(nn.Module):
             backend (str): Backend identifier. Default: ``"auto"``.
             compile_backend (bool): Use ``torch.compile``. Default: ``False``.
             fp32_decay (bool): Upcast decay to float32. Default: ``True``.
-            **kwargs: Extra fields forwarded to ``build_init_kwargs``.
+            **kwargs: Extra fields forwarded to ``_resolve_init_kwargs``.
         """
         super().__init__()
 
-        from qwendopamine.models.gdn2._init import build_init_kwargs
-
-        resolved = build_init_kwargs(
+        resolved = _resolve_init_kwargs(
             hidden_size_or_config=hidden_size_or_config,
             hidden_size=hidden_size,
             num_heads=num_heads,

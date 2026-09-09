@@ -3,12 +3,30 @@
 
 r"""Readable PyTorch reference for the GDN-2 recurrence.
 
-This is the **public, model-facing** reference implementation. It lives
-beside the public op in :mod:`qwendopamine.ops` (not inside the
+Single source of truth for the GDN-2 forward and per-step backward math.
+It lives beside the public op in :mod:`qwendopamine.ops` (not in the
 ``models/`` tree) so any caller can read the math without pulling in
 the full InfiniDopamine model stack. The Taichi kernel and the
 ``torch_chunk_gdn2`` / ``torch_recurrent_gdn2`` production paths must
 match this reference within numerical tolerance.
+
+The recurrence (paper Eq. 10) is
+
+.. math::
+
+    S_t = (I - k_t (b_t \\odot k_t)^\\top) \\,\\text{Diag}(\\alpha_t) S_{t-1}
+          + k_t (w_t \\odot v_t)^\\top
+
+with the operational form used in the kernels:
+
+.. math::
+
+    \\bar{S}        &= \\text{Diag}(\\alpha_t)\\,S_{t-1}
+    e              &= b_t \\odot k_t
+    v_{\\text{ret}} &= \\bar{S}^\\top e
+    v_{\\text{new}} &= (w_t \\odot v_t) - v_{\\text{ret}}
+    S_t            &= \\bar{S} + k_t\\, v_{\\text{new}}^\\top
+    y_t            &= S_t^\\top q_t
 
 Shapes:
 
@@ -20,31 +38,10 @@ Shapes:
     w_t   : ``[B, H, V]``   (write gate)
     a_t   : ``[B, H, K]``   (decay = exp(g))
 
-    The forward (paper Eq. 10) is
-
-.. math::
-
-    S_{t+1} = (1 - b_t \odot k_t \otimes k_t) \,\text{Diag}(\alpha_t) S_t
-              + k_t (w_t \odot v_t)^\top
-    y_t     = S_{t+1}^\top q_t
-
-implemented here in two readable forms: a single-step version
-(:func:`gdn2_reference_step`) and a sequence version
-(:func:`gdn2_reference_sequence`) that loops over time.
-
-Channel convention for ``b`` and ``w``
----------------------------------------
-The paper treats ``b`` and ``w`` as one gate per **key/value dim** —
-``b`` has shape ``[B, H, K]`` and is applied element-wise on the
-``k_t`` index of the state; ``w`` has shape ``[B, H, V]`` and is
-applied on the ``v_t`` index. We follow that convention here.
-
-**Note on the upstream ``Qwen3NextGatedDeltaNet``**: the upstream
-HF implementation flattens this to one gate per head
-(``b`` is ``[B, H]`` shared across K, ``w`` is ``[B, H, V]`` for the
-value dim). That is a **coarser** parameterisation. The Qwen3.5
-fork inherits the upstream shape; the GDN-2 reference (this module)
-and the GatedDeltaNet2 module use the per-channel paper convention.
+The per-token backward (VJP of the above) is the hand-derived one in
+:func:`gdn2_reference_step_with_grad`. Both the forward and the VJP
+are rank-agnostic: any state rank >= 2 works (4D ``[B, H, K, V]`` is
+the production case).
 """
 
 from __future__ import annotations
@@ -58,28 +55,43 @@ import torch
 class GDN2StepGrads:
     """Per-step gradient tuple for :func:`gdn2_reference_step_with_grad`.
 
-    Using a frozen dataclass instead of a dict catches typo'd key
-    access at type-check time and keeps the field shape contract
-    visible at the call site.
+    Attribute shapes mirror the inputs:
 
-    Attributes:
-        dS: ``[B, H, K, V]`` gradient with respect to the prior state.
-        dk: ``[B, H, K]`` gradient with respect to the key.
-        dv: ``[B, H, V]`` gradient with respect to the value.
-        db: ``[B, H, K]`` gradient with respect to the erase gate.
+        dS : ``[B, H, K, V]``  dL/dS
+        dq : ``[B, H, K]``     dL/dq_t
+        dk : ``[B, H, K]``     dL/dk_t
+        dv : ``[B, H, V]``     dL/dv_t
+        db : ``[B, H, K]``     dL/db_t
+        dw : ``[B, H, V]``     dL/dw_t
+        da : ``[B, H, K]``     dL/da_t
     """
 
     dS: torch.Tensor
+    dq: torch.Tensor
     dk: torch.Tensor
     dv: torch.Tensor
     db: torch.Tensor
+    dw: torch.Tensor
+    da: torch.Tensor
 
 
-def _maybe_l2norm(x: torch.Tensor) -> torch.Tensor:
-    """Apply L2 normalisation per head if requested. No-op here; the
-    reference keeps the math pure (no qk L2). Production paths add it
-    before the call."""
-    return x
+def _promote(
+    tensors: dict[str, torch.Tensor], state: torch.Tensor
+) -> dict[str, torch.Tensor]:
+    """Promote per-token tensors to the rank of the state for einsum."""
+    rank = state.dim()
+    promoted: dict[str, torch.Tensor] = {}
+    for key, t in tensors.items():
+        if t.dim() != rank - 1:
+            t = t.view(*([1] * (rank - 1 - t.dim())), *t.shape)
+        promoted[key] = t
+    return promoted
+
+
+def _subscripts(rank: int) -> tuple[str, str, str]:
+    """Build einsum subscripts from the (aligned) rank of the state."""
+    lead = "".join(chr(ord("a") + i) for i in range(rank - 2))  # "bh" for 4D
+    return f"{lead}kv", f"{lead}k", f"{lead}v"
 
 
 def gdn2_reference_step(
@@ -90,24 +102,43 @@ def gdn2_reference_step(
     b_t: torch.Tensor,
     w_t: torch.Tensor,
     a_t: torch.Tensor,
+    scale_qk: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Single-step GDN-2 forward in the clearest form possible.
+    r"""Single-step GDN-2 forward in the clearest form possible.
 
-    Returns ``(y_t, S_next)``.
+    Args:
+        scale_qk: If ``True``, multiply ``q_t`` by ``K**-0.5`` so the
+            reference matches the API-level scale applied by
+            :func:`~qwendopamine.kernels.taichi.recurrent_taichi_gdn2`
+            and :func:`~qwendopamine.models.gdn2.recurrence.recurrent.torch_recurrent_gdn2`.
+            Default ``False`` keeps the reference as a pure-math form.
+
+    Returns:
+        ``(y_t, S_next)``.
     """
-    # Decay the prior state column-wise. ``a_t`` is ``exp(g)``; we treat
-    # it as a column-wise scalar.
-    S_dec = a_t.unsqueeze(-1) * S  # [B, H, K, V] * [B, H, V] -> broadcast
-
+    if S.dim() < 2:
+        raise ValueError("S must be at least 2D")
+    tensors = _promote({"q": q_t, "k": k_t, "v": v_t, "b": b_t, "w": w_t}, S)
+    q_t, k_t, v_t, b_t, w_t = (
+        tensors["q"],
+        tensors["k"],
+        tensors["v"],
+        tensors["b"],
+        tensors["w"],
+    )
+    if scale_qk:
+        q_t = q_t * (q_t.shape[-1] ** -0.5)
+    # Decay the prior state column-wise. ``a_t`` is ``exp(g)``.
+    S_dec = a_t.unsqueeze(-1) * S
+    sub_state, sub_kv, sub_v = _subscripts(S_dec.dim())
     # Erase: the column-wise term of the rank-1 outer product that
     # subtracts from the prior state.
-    e = b_t * k_t  # [B, H, K]
-    v_ret = torch.einsum("bhkv,bhk->bhv", S_dec, e)  # S_dec^T @ e
-    v_new = (w_t * v_t) - v_ret  # [B, H, V]
-
-    # Rank-1 outer-product update.
-    S_next = S_dec + torch.einsum("bhk,bhv->bhkv", k_t, v_new)
-    y_t = torch.einsum("bhkv,bhk->bhv", S_next, q_t)
+    k_erased = b_t * k_t  # e
+    v_ret = torch.einsum(f"{sub_state},{sub_kv}->{sub_v}", S_dec, k_erased)
+    v_new = w_t * v_t - v_ret
+    # Rank-1 outer-product update + readout.
+    S_next = S_dec + k_t.unsqueeze(-1) * v_new.unsqueeze(-2)
+    y_t = torch.einsum(f"{sub_state},{sub_kv}->{sub_v}", S_next, q_t)
     return y_t, S_next
 
 
@@ -119,6 +150,7 @@ def gdn2_reference_sequence(
     b: torch.Tensor,
     w: torch.Tensor,
     a: torch.Tensor,
+    scale_qk: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Loop over the time axis, applying :func:`gdn2_reference_step`.
 
@@ -129,7 +161,14 @@ def gdn2_reference_sequence(
     T = q.shape[1]
     for t in range(T):
         y_t, S = gdn2_reference_step(
-            S, q[:, t], k[:, t], v[:, t], b[:, t], w[:, t], a[:, t]
+            S,
+            q[:, t],
+            k[:, t],
+            v[:, t],
+            b[:, t],
+            w[:, t],
+            a[:, t],
+            scale_qk=scale_qk,
         )
         y_steps.append(y_t)
     y = torch.stack(y_steps, dim=1)
@@ -144,37 +183,88 @@ def gdn2_reference_step_with_grad(
     b_t: torch.Tensor,
     w_t: torch.Tensor,
     a_t: torch.Tensor,
-    dy_t: torch.Tensor,
+    dy: torch.Tensor,
+    scale_qk: bool = False,
 ) -> GDN2StepGrads:
-    """Hand-derived per-step VJP for :func:`gdn2_reference_step`.
+    r"""Hand-derived single-step GDN-2 forward + per-token VJP.
 
-    Useful for ``torch.autograd.gradcheck``-style tests.
+    The backward path is the hand-derived VJP written out term by
+    term from the operational form above, so it is independent of
+    the autograd graphs of the torch and Taichi paths.
+
+    Args:
+        scale_qk: If ``True``, the same ``K**-0.5`` query scale as
+            :func:`gdn2_reference_step` is applied, and ``dq`` is
+            rescaled back via the chain rule.
 
     Returns:
-        GDN2StepGrads: per-step gradient dataclass.
+        :class:`GDN2StepGrads` holding every per-input gradient.
     """
-    _, S_next = gdn2_reference_step(S, q_t, k_t, v_t, b_t, w_t, a_t)
+    if S.dim() < 2:
+        raise ValueError("S must be at least 2D")
+    tensors = _promote({"q": q_t, "k": k_t, "v": v_t, "b": b_t, "w": w_t}, S)
+    q_t, k_t, v_t, b_t, w_t = (
+        tensors["q"],
+        tensors["k"],
+        tensors["v"],
+        tensors["b"],
+        tensors["w"],
+    )
+    if scale_qk:
+        q_t = q_t * (q_t.shape[-1] ** -0.5)
+    S_dec = a_t.unsqueeze(-1) * S
+    sub_state, sub_kv, sub_v = _subscripts(S_dec.dim())
+    k_erased = b_t * k_t
+    v_ret = torch.einsum(f"{sub_state},{sub_kv}->{sub_v}", S_dec, k_erased)
+    v_new = w_t * v_t - v_ret
+    S_next = S_dec + k_t.unsqueeze(-1) * v_new.unsqueeze(-2)
 
-    # y = S_next^T @ q  -> dS_next += q ⊗ dy  (treat q as column)
-    dS_next = torch.einsum("bhk,bhv->bhkv", q_t, dy_t)
-    # dS_next_t = S_dec + k v_new^T  -> v_new = S_next - S_dec
-    v_new = S_next - (a_t.unsqueeze(-1) * S)
-    # Outer-product backward: d(k ⊗ v_new) = dS_next → d_k = dS_next @ v_new,
-    # d_v_new = dS_next^T @ k.
-    dk = torch.einsum("bhkv,bhv->bhk", dS_next, v_new)
-    dv_new = torch.einsum("bhkv,bhk->bhv", dS_next, k_t)
-    # v_new = w * v - S_dec^T @ e  ->  dv = w * dv_new
-    dv = w_t * dv_new
-    # S_dec = a ⊗ S  -> dS += a ⊗ dS_dec  (read S backward)
-    dS = a_t.unsqueeze(-1) * dS_next
-    # e = b * k  -> de = -S_dec^T^T @ dv_new (only the -S_dec^T @ dv_new
-    # path contributes, since dS_next already accounts for the direct term)
-    de = -torch.einsum("bhkv,bhv->bhk", dS_next, dv_new)
-    db = de * k_t
-    dk = dk + de * b_t
-    # da (column-wise) is not a parameter in this op; if a is the g_t
-    # tensor, callers compute d_g separately.
-    return GDN2StepGrads(dS=dS, dk=dk, dv=dv, db=db)
+    # dL/dS_next[k, d] = dy[d] * q[k]
+    dS_next = q_t.unsqueeze(-1) * dy.unsqueeze(-2)  # [B,H,K,V]
+
+    # From S_next[k, d] = S_dec[k, d] + k[k] * v_new[d]:
+    #   dL/dv_new[d]       = sum_k k[k] * dS_next[k, d]
+    #   dL/dk_via_write[k] = sum_d v_new[d] * dS_next[k, d]
+    dv_new = (k_t.unsqueeze(-1) * dS_next).sum(dim=-2)  # [B,H,V]
+    dk_write = (v_new.unsqueeze(-2) * dS_next).sum(dim=-1)  # [B,H,K]
+
+    # From v_new[d] = w[d] * v[d] - v_ret[d]:
+    #   dL/dw[d]      = dv_new[d] * v[d]
+    #   dL/dv[d]      = dv_new[d] * w[d]
+    #   dL/dv_ret[d]  = -dv_new[d]
+    dw = dv_new * v_t
+    dv = dv_new * w_t
+    dv_ret = -dv_new
+
+    # From v_ret[d] = sum_k S_dec[k, d] * (b[k] * k[k]):
+    #   dL/dw_erased[k]    = sum_d S_dec[k, d] * dv_ret[d]
+    #   dL/dS_dec[k, d]   += w_erased[k] * dv_ret[d]
+    #   dL/db[k]           = w_erased_grad[k] * k[k]
+    #   dL/dk[k]           = w_erased_grad[k] * b[k]
+    dS_dec_erased = k_erased.unsqueeze(-1) * dv_ret.unsqueeze(-2)  # [B,H,K,V]
+    dS_dec_from_erase = dS_next + dS_dec_erased
+    dw_erased = (S_dec * dv_ret.unsqueeze(-2)).sum(dim=-1)  # [B,H,K]
+    db = dw_erased * k_t
+    dk_erase = dw_erased * b_t
+
+    # From S_dec[k, d] = a[k] * S[k, d]:
+    #   dL/dS[k, d]  = a[k] * dL/dS_dec[k, d]
+    #   dL/da[k]     = sum_d S[k, d] * dL/dS_dec[k, d]
+    dS = a_t.unsqueeze(-1) * dS_dec_from_erase
+    da = (S * dS_dec_from_erase).sum(dim=-1)  # [B,H,K]
+
+    # From y[d] = sum_k S_next[k, d] * q[k]:
+    #   dL/dq[k] = sum_d S_next[k, d] * dy[d]
+    dq = (S_next * dy.unsqueeze(-2)).sum(dim=-1)  # [B,H,K]
+    if scale_qk:
+        # dq above is dL/dq_internal where q_internal = q_t * K**-0.5.
+        # Chain rule on the input scaling restores dL/dq_t.
+        dq = dq * (q_t.shape[-1] ** -0.5)
+
+    # Combine k gradients (rank-1 write + erase path).
+    dk = dk_write + dk_erase
+
+    return GDN2StepGrads(dS=dS, dq=dq, dk=dk, dv=dv, db=db, dw=dw, da=da)
 
 
 __all__ = [

@@ -56,9 +56,11 @@ import sys
 
 from packaging.version import Version
 
-IS_KAGGLE: bool = os.environ.get("KAGGLE_KERNEL_RUN") == "true"
+IS_KAGGLE: bool = os.environ.get(
+    "KAGGLE_KERNEL_RUN", "true" if os.path.isdir("/kaggle/working") else "false"
+) == "true"
 LOCAL_TEST: bool = not IS_KAGGLE
-_CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE") == "1"
+_CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"
 _MIN_TRANSFORMERS = Version("5.15.0")
 
 if LOCAL_TEST:
@@ -91,6 +93,7 @@ if LOCAL_TEST:
             "refresh the environment with `uv sync --extra cpt`."
         )
     print("[setup] Local runtime detected; skipping pip (Kaggle-only).")
+    _HF_TOKEN_FROM_SECRETS: str | None = None
 else:
     print("[setup] Kaggle runtime detected — installing all dependencies via pip...")
     _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
@@ -140,8 +143,14 @@ else:
             "pip install failed. On Kaggle, ensure Internet is ON and "
             "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
-    print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
+    # Fetch HF token from Kaggle secrets (never from env directly).
+    from kaggle_secrets import UserSecretsClient
 
+    _kaggle_user_secrets = UserSecretsClient()
+    _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret(
+        "HF_TOKEN"
+    )
+    print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
 
 # %% [code.2]
 import datetime
@@ -167,6 +176,7 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments,
 )
+from transformers.trainer_callback import TrainerCallback
 from trl import SFTTrainer
 
 from qwendopamine.integrations.huggingface import HFIntegration
@@ -345,6 +355,16 @@ REWARD_SCALE: float = 1.0
 REWARD_EVERY_N_STEPS: int = 1
 EMBEDDING_LR_SCALE: float = 0.2
 
+# Reward-reference refresh: the per-token pseudo-reward pass is computed from a
+# detached snapshot (a frozen copy of the current best model), not from the
+# live training model. Refresh that snapshot at epoch boundaries and/or every
+# ``REWARD_REFRESH_EVERY_N_STEPS`` optimizer steps (whichever fires first)
+# after ``REWARD_REFRESH_WARMUP_STEPS`` steps have completed. When both are
+# zero the snapshot is never refreshed (frozen at init).
+REWARD_REFRESH_EVERY_N_EPOCHS: int = 1
+REWARD_REFRESH_EVERY_N_STEPS: int = 0
+REWARD_REFRESH_WARMUP_STEPS: int = 100
+
 PER_DEVICE_TRAIN_BATCH_SIZE: int = 1
 GRADIENT_ACCUMULATION_STEPS: int = 16
 LEARNING_RATE: float = 1e-4
@@ -372,8 +392,8 @@ OUTPUT_DIR: str = os.path.join(
 )
 RESUME_FROM_CHECKPOINT: str | None = None
 HUB_MODEL_ID: str = os.environ.get("HUB_MODEL_ID", "")
-PUSH_TO_HUB: bool = bool(HUB_MODEL_ID)
-HF_TOKEN: str | None = os.environ.get("HF_TOKEN")
+PUSH_TO_HUB: bool = False
+HF_TOKEN: str | None = _HF_TOKEN_FROM_SECRETS or os.environ.get("HF_TOKEN", None)
 MERGE_LORA_AFTER_TRAINING: bool = True
 
 if LOCAL_TEST:
@@ -389,6 +409,11 @@ if LOCAL_TEST:
     PARALLEL_REWARD_LAYERS = ()
     PUSH_TO_HUB = False
     MERGE_LORA_AFTER_TRAINING = False
+    # Keep the reward ref frozen for the 2-step smoke test so the snapshot
+    # logic is exercised but no extra checkpoint scan happens.
+    REWARD_REFRESH_EVERY_N_EPOCHS = 0
+    REWARD_REFRESH_EVERY_N_STEPS = 0
+    REWARD_REFRESH_WARMUP_STEPS = 0
 
 SMB_CACHE_DIR: str = "./smb-cache"
 MAZE_CACHE_DIR: str = "./maze-cache"
@@ -1278,8 +1303,26 @@ print(f"Max seq length    : {MAX_SEQ_LENGTH}")
 # %% [markdown.14]
 # ## Reward Conditioning, Parallel Branch & Custom Trainer
 #
-# Computes per-token pseudo-rewards via detached base-model loss and passes
+# Computes per-token pseudo-rewards via a detached base-model pass and passes
 # `reward_values` into `InfiniDopamine` during training.
+#
+# The reward pass uses a **frozen snapshot** of the model (the "reward reference"
+# model), not the live training model. This decouples the reward signal from
+# gradient noise and prevents the reward from chasing the model's own updates
+# within the same step.
+#
+# ## Reward Reference Refresh
+#
+# The snapshot is periodically refreshed from the current best checkpoint so the
+# reward signal tracks the evolving model instead of staying frozen at init.
+# Refresh happens at the earlier of:
+#   * Epoch boundary, when `REWARD_REFRESH_EVERY_N_EPOCHS > 0`
+#   * Every `REWARD_REFRESH_EVERY_N_STEPS` optimizer steps, when
+#     `REWARD_REFRESH_EVERY_N_STEPS > 0`
+#
+# Both are gated by `REWARD_REFRESH_WARMUP_STEPS` — no refresh occurs until that
+# many optimizer steps have completed. When both refresh intervals are `0` the
+# snapshot stays frozen at initialisation (useful for short smoke tests).
 #
 # When `USE_PARALLEL_REWARD=True` (or `PARALLEL_REWARD_LAYERS` is non-empty)
 # the trainer also exposes diagnostics for the parallel `GatedRewardNet`
@@ -1290,6 +1333,28 @@ print(f"Max seq length    : {MAX_SEQ_LENGTH}")
 
 
 # %% [code.15]
+import re
+
+_CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
+
+
+def find_latest_checkpoint(run_dir: str | os.PathLike[str]) -> Path | None:
+    """Return the highest-numbered ``checkpoint-*`` dir under *run_dir*, or None."""
+    root = Path(run_dir)
+    if not root.is_dir():
+        return None
+    best: Path | None = None
+    best_step = -1
+    for entry in root.iterdir():
+        m = _CHECKPOINT_RE.match(entry.name)
+        if m and entry.is_dir():
+            step = int(m.group(1))
+            if step > best_step:
+                best_step = step
+                best = entry
+    return best
+
+
 def build_reward_values(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
@@ -1358,10 +1423,90 @@ class CPTSFTTrainer(SFTTrainer):
         self.optimizer = optimizer_cls(param_groups, **optimizer_kwargs)
         return self.optimizer
 
-    def __init__(self, *args, reward_every_n_steps: int = 1, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        reward_every_n_steps: int = 1,
+        reward_ref_refresh_epochs: int = 0,
+        reward_ref_refresh_steps: int = 0,
+        reward_ref_warmup_steps: int = 0,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.reward_every_n_steps = max(1, int(reward_every_n_steps))
         self._global_step = 0
+        # Frozen snapshot used for pseudo-reward computation. When refresh
+        # is enabled (>0 on either axis) it is periodically updated from the
+        # current best checkpoint; otherwise it stays fixed at init.
+        self._reward_ref_refresh_epochs = max(0, int(reward_ref_refresh_epochs))
+        self._reward_ref_refresh_steps = max(0, int(reward_ref_refresh_steps))
+        self._reward_ref_warmup_steps = max(0, int(reward_ref_warmup_steps))
+        self._last_epoch_refreshed: float | None = None
+        self._last_step_refreshed: int = 0
+        self._reward_ref_model: Any = None
+        self._init_reward_ref()
+        # Register the reward-refresher callback so the snapshot updates
+        # at epoch/step boundaries when refresh is enabled.
+        self.add_callback(_rewards_refresher)
+        _rewards_refresher.bind(self)
+
+    def _init_reward_ref(self) -> None:
+        """Create the frozen reward-reference model as a deep copy of the
+        base (PEFT-stripped) model so the reward pass is detached from live
+        gradients and adapter updates."""
+        import copy
+
+        if USE_LORA and hasattr(self.model, "base_model"):
+            base_for_ref = self.model.base_model
+        else:
+            base_for_ref = self.model
+        self._reward_ref_model = copy.deepcopy(base_for_ref)
+        self._reward_ref_model.requires_grad_(False)
+        self._reward_ref_model.eval()
+        if IS_MAIN:
+            print("Reward ref model initialised (frozen snapshot).")
+
+    def refresh_reward_ref(self) -> bool:
+        """Re-snapshot the reward reference model from the latest checkpoint.
+
+        Merges pending LoRA adapter state (so the ref is a full-weight copy)
+        then loads the most recent ``checkpoint-*`` directory under
+        ``OUTPUT_DIR``. Returns ``True`` when a refresh was performed.
+        No-op when refresh is disabled or no checkpoint is found.
+        """
+        if self._reward_ref_refresh_epochs == 0 and self._reward_ref_refresh_steps == 0:
+            return False
+
+        latest = find_latest_checkpoint(self.args.output_dir)
+        if latest is None:
+            if IS_MAIN:
+                print("refresh_reward_ref: no checkpoint found yet, skipping.")
+            return False
+
+        if IS_MAIN:
+            print(f"refresh_reward_ref: loading from {latest}")
+
+        peft_model = self.model
+        # Merge LoRA into the base model so we can copy a single weight set.
+        if USE_LORA and hasattr(peft_model, "merge_and_unload"):
+            merged = peft_model.merge_and_unload()
+            merged_state = merged.state_dict()
+        else:
+            merged_state = peft_model.state_dict()
+
+        # Load into the ref model (strict=False so new init weights for
+        # exclusive layers are preserved when they have no checkpoint entry).
+        missing, unexpected = self._reward_ref_model.load_state_dict(
+            merged_state, strict=False
+        )
+        self._reward_ref_model.eval()
+        self._reward_ref_model.requires_grad_(False)
+        if IS_MAIN:
+            print(
+                f"refresh_reward_ref done (missing={len(missing)} "
+                f"unexpected={len(unexpected)})."
+            )
+        return True
 
     def compute_loss(
         self,
@@ -1378,7 +1523,8 @@ class CPTSFTTrainer(SFTTrainer):
             labels = labels.to(model.device)
 
         if self._global_step % self.reward_every_n_steps == 0:
-            reward_values = build_reward_values(input_ids, attention_mask, model)
+            ref = self._reward_ref_model if self._reward_ref_model is not None else model
+            reward_values = build_reward_values(input_ids, attention_mask, ref)
         else:
             reward_values = torch.zeros_like(
                 input_ids, dtype=TORCH_DTYPE, device=model.device
@@ -1434,6 +1580,92 @@ class CPTSFTTrainer(SFTTrainer):
         warning = maybe_warn_branch_ratio(metrics, PARALLEL_REWARD_WARN_RATIO)
         if warning is not None:
             print(f"[parallel_reward WARN] {warning}")
+
+
+class RewardRefresher(TrainerCallback):
+    """Callback that refreshes the trainer's reward-reference snapshot.
+
+    Fires at epoch boundaries (if ``reward_ref_refresh_epochs > 0``) and/or
+    every ``reward_ref_refresh_steps`` optimizer steps (if
+    ``reward_ref_refresh_steps > 0``), skipping until
+    ``reward_ref_warmup_steps`` have elapsed. Delegates to
+    :meth:`CPTSFTTrainer.refresh_reward_ref`.
+
+    The trainer back-reference is set by :class:`CPTSFTTrainer` after
+    construction (the HF ``CallbackHandler`` does not inject it automatically).
+    """
+
+    def __init__(self) -> None:
+        self._trainer: CPTSFTTrainer | None = None
+
+    def bind(self, trainer: CPTSFTTrainer) -> None:
+        self._trainer = trainer
+
+    def _should_refresh_step(self, state: Any) -> bool:
+        t = self._trainer
+        if t is None:
+            return False
+        step_interval = t._reward_ref_refresh_steps
+        if step_interval <= 0:
+            return False
+        if state.global_step < t._reward_ref_warmup_steps:
+            return False
+        if state.global_step == t._last_step_refreshed:
+            return False
+        return state.global_step % step_interval == 0
+
+    def _should_refresh_epoch(self, state: Any) -> bool:
+        t = self._trainer
+        if t is None:
+            return False
+        if t._reward_ref_refresh_epochs <= 0:
+            return False
+        if t._last_epoch_refreshed is None:
+            # First epoch end always refreshes if step-based refresh is off.
+            return state.epoch is not None
+        return state.epoch is not None and state.epoch > t._last_epoch_refreshed
+
+    def _do_refresh(self, state: Any) -> None:
+        t = self._trainer
+        if t is None:
+            return
+        before_epoch = t._last_epoch_refreshed
+        before_step = t._last_step_refreshed
+        refreshed = t.refresh_reward_ref()
+        if not refreshed:
+            return
+        if before_epoch is None:
+            t._last_epoch_refreshed = state.epoch
+        t._last_step_refreshed = state.global_step
+        if IS_MAIN:
+            print(
+                f"RewardRefresher: snapshot updated at "
+                f"epoch={state.epoch} step={state.global_step} "
+                f"(prev epoch={before_epoch} prev step={before_step})."
+            )
+
+    def on_epoch_end(
+        self,
+        args: Any,
+        state: Any,
+        control: Any,
+        **kwargs: Any,
+    ) -> None:
+        if self._should_refresh_epoch(state):
+            self._do_refresh(state)
+
+    def on_step_end(
+        self,
+        args: Any,
+        state: Any,
+        control: Any,
+        **kwargs: Any,
+    ) -> None:
+        if self._should_refresh_step(state):
+            self._do_refresh(state)
+
+
+_rewards_refresher = RewardRefresher()
 
 
 _smoke_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1518,6 +1750,9 @@ trainer = CPTSFTTrainer(
     processing_class=tokenizer,
     data_collator=data_collator,
     reward_every_n_steps=REWARD_EVERY_N_STEPS,
+    reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
+    reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
+    reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
 )
 
 trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)

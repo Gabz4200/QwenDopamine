@@ -305,13 +305,21 @@ LORA_R: int = 16
 LORA_ALPHA: int = 32
 LORA_DROPOUT: float = 0.05
 USE_RSLORA: bool = True
-# Targets resolved to nn.Linear in InfiniDopamineDecoderLayer; non-Linear
-# reward-branch modules are trained directly instead.
+# Targets resolved to nn.Linear; shared Qwen3.5 Linear weights are trained
+# via QLoRA, exclusive InfiniDopamine Linear weights that can be LoRA are
+# also via LoRA, and exclusive non-Linear weights are trained directly.
+#
+# Shared Linear (Qwen): q/k/v/o_proj, gate/up/down_proj — must be QLoRA.
+# Exclusive Linear (GDN2 + reward): in_proj_*, out_proj, reward_* — LoRA.
+# Exclusive non-Linear (conv, norm, A_log, dt_bias, betas, raw_alpha, gamma)
+# are full-finetuned after PEFT via re_unfreeze_exclusive().
 #
 # trl>=0.24 defaults loss_type to chunked_nll, which is incompatible with a
 # PEFT-wrapped lm_head. lm_head stays out of LoRA targets; it still trains
 # via the EMBEDDING_LR_SCALE param group in CPTSFTTrainer.create_optimizer.
+# embed_tokens is nn.Embedding, also trained directly.
 LORA_TARGET_MODULES = [
+    # GDN2 exclusive
     "in_proj_qkv",
     "in_proj_z",
     "in_proj_a",
@@ -319,6 +327,16 @@ LORA_TARGET_MODULES = [
     "in_proj_w",
     "in_proj_gate",
     "out_proj",
+    # Shared attention
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    # Shared mlp
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+    # Reward branch (exclusive, Linear)
     "reward_gate_proj",
     "reward_branch.output_proj",
     "reward_branch.delta_layer.q_proj",
@@ -330,6 +348,8 @@ LORA_TARGET_MODULES = [
     "reward_branch.delta_layer.advantage_gate.plasticity_proj",
     "reward_branch.delta_layer.advantage_gate.write_proj",
     "reward_branch.delta_layer.advantage_gate.erase_proj",
+    "reward_branch.delta_layer.reward_encoder.gamma_proj",
+    "reward_branch.delta_layer.reward_encoder.beta_proj",
 ]
 
 # Parallel GatedRewardNet branch configuration.
@@ -530,21 +550,53 @@ def ensure_all_trainable(model: Any, missing_keys: list[str]) -> None:
 
 
 def re_unfreeze_reward_branch(model: Any) -> int:
-    """Re-unfreeze non-Linear reward_branch params PEFT froze."""
+    """Re-unfreeze direct-trained params PEFT froze.
+
+    Handles exclusive InfiniDopamine non-Linear weights that cannot be LoRA:
+    GDN2 (dt_bias, A_log, betas, conv1d, norm), reward branch (scaler,
+    gamma, conv1d, norms), plus embed_tokens and lm_head which are trained
+    via the embedding LR param group. Shared Linear weights stay frozen as
+    base_layer with LoRA adapters (QLoRA) per the partition above.
+    """
     unfrozen = 0
     for name, param in model.named_parameters():
-        if (
-            not param.requires_grad
-            and "reward_branch" in name
-            and "lora" not in name.lower()
-        ):
+        if param.requires_grad or "lora" in name.lower():
+            continue
+        should_unfreeze = (
+            "embed_tokens" in name
+            or "lm_head" in name
+            or ("linear_attn" in name and any(k in name for k in ("dt_bias", "A_log", "betas", "conv1d", ".norm")))
+            or (
+                "reward_branch" in name
+                and any(
+                    k in name
+                    for k in (
+                        "scaler.raw_alpha",
+                        "stats_normalizer.gamma",
+                        "k_conv1d",
+                        "v_conv1d",
+                        "reward_branch_norm",
+                        "q_norm",
+                        "k_norm",
+                    )
+                )
+            )
+            or ("reward_branch" in name and ".norm" in name)
+            or any(k in name for k in ("input_layernorm", "post_attention_layernorm", "q_norm", "k_norm", "model.norm"))
+        )
+        if should_unfreeze:
             param.requires_grad = True
             unfrozen += 1
     if unfrozen:
         print(
-            f"Re-unfrozen {unfrozen} direct-trained reward_branch parameters after PEFT wrap."
+            f"Re-unfrozen {unfrozen} direct-trained exclusive parameters after PEFT wrap."
         )
     return unfrozen
+
+
+def re_unfreeze_exclusive(model: Any) -> int:
+    """Alias for re_unfreeze_reward_branch covering all exclusive non-Linear."""
+    return re_unfreeze_reward_branch(model)
 
 
 lora_cfg = None
@@ -1434,20 +1486,36 @@ if IS_MAIN:
     print(f"\nCheckpoints saved to: {OUTPUT_DIR}")
 
     _FINAL_DIR = os.path.join(OUTPUT_DIR, "merged-final")
+    _PEFT_DIR = os.path.join(OUTPUT_DIR, "peft-final")
+    _merged_for_hub = None
     if MERGE_LORA_AFTER_TRAINING:
         print(f"Merging LoRA and saving full model to: {_FINAL_DIR}")
         merged = model.merge_and_unload()  # pyrefly: ignore[not-callable]
         merged.save_pretrained(_FINAL_DIR)  # pyrefly: ignore[not-callable]
         tokenizer.save_pretrained(_FINAL_DIR)
-        print(f"Full model saved to {_FINAL_DIR}")
+        print(f"Full model saved to {_FINAL_DIR} — all LoRA + directly trained weights fused, no loss")
+        _merged_for_hub = merged
     else:
-        print("MERGE_LORA_AFTER_TRAINING=False; skipping merge.")
-        model.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
-        tokenizer.save_pretrained(os.path.join(OUTPUT_DIR, "peft-final"))
+        print("MERGE_LORA_AFTER_TRAINING=False; saving adapter and also full fused model for verification")
+        model.save_pretrained(_PEFT_DIR)
+        tokenizer.save_pretrained(_PEFT_DIR)
+        print(f"Adapter saved to {_PEFT_DIR}")
+        try:
+            merged_local = model.merge_and_unload()  # pyrefly: ignore[not-callable]
+            _merged_local_dir = os.path.join(OUTPUT_DIR, "merged-final-local")
+            merged_local.save_pretrained(_merged_local_dir)  # pyrefly: ignore[not-callable]
+            tokenizer.save_pretrained(_merged_local_dir)
+            print(f"Full fused model also saved to {_merged_local_dir} for no-loss verification")
+            _merged_for_hub = merged_local
+        except (OSError, RuntimeError) as exc:
+            print(f"Warning: could not save merged full model locally: {exc}")
+            _merged_for_hub = None
 
     if PUSH_TO_HUB:
         print(f"Pushing to Hub: {HUB_MODEL_ID}")
-        model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
+        # Push the fused full model when available, otherwise the PEFT adapter
+        target_model = _merged_for_hub if _merged_for_hub is not None else model
+        target_model.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)  # pyrefly: ignore[not-callable]
         tokenizer.push_to_hub(HUB_MODEL_ID, token=HF_TOKEN)
         print("Push complete.")
 

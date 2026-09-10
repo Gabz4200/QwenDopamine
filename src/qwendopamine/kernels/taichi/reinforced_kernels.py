@@ -36,8 +36,6 @@ import torch
 
 from qwendopamine.kernels.taichi import runtime as _rt
 
-ti = _rt.ti  # type: ignore[assignment]
-
 
 def _make_effective_gate(omega: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
     """Contract the public ``[B, 1]`` or ``[B]`` omega with the
@@ -449,17 +447,16 @@ def launch_chunk_bwd_per_bh(
     ``[T+1, B, D, D]`` for ``states``. All output gradient buffers
     must be pre-zeroed.
     """
-    import numpy as np
-
     T = ks.shape[1]
     B = ks.shape[0]
     D = ks.shape[-1]
+    device = ks.device
     # Per-step scratch buffers (one at a time, reused across T iterations).
-    dk_t = np.zeros((B, D), dtype=np.float32)
-    dv_t = np.zeros((B, D), dtype=np.float32)
-    d_omega_w_eff_t = np.zeros((B, D), dtype=np.float32)
-    d_omega_e_eff_t = np.zeros((B, D), dtype=np.float32)
-    scratch = np.zeros((B, D, D), dtype=np.float32)
+    dk_t = torch.zeros((B, D), dtype=torch.float32, device=device)
+    dv_t = torch.zeros((B, D), dtype=torch.float32, device=device)
+    d_omega_w_eff_t = torch.zeros((B, D), dtype=torch.float32, device=device)
+    d_omega_e_eff_t = torch.zeros((B, D), dtype=torch.float32, device=device)
+    scratch = torch.zeros((B, D, D), dtype=torch.float32, device=device)
     for t in reversed(range(T)):
         state_in = states[t]
         launch_delta_core_step_bwd(
@@ -478,14 +475,10 @@ def launch_chunk_bwd_per_bh(
         # Roll the dstate buffer.
         dstate_next, scratch = scratch, dstate_next
         # Accumulate per-step grads into the [B, T, D] outputs.
-        dks[:, t, :].copy_(torch.from_numpy(dk_t).to(dks.device))
-        dvs[:, t, :].copy_(torch.from_numpy(dv_t).to(dvs.device))
-        d_omega_w_effs[:, t, :].copy_(
-            torch.from_numpy(d_omega_w_eff_t).to(d_omega_w_effs.device),
-        )
-        d_omega_e_effs[:, t, :].copy_(
-            torch.from_numpy(d_omega_e_eff_t).to(d_omega_e_effs.device),
-        )
+        dks[:, t, :].copy_(dk_t)
+        dvs[:, t, :].copy_(dv_t)
+        d_omega_w_effs[:, t, :].copy_(d_omega_w_eff_t)
+        d_omega_e_effs[:, t, :].copy_(d_omega_e_eff_t)
     dstate_in.copy_(dstate_next)
 
 

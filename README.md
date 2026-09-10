@@ -80,7 +80,10 @@ uv run src/qwendopamine/cli/train.py experiment=ablation_unfreezing
 ### Loading a Model
 
 ```python
-from qwendopamine.models.infinidopamine import InfiniDopamineConfig, InfiniDopamineForCausalLM
+from qwendopamine.models.infinidopamine import (
+    InfiniDopamineConfig,
+    InfiniDopamineForCausalLM,
+)
 
 config = InfiniDopamineConfig.from_pretrained("Qwen/Qwen3.5-0.8B")
 model = InfiniDopamineForCausalLM.from_pretrained("Qwen/Qwen3.5-0.8B", config=config)
@@ -104,6 +107,7 @@ Want to add your own? Register it with the timm-style API:
 
 ```python
 from qwendopamine.models.model_factory import register_model_family
+
 register_model_family("my_model", my_builder_fn)
 ```
 

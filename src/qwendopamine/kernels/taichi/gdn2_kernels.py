@@ -41,8 +41,6 @@ import torch
 
 from qwendopamine.kernels.taichi import runtime as _rt
 
-ti: Any = _rt.ti  # type: ignore[assignment]
-
 
 def _build_recurrent_step_kernel() -> Any:
     rt = _rt.require()
@@ -296,21 +294,20 @@ def launch_chunk_bwd_per_bh(
     ``[T+1, B, H, K, V]``). All output gradient buffers must be
     pre-zeroed.
     """
-    import numpy as np
-
     T = qs.shape[2]
     B = qs.shape[0]
     H = qs.shape[1]
     K = qs.shape[-1]
     V = vs.shape[-1]
+    device = qs.device
     # Per-step scratch buffers (one at a time, reused across T iterations).
-    dq_t = np.zeros((B, H, K), dtype=np.float32)
-    dk_t = np.zeros((B, H, K), dtype=np.float32)
-    dv_t = np.zeros((B, H, V), dtype=np.float32)
-    da_t = np.zeros((B, H, K), dtype=np.float32)
-    db_t = np.zeros((B, H, K), dtype=np.float32)
-    dw_t = np.zeros((B, H, V), dtype=np.float32)
-    scratch = np.zeros((B, H, K, V), dtype=np.float32)
+    dq_t = torch.zeros((B, H, K), dtype=torch.float32, device=device)
+    dk_t = torch.zeros((B, H, K), dtype=torch.float32, device=device)
+    dv_t = torch.zeros((B, H, V), dtype=torch.float32, device=device)
+    da_t = torch.zeros((B, H, K), dtype=torch.float32, device=device)
+    db_t = torch.zeros((B, H, K), dtype=torch.float32, device=device)
+    dw_t = torch.zeros((B, H, V), dtype=torch.float32, device=device)
+    scratch = torch.zeros((B, H, K, V), dtype=torch.float32, device=device)
     for t in reversed(range(T)):
         state_in = states[t]
         state_out = states[t + 1]
@@ -336,12 +333,12 @@ def launch_chunk_bwd_per_bh(
         # Roll the dstate buffer.
         dstate_next, scratch = scratch, dstate_next
         # Accumulate per-step grads into the [B,H,T,...] outputs.
-        dq[:, :, t, :].copy_(torch.from_numpy(dq_t).to(dq.device))
-        dk[:, :, t, :].copy_(torch.from_numpy(dk_t).to(dk.device))
-        dv[:, :, t, :].copy_(torch.from_numpy(dv_t).to(dv.device))
-        da[:, :, t, :].copy_(torch.from_numpy(da_t).to(da.device))
-        db[:, :, t, :].copy_(torch.from_numpy(db_t).to(db.device))
-        dw[:, :, t, :].copy_(torch.from_numpy(dw_t).to(dw.device))
+        dq[:, :, t, :].copy_(dq_t)
+        dk[:, :, t, :].copy_(dk_t)
+        dv[:, :, t, :].copy_(dv_t)
+        da[:, :, t, :].copy_(da_t)
+        db[:, :, t, :].copy_(db_t)
+        dw[:, :, t, :].copy_(dw_t)
     # dstate_in holds the gradient w.r.t. the chunk's initial state.
     dstate_in.copy_(dstate_next)
 
@@ -354,22 +351,22 @@ def launch_chunk_bwd_per_bh(
 _SCRATCH: Any = {}
 
 
-def _get_chunk_scratch(C: int, K: int, V: int) -> dict[str, Any]:
-    key = (C, K, V)
+def _get_chunk_scratch(
+    C: int, K: int, V: int, device: torch.device | str
+) -> dict[str, Any]:
+    key = (C, K, V, str(device))
     if key in _SCRATCH:
         result: dict[str, Any] = _SCRATCH[key]
         return result
-    import numpy as np
-
     _rt.require()  # ensure taichi is initialised
     _SCRATCH[key] = {
-        "gamma": np.zeros((C, K), dtype=np.float32),
-        "kbar": np.zeros((C, K), dtype=np.float32),
-        "ebar": np.zeros((C, K), dtype=np.float32),
-        "z": np.zeros((C, V), dtype=np.float32),
-        "Y": np.zeros((C, K), dtype=np.float32),
-        "U": np.zeros((C, V), dtype=np.float32),
-        "delta": np.zeros((C, V), dtype=np.float32),
+        "gamma": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "kbar": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "ebar": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "z": torch.zeros((C, V), dtype=torch.float32, device=device),
+        "Y": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "U": torch.zeros((C, V), dtype=torch.float32, device=device),
+        "delta": torch.zeros((C, V), dtype=torch.float32, device=device),
     }
     result2: dict[str, Any] = _SCRATCH[key]
     return result2
@@ -401,25 +398,25 @@ def _build_chunk_fwd_per_bh_kernel() -> Any:
         V: rt.i32,
         C: rt.template(),  # pyrefly: ignore[invalid-annotation]
     ):
-        for i in ti.static(range(C)):
+        for i in rt.static(range(C)):
             g_acc = rt.f32(0.0)
             for j in range(K):
                 g_acc = g_acc + g_log[i, j]
                 gamma[i, j] = rt.exp(g_acc)
 
-        for i in ti.static(range(C)):
+        for i in rt.static(range(C)):
             for j in range(K):
                 kbar[i, j] = k[i, j] / rt.max(gamma[i, j], 1e-12)
                 ebar[i, j] = gamma[i, j] * (b[i, j] * k[i, j])
             for j in range(V):
                 z[i, j] = w[i, j] * v[i, j]
 
-        for i in ti.static(range(C)):
+        for i in rt.static(range(C)):
             for j in range(K):
                 Y[i, j] = ebar[i, j]
             for j in range(V):
                 U[i, j] = z[i, j]
-            for prev in ti.static(range(i)):
+            for prev in rt.static(range(i)):
                 t_y = rt.f32(0.0)
                 for j in range(K):
                     t_y = t_y + ebar[i, j] * kbar[prev, j]
@@ -428,7 +425,7 @@ def _build_chunk_fwd_per_bh_kernel() -> Any:
                 for j in range(V):
                     U[i, j] = U[i, j] - t_y * U[prev, j]
 
-        for i in ti.static(range(C)):
+        for i in rt.static(range(C)):
             for j in range(V):
                 acc = rt.f32(0.0)
                 for kk in range(K):
@@ -438,16 +435,16 @@ def _build_chunk_fwd_per_bh_kernel() -> Any:
         for kk in range(K):
             for j in range(V):
                 acc = rt.f32(0.0)
-                for i in ti.static(range(C)):
+                for i in rt.static(range(C)):
                     acc = acc + kbar[i, kk] * delta[i, j]
                 state_out[kk, j] = gamma[C - 1, kk] * (state_in[kk, j] + acc)
 
-        for i in ti.static(range(C)):
+        for i in rt.static(range(C)):
             for j in range(V):
                 acc = rt.f32(0.0)
                 for kk in range(K):
                     acc = acc + (gamma[i, kk] * q[i, kk]) * state_in[kk, j]
-                for s in ti.static(range(i + 1)):
+                for s in rt.static(range(i + 1)):
                     a_qk = rt.f32(0.0)
                     for kk in range(K):
                         a_qk = a_qk + (gamma[i, kk] * q[i, kk]) * kbar[s, kk]

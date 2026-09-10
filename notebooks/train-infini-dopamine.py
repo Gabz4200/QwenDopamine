@@ -56,9 +56,12 @@ import sys
 
 from packaging.version import Version
 
-IS_KAGGLE: bool = os.environ.get(
-    "KAGGLE_KERNEL_RUN", "true" if os.path.isdir("/kaggle/working") else "false"
-) == "true"
+IS_KAGGLE: bool = (
+    os.environ.get(
+        "KAGGLE_KERNEL_RUN", "true" if os.path.isdir("/kaggle/working") else "false"
+    )
+    == "true"
+)
 LOCAL_TEST: bool = not IS_KAGGLE
 _CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"
 _MIN_TRANSFORMERS = Version("5.15.0")
@@ -144,12 +147,10 @@ else:
             "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
     # Fetch HF token from Kaggle secrets (never from env directly).
-    from kaggle_secrets import UserSecretsClient
+    from kaggle_secrets import UserSecretsClient  # type: ignore[import-not-found]
 
     _kaggle_user_secrets = UserSecretsClient()
-    _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret(
-        "HF_TOKEN"
-    )
+    _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret("HF_TOKEN")
     print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
 
 # %% [code.2]
@@ -1504,7 +1505,7 @@ class CPTSFTTrainer(SFTTrainer):
         peft_model = self.model
         # Merge LoRA into the base model so we can copy a single weight set.
         if USE_LORA and hasattr(peft_model, "merge_and_unload"):
-            merged = peft_model.merge_and_unload()
+            merged = peft_model.merge_and_unload()  # type: ignore[not-callable]
             merged_state = merged.state_dict()
         else:
             merged_state = peft_model.state_dict()
@@ -1538,7 +1539,9 @@ class CPTSFTTrainer(SFTTrainer):
             labels = labels.to(model.device)
 
         if self._global_step % self.reward_every_n_steps == 0:
-            ref = self._reward_ref_model if self._reward_ref_model is not None else model
+            ref = (
+                self._reward_ref_model if self._reward_ref_model is not None else model
+            )
             reward_values = build_reward_values(input_ids, attention_mask, ref)
         else:
             reward_values = torch.zeros_like(
@@ -1627,7 +1630,7 @@ class RewardRefresher(TrainerCallback):
             return False
         if state.global_step == t._last_step_refreshed:
             return False
-        return state.global_step % step_interval == 0
+        return bool(state.global_step % step_interval == 0)
 
     def _should_refresh_epoch(self, state: Any) -> bool:
         t = self._trainer
@@ -1637,8 +1640,8 @@ class RewardRefresher(TrainerCallback):
             return False
         if t._last_epoch_refreshed is None:
             # First epoch end always refreshes if step-based refresh is off.
-            return state.epoch is not None
-        return state.epoch is not None and state.epoch > t._last_epoch_refreshed
+            return bool(state.epoch is not None)
+        return bool(state.epoch is not None and state.epoch > t._last_epoch_refreshed)
 
     def _do_refresh(self, state: Any) -> None:
         t = self._trainer

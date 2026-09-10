@@ -215,7 +215,7 @@ def _chunk_taichi_gdn2_inner(
             b_c = b[:, :, start:end].contiguous()
             w_c = w[:, :, start:end].contiguous()
             new_state = torch.empty_like(state)
-            scratch = _kernels._get_chunk_scratch(C, K, V)
+            scratch = _kernels._get_chunk_scratch(C, K, V, q.device)
             for bh in range(B * H):
                 bbh = bh // H
                 hbh = bh % H

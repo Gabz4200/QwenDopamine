@@ -109,7 +109,7 @@ class ReinforcedDeltaLayer(nn.Module):
         self.reward_ema_alpha = reward_ema_alpha
         # Taichi autograd path is only valid for the dense state
         # representation; low-rank stays on the pure-PyTorch path.
-        self.use_taichi = bool(use_taichi) and memory_rank is None
+        self.use_taichi = use_taichi and memory_rank is None
 
         # Statistics extraction and normalization (local import to avoid circular)
         from qwendopamine.models.blocks.reward import (
@@ -294,7 +294,7 @@ class ReinforcedDeltaLayer(nn.Module):
             from qwendopamine.ops.reward import is_taichi_available
         except ImportError:
             return False
-        return bool(is_taichi_available())
+        return is_taichi_available()
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str

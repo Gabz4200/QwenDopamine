@@ -1449,14 +1449,14 @@ class CPTSFTTrainer(SFTTrainer):
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.reward_every_n_steps = max(1, int(reward_every_n_steps))
+        self.reward_every_n_steps = max(1, reward_every_n_steps)
         self._global_step = 0
         # Frozen snapshot used for pseudo-reward computation. When refresh
         # is enabled (>0 on either axis) it is periodically updated from the
         # current best checkpoint; otherwise it stays fixed at init.
-        self._reward_ref_refresh_epochs = max(0, int(reward_ref_refresh_epochs))
-        self._reward_ref_refresh_steps = max(0, int(reward_ref_refresh_steps))
-        self._reward_ref_warmup_steps = max(0, int(reward_ref_warmup_steps))
+        self._reward_ref_refresh_epochs = max(0, reward_ref_refresh_epochs)
+        self._reward_ref_refresh_steps = max(0, reward_ref_refresh_steps)
+        self._reward_ref_warmup_steps = max(0, reward_ref_warmup_steps)
         self._last_epoch_refreshed: float | None = None
         self._last_step_refreshed: int = 0
         self._reward_ref_model: Any = None

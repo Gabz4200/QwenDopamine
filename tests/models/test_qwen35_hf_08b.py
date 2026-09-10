@@ -66,6 +66,6 @@ def test_when_qwen35_08b_prompted_then_predicts_correct_next_token() -> None:
 
     next_token_id = outputs.logits[0, -1].argmax(-1).item()
     decoded = tokenizer.decode([next_token_id])
-    predicted_text = (decoded if isinstance(decoded, str) else str(decoded[0])).strip()
+    predicted_text = (decoded if isinstance(decoded, str) else decoded[0]).strip()
 
     assert "Paris" in predicted_text

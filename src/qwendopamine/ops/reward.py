@@ -61,7 +61,7 @@ def is_taichi_available() -> bool:
     r"""Return whether Taichi Reinforced Delta backend is available."""
     from qwendopamine.kernels.taichi import is_available as _is_available
 
-    return bool(_is_available())
+    return _is_available()
 
 
 def _reward_torch_step(

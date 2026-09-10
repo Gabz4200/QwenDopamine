@@ -66,7 +66,7 @@ def _taichi_ok() -> bool:
     try:
         from qwendopamine.ops.gdn2 import is_taichi_available
 
-        return bool(is_taichi_available())
+        return is_taichi_available()
     except (ImportError, RuntimeError):
         return False
 

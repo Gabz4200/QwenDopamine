@@ -76,7 +76,7 @@ def _taichi_ops_available() -> bool:
             global _taichi_chunk_gdn2, _taichi_recurrent_gdn2
             _taichi_chunk_gdn2 = chunk_taichi_gdn2
             _taichi_recurrent_gdn2 = recurrent_taichi_gdn2
-            _HAS_TAICHI_OPS = bool(is_taichi_available())
+            _HAS_TAICHI_OPS = is_taichi_available()
         except (ImportError, RuntimeError):
             _HAS_TAICHI_OPS = False
     return _HAS_TAICHI_OPS

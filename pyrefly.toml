@@ -3,9 +3,9 @@
 # A single global config; no per-folder sub-configs. Tuned for a
 # PyTorch research project: lean on inferred types where they
 # help, surface real type errors and missing annotations on the
-# public surface, but do not fight third-party model classes
-# (HF, Qwen3Next), Taichi's dynamic runtime types, or HF kwargs
-# splat noise.
+# public surface, but suppress the systematic noise that third-party
+# model classes (HF/Qwen3Next/Qwen3VL), dynamic-runtime patterns, and
+# PEFT/HF Trainer APIs produce on every checkout.
 
 project-includes = [
     "src/**/*.py",
@@ -14,44 +14,10 @@ project-includes = [
 ]
 
 [errors]
-# ---- ON: real type errors and annotation hygiene ----
-# Lean on inferred types for argument types: pyrefly should use
-# signatures to propagate types through calls.
-implicit-any = true
-implicit-any-attribute = true
-implicit-any-lambda = true
-implicit-any-empty-container = true
-implicit-any-type-argument = false
 
-# Surface missing annotations on the public surface.
-unannotated-return = true
-unannotated-parameter = true
-unannotated-attribute = true
-unannotated-protocol-member = true
+# ---- ON: real type errors in our own code ----
 
-# Real type errors: argument / assignment / return shape.
-# ``bad-argument-type`` and ``bad-assignment`` fire almost entirely
-# in the third-party model code we do not maintain (qwen35,
-# infinidopamine, shared). They are most actionable when they fire
-# in our own code; silence them here and catch them via review.
-bad-argument-type = false
-bad-argument-count = true
-bad-keyword-argument = true
-bad-assignment = false
-bad-return = true
-bad-specialization = true
-bad-unpacking = true
-bad-raise = true
-bad-context-manager = true
-bad-index = true
-bad-instantiation = true
-bad-match = true
-bad-typed-dict = true
-bad-typed-dict-key = true
-bad-singledispatch-register = true
-potential-bad-keyword-argument = true
-
-# Name / scope / control-flow errors.
+# Name / scope / control-flow errors — always actionable.
 unbound-name = true
 not-callable = true
 not-iterable = true
@@ -67,7 +33,7 @@ non-exhaustive-match = true
 unreachable = true
 unreachable-match-case = true
 
-# Class / inheritance issues.
+# Class / inheritance: structural problems in our code.
 invalid-inheritance = true
 invalid-abstract-method = true
 implicit-abstract-class = true
@@ -82,11 +48,8 @@ bad-dunder-all = true
 abstract-method-call = true
 not-async = true
 
-# Import / module issues.
-# ``missing-attribute`` fires almost entirely in the third-party
-# model code we do not maintain (qwen35, infinidopamine, shared).
+# Import / module issues that matter.
 missing-import = true
-missing-attribute = false
 missing-argument = true
 missing-source = true
 missing-source-for-stubs = true
@@ -127,7 +90,6 @@ incompatible-comparison = true
 internal-error = true
 misplaced-ignore = true
 unnecessary-comparison = true
-unnecessary-type-conversion = true
 string-as-iterable = true
 open-unpacking = true
 no-any-return = true
@@ -138,26 +100,77 @@ unresolvable-dunder-all = true
 useless-overload-body = true
 variance-mismatch = true
 
-# ---- OFF: noise that is not a real bug for this project ----
-# Inference noise from third-party model classes and Taichi's
-# dynamic runtime types: we cannot annotate them, so we let
-# pyrefly pass on the type-resolution errors.
-unknown-argument-type = false
-unknown-attribute-type = false
+# Return / argument shape checking.
+bad-return = true
+bad-specialization = true
+bad-unpacking = true
+bad-raise = true
+bad-context-manager = true
+bad-index = true
+bad-instantiation = true
+bad-match = true
+bad-typed-dict = true
+bad-typed-dict-key = true
+bad-singledispatch-register = true
+potential-bad-keyword-argument = true
+bad-argument-count = true
+bad-keyword-argument = true
+
+# Annotation hygiene on the public surface.
+implicit-any = true
+implicit-any-attribute = true
+implicit-any-lambda = true
+implicit-any-empty-container = true
+implicit-any-type-argument = false
+unannotated-return = true
+unannotated-parameter = true
+unannotated-attribute = true
+unannotated-protocol-member = true
+
+# ---- OFF: systematic third-party / dynamic-runtime noise ----
+# These fire hundreds of times across the HF/Qwen3 family model classes,
+# PEFT integration, and Taichi's dynamic runtime. They are not actionable
+# bugs in our code — annotating upstream classes is out of scope. Suppressing
+# them globally keeps the signal-to-noise ratio high.
+
+# HF/Qwen3 override mismatches: our subclasses narrow or widen signatures
+# in ways that are correct at runtime but rejected by strict override checks.
+bad-override = false
+bad-override-mutable-attribute = false
+bad-override-param-name = false
+bad-param-name-override = false
+
+# HF config attributes use sentinel objects (AttributeError(), custom
+# _UnsupportedAttr) and ClassVar/instance-variable mismatches that are
+# intentional duck-typing, not bugs.
+bad-assignment = false
+
+# PEFT / HF Trainer / HF config type narrowing: our code intentionally
+# passes our config subclasses to HF parent constructors, accesses
+# dynamically-added PEFT attributes, and works with Optional model refs.
+bad-argument-type = false
+
+# PEFT model attributes accessed after hasattr() checks: pyrefly can't
+# see the narrowing, so every dynamic attribute access on PEFT/HF objects
+# would fire here.
+missing-attribute = false
+
+# Taichi's @custom_op decorator and dynamic runtime patterns.
 unknown-name = false
+unknown-attribute-type = false
 unknown-variable-type = false
+
+# Inference noise from third-party model classes: unresolvable attribute
+# and argument types from HF model internals.
+unknown-argument-type = false
 unknown-column = false
 implicit-any-parameter = false
 implicit-bool = false
 implicitly-defined-attribute = false
 implicit-import = false
-# Override semantics: HF / Qwen3 family overrides parent attrs in
-# subtle ways; the override errors are not actionable bugs.
-bad-override = false
-bad-override-mutable-attribute = false
-bad-override-param-name = false
-bad-param-name-override = false
-# Style / inference noise
+
+# Re-export patterns: our package __init__ files intentionally re-export
+# from submodules.
 implicit-reexport = false
 explicit-any = false
 deprecated = false
@@ -170,14 +183,23 @@ redundant-cast = false
 redundant-condition = false
 missing-override-decorator = false
 protocol-implicitly-defined-attribute = false
-# PyTorch efficiency lints: not our concern
+
+# PyTorch efficiency lints: not our concern.
 pytorch-efficiency-lint-cuda-call = false
 pytorch-efficiency-lint-item-call = false
 pytorch-efficiency-lint-print-tensor = false
 pytorch-efficiency-lint-redundant-to-call = false
-# Test-coverage metrics: not part of type-checking
+
+# Redundant type-conversion calls: `bool(x)`, `int(x)`, `float(x)`, `str(x)`
+# where the argument is already the right type. These are common PyTorch
+# idioms (e.g. `int(tensor.shape[-1])` for kernel launches, `float(value)`
+# in metrics accumulators) that are harmless style, not type errors.
+unnecessary-type-conversion = false
+
+# Test-coverage metrics: not part of type-checking.
 coverage-missing = false
 coverage-partial = false
-# Assert / reveal diagnostics
+
+# Assert / reveal diagnostics.
 assert-type = false
 reveal-type = false

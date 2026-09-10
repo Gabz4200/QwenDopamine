@@ -33,7 +33,7 @@ class MetricTracker:
         Returns:
             None
         """
-        val = float(value)
+        val = value
         self.values[name] = val
         if name not in self.history:
             self.history[name] = []

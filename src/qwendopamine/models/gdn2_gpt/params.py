@@ -36,7 +36,7 @@ def compute_model_params(cfg: GDN2GPTConfig) -> dict[str, int]:
 
     k_dim = cfg.n_head * cfg.head_size
     hv = int(cfg.head_size * cfg.expand_v)
-    v_dim = int(cfg.n_head * hv)
+    v_dim = cfg.n_head * hv
     gdn2_projs = (cfg.n_embd * k_dim * 2) + (cfg.n_embd * v_dim)
     conv_params = (
         (k_dim * cfg.conv_size * 2) + (v_dim * cfg.conv_size)

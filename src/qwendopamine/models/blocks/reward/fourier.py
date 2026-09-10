@@ -46,8 +46,8 @@ class LearnableFourierFeatures(nn.Module):
         self.include_input = include_input
         self.dropout = dropout
 
-        self.enc_f_dim = int(f_dim // 2)
-        self.dg_dim = int(d_dim // g_dim)
+        self.enc_f_dim = f_dim // 2
+        self.dg_dim = d_dim // g_dim
         self.div_term = math.sqrt(f_dim)
 
         # MLP input dimension depends on whether the raw input is included.

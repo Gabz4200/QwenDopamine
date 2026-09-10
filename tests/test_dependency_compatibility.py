@@ -52,15 +52,19 @@ def test_scipy_minimum_version() -> None:
 
 
 def test_notebook_pin_matches_project_pin() -> None:
-    """The notebook install cell must pin the same NumPy floor as pyproject.toml.
+    """The notebook install cell must stay consistent with pyproject pins.
 
-    This guards against the two sources of truth drifting apart.
+    After the uv migration the notebook no longer lists numpy/scipy
+    explicitly — it installs ``qwendopamine[cuda,cpt,hf] @ git+...`` and relies
+    on pyproject's pins. This test guards against drift: if the notebook
+    does list explicit pins they must match, otherwise it must use the
+    package spec and pyproject must have the floor pins.
     """
     notebook_path = "notebooks/train-infini-dopamine.py"
     with open(notebook_path) as fh:
         source = fh.read()
 
-    # Extract numpy requirement from the notebook pip install list.
+    has_package_spec = "qwendopamine[cuda,cpt,hf]" in source or "qwendopamine[" in source
     numpy_line: str | None = None
     scipy_line: str | None = None
     for line in source.splitlines():
@@ -70,16 +74,26 @@ def test_notebook_pin_matches_project_pin() -> None:
         elif stripped.startswith("scipy"):
             scipy_line = stripped
 
-    assert numpy_line is not None, "numpy requirement missing from notebook"
-    assert scipy_line is not None, "scipy requirement missing from notebook"
-    assert ">=2.0.0" in numpy_line, (
-        f"Notebook numpy pin must be >=2.0.0 for NumPy 2.x compatibility, "
-        f"found: {numpy_line!r}"
-    )
-    assert ">=1.13.0" in scipy_line, (
-        f"Notebook scipy pin must be >=1.13.0 for NumPy 2.x compatibility, "
-        f"found: {scipy_line!r}"
-    )
+    if numpy_line is not None:
+        assert ">=2.0.0" in numpy_line, (
+            f"Notebook numpy pin must be >=2.0.0 for NumPy 2.x compatibility, "
+            f"found: {numpy_line!r}"
+        )
+    if scipy_line is not None:
+        assert ">=1.13.0" in scipy_line, (
+            f"Notebook scipy pin must be >=1.13.0 for NumPy 2.x compatibility, "
+            f"found: {scipy_line!r}"
+        )
+    if numpy_line is None and scipy_line is None:
+        assert has_package_spec, "notebook must install via qwendopamine package spec"
+        # Verify pyproject still has the floor pins
+        import tomllib
+
+        with open("pyproject.toml", "rb") as pf:
+            data = tomllib.load(pf)
+        deps = " ".join(data.get("project", {}).get("dependencies", []))
+        assert "numpy>=2.0.0" in deps
+        assert "scipy>=1.13.0" in deps
 
 
 def test_pyproject_toml_has_compatible_pins() -> None:

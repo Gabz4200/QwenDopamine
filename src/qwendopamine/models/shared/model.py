@@ -169,7 +169,7 @@ class FamilyModel(Qwen3VLModel):
                 pixel_values, image_grid_thw=image_grid_thw, return_dict=True, **kwargs
             )
             image_embeds = image_outputs.pooler_output
-            image_embeds = torch.cat(image_embeds, dim=0).to(
+            image_embeds = torch.cat(image_embeds, dim=0).to(  # pyrefly: ignore[no-matching-overload]
                 inputs_embeds.device, inputs_embeds.dtype
             )
             image_mask = self.get_placeholder_mask(
@@ -185,7 +185,7 @@ class FamilyModel(Qwen3VLModel):
                 **kwargs,
             )
             video_embeds = video_outputs.pooler_output
-            video_embeds = torch.cat(video_embeds, dim=0).to(
+            video_embeds = torch.cat(video_embeds, dim=0).to(  # pyrefly: ignore[no-matching-overload]
                 inputs_embeds.device, inputs_embeds.dtype
             )
             video_mask = self.get_placeholder_mask(

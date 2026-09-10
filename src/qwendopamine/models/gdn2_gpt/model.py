@@ -177,7 +177,7 @@ class GDN2GPT(nn.Module):
         if not use_kv_cache:
             if self.config.gradient_checkpointing and self.training:
                 for block in self.h:
-                    x, _ = torch.utils.checkpoint.checkpoint(
+                    x, _ = torch.utils.checkpoint.checkpoint(  # pyrefly: ignore[not-iterable]
                         block,
                         x,
                         rope,

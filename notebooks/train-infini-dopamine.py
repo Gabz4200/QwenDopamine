@@ -40,8 +40,9 @@
 #     tiny random-init text-only model (fits a CPU/RAM-limited laptop), and
 #     ``QWD_LOCAL_STEPS`` training steps (default 2).
 #
-# On Kaggle this cell installs the package from git with uv, letting uv
-# resolve and upgrade all transitive dependencies (no pinned version list).
+# On Kaggle this cell installs the package from git with uv, refreshing only
+# the package itself; transitive deps are constrained by pyproject upper bounds
+# (numpy<2.5, scipy<1.18) to avoid `ImportError: _center` via sklearn/scipy.
 # Locally it only verifies that the uv-provisioned environment is complete
 # and never touches pip/uv (that would fight ``uv sync``).
 import importlib.metadata
@@ -105,9 +106,8 @@ else:
         "pip",
         "install",
         "--system",
-        "--upgrade",
-        "--refresh",
-        "--reinstall",
+        "--refresh-package",
+        "qwendopamine",
         _PACKAGE_SPEC,
     ]
     try:
@@ -120,7 +120,6 @@ else:
                 "-m",
                 "pip",
                 "install",
-                "--upgrade",
                 "--break-system-packages",
                 _PACKAGE_SPEC,
             ],

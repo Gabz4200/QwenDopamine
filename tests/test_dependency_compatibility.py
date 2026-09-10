@@ -64,7 +64,9 @@ def test_notebook_pin_matches_project_pin() -> None:
     with open(notebook_path) as fh:
         source = fh.read()
 
-    has_package_spec = "qwendopamine[cuda,cpt,hf]" in source or "qwendopamine[" in source
+    has_package_spec = (
+        "qwendopamine[cuda,cpt,hf]" in source or "qwendopamine[" in source
+    )
     numpy_line: str | None = None
     scipy_line: str | None = None
     for line in source.splitlines():

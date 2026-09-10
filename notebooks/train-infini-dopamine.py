@@ -54,16 +54,17 @@ import sys
 from packaging.version import Version
 
 IS_KAGGLE: bool = (
-    os.environ.get(
-        "KAGGLE_KERNEL_RUN", "true" if os.path.isdir("/kaggle/working") else "false"
-    )
-    == "true"
+    os.path.isdir("/kaggle/working") or os.environ.get("KAGGLE_KERNEL_RUN") == "true"
 )
 LOCAL_TEST: bool = not IS_KAGGLE
 _CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"
+_USE_SMOKE_CONFIG: bool = not IS_KAGGLE or _CAPPED_FULL
 _MIN_TRANSFORMERS = Version("5.15.0")
+_FORCE_INSTALL: bool = os.environ.get("QWD_DEBUG_INSTALL", "0") == "1"
+_SKIP_INSTALL: bool = os.environ.get("QWD_SKIP_INSTALL", "0") == "1"
+_SHOULD_INSTALL: bool = (IS_KAGGLE or _FORCE_INSTALL) and not _SKIP_INSTALL
 
-if LOCAL_TEST:
+if not _SHOULD_INSTALL:
     _REQUIRED_IMPORTS = {
         "qwendopamine": "qwendopamine",
         "accelerate": "accelerate",
@@ -95,7 +96,8 @@ if LOCAL_TEST:
     print("[setup] Local runtime detected; skipping pip/uv (Kaggle-only).")
     _HF_TOKEN_FROM_SECRETS: str | None = None
 else:
-    print("[setup] Kaggle runtime detected — installing via uv...")
+    _install_reason = "Kaggle" if IS_KAGGLE else "debug flag QWD_DEBUG_INSTALL"
+    print(f"[setup] {_install_reason} detected — installing via uv...")
     _GIT_URL = "git+https://github.com/Gabz4200/QwenDopamine.git"
     # cuda: GPU torch via pytorch-cu128 index; cpt: streaming CPT deps (datasets/peft/trl/Pillow);
     # hf: datasets/tokenizers (overlaps cpt but kept for minimal Kaggle image). gpu/cu128 are
@@ -112,6 +114,12 @@ else:
     ]
     try:
         _proc = subprocess.run(_uv_cmd, check=False)
+        if _proc.returncode != 0:
+            # `--system` fails on Arch/externally-managed or sandbox without system flag
+            _uv_nosystem = [c for c in _uv_cmd if c != "--system"]
+            _proc2 = subprocess.run(_uv_nosystem, check=False)
+            if _proc2.returncode == 0:
+                _proc = _proc2
     except FileNotFoundError:
         print("[setup] uv not found, falling back to pip...")
         _proc = subprocess.run(
@@ -130,11 +138,41 @@ else:
             "uv/pip install failed. On Kaggle, ensure Internet is ON and "
             "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
+    # Pillow>=12.3 needed for torchvision (PIL._typing._Ink). Kaggle base has
+    # old Pillow and --refresh-package qwendopamine alone won't upgrade it.
+    _pillow_spec = "Pillow>=12.3.0"
+    _pillow_cmd = ["uv", "pip", "install", "--system", _pillow_spec]
+    try:
+        _pillow_proc = subprocess.run(_pillow_cmd, check=False)
+        if _pillow_proc.returncode != 0:
+            _pillow_nosystem = [c for c in _pillow_cmd if c != "--system"]
+            _pillow_proc2 = subprocess.run(_pillow_nosystem, check=False)
+            if _pillow_proc2.returncode == 0:
+                _pillow_proc = _pillow_proc2
+    except FileNotFoundError:
+        _pillow_proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--break-system-packages",
+                _pillow_spec,
+            ],
+            check=False,
+        )
+    if _pillow_proc.returncode != 0:
+        print(
+            f"[setup] WARNING: Pillow upgrade to {_pillow_spec} failed; import may fail with PIL._typing._Ink."
+        )
     # Fetch HF token from Kaggle secrets (never from env directly).
-    from kaggle_secrets import UserSecretsClient  # type: ignore[import-not-found]
+    if IS_KAGGLE:
+        from kaggle_secrets import UserSecretsClient  # type: ignore[import-not-found]
 
-    _kaggle_user_secrets = UserSecretsClient()
-    _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret("HF_TOKEN")
+        _kaggle_user_secrets = UserSecretsClient()
+        _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret("HF_TOKEN")
+    else:
+        _HF_TOKEN_FROM_SECRETS: str | None = None
     print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
 
 # %% [code.2]
@@ -147,6 +185,17 @@ from pathlib import Path
 from typing import Any
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Pillow compat guard: torchvision>=0.23 needs Pillow>=12.3 (_Ink). Give
+# actionable hint if Kaggle setup cell was skipped or Pillow not upgraded.
+try:
+    from PIL._typing import _Ink  # noqa: F401
+except ImportError as _pil_err:
+    raise ImportError(
+        f"{_pil_err}\n[HINT] Pillow too old (needs >=12.3.0 for torchvision). "
+        'Run `pip install "Pillow>=12.3.0"` and restart kernel. '
+        "On Kaggle, re-run the setup cell above."
+    ) from _pil_err
 
 import numpy as np
 import torch
@@ -256,19 +305,17 @@ CPT_DATASETS: list[str] = [
 # dataset (see the dataset cell below).
 # ---------------------------------------------------------------------------
 LOCAL_SYNTHETIC_DATASET: str = "__local_synthetic__"
-if LOCAL_TEST and not _CAPPED_FULL:
+if _USE_SMOKE_CONFIG and not _CAPPED_FULL:
     CPT_DATASETS = [LOCAL_SYNTHETIC_DATASET]
 
 DATASET_TEXT_COLUMN: str = "text"
 MAX_SEQ_LENGTH: int = 1024
 
-if LOCAL_TEST:
-    # CPU smoke tests: fp32 only (no bf16/fp16 hardware paths on CPU).
-    TORCH_DTYPE = torch.float32
-elif torch.cuda.is_bf16_supported():
-    TORCH_DTYPE = torch.bfloat16
-else:
-    TORCH_DTYPE = torch.float16
+TORCH_DTYPE = (
+    torch.float32
+    if not torch.cuda.is_available()
+    else (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
+)
 # 4-bit paged AdamW is available on Kaggle via bitsandbytes, but kept off by default
 # to avoid torchao/bnb conflict during smoke tests — enable for full CPT if needed.
 LOAD_IN_4BIT: bool = False
@@ -348,31 +395,30 @@ EMBEDDING_LR_SCALE: float = 0.2
 # ``REWARD_REFRESH_EVERY_N_STEPS`` optimizer steps (whichever fires first)
 # after ``REWARD_REFRESH_WARMUP_STEPS`` steps have completed. When both are
 # zero the snapshot is never refreshed (frozen at init).
-REWARD_REFRESH_EVERY_N_EPOCHS: int = 1
+REWARD_REFRESH_EVERY_N_EPOCHS: int = 0 if _USE_SMOKE_CONFIG else 1
 REWARD_REFRESH_EVERY_N_STEPS: int = 0
-REWARD_REFRESH_WARMUP_STEPS: int = 100
+REWARD_REFRESH_WARMUP_STEPS: int = 0 if _USE_SMOKE_CONFIG else 100
 
 PER_DEVICE_TRAIN_BATCH_SIZE: int = 1
-GRADIENT_ACCUMULATION_STEPS: int = 16
+GRADIENT_ACCUMULATION_STEPS: int = 1 if _USE_SMOKE_CONFIG else 16
 LEARNING_RATE: float = 1e-4
 WEIGHT_DECAY: float = 0.01
 LR_SCHEDULER_TYPE: str = "cosine"
-WARMUP_STEPS: int = 100
+WARMUP_STEPS: int = 0 if _USE_SMOKE_CONFIG else 100
 NUM_TRAIN_EPOCHS: int = 1
 MAX_TRAIN_STEPS: int | None = (
-    None  # None = rely on num_train_epochs with a finite dataset
+    int(os.environ.get("QWD_LOCAL_STEPS", "2")) if _USE_SMOKE_CONFIG else None
 )
-if LOCAL_TEST:
-    MAX_TRAIN_STEPS = int(os.environ.get("QWD_LOCAL_STEPS", "2"))
 
-LOGGING_STEPS: int = 10
-SAVE_STEPS: int = 500
-SAVE_TOTAL_LIMIT: int = 2
+LOGGING_STEPS: int = 1 if _USE_SMOKE_CONFIG else 10
+SAVE_STEPS: int = 2 if _USE_SMOKE_CONFIG else 500
+SAVE_TOTAL_LIMIT: int = 1 if _USE_SMOKE_CONFIG else 2
 
-if IS_KAGGLE:
-    _RUN_ROOT = os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
-else:
-    _RUN_ROOT = os.environ.get("QWD_LOCAL_RUN_DIR", os.path.join(os.getcwd(), "runs"))
+_RUN_ROOT = (
+    os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
+    if not _USE_SMOKE_CONFIG
+    else os.environ.get("QWD_LOCAL_RUN_DIR", os.path.join(os.getcwd(), "runs"))
+)
 # Include rank to avoid PID collision across distributed workers sharing a filesystem.
 _RANK_SUFFIX = f"-rank{RANK}" if "RANK" in globals() else ""
 OUTPUT_DIR: str = os.path.join(
@@ -383,26 +429,7 @@ RESUME_FROM_CHECKPOINT: str | None = None
 HUB_MODEL_ID: str = os.environ.get("HUB_MODEL_ID", "")
 PUSH_TO_HUB: bool = False
 HF_TOKEN: str | None = _HF_TOKEN_FROM_SECRETS or os.environ.get("HF_TOKEN", None)
-MERGE_LORA_AFTER_TRAINING: bool = True
-
-if LOCAL_TEST:
-    # Bounded CPU/footprint run: batch 1, no gradient accumulation, no warmup,
-    # no Hub push, adapter-only checkpoint (no multi-GB merged model write).
-    PER_DEVICE_TRAIN_BATCH_SIZE = 1
-    GRADIENT_ACCUMULATION_STEPS = 1
-    WARMUP_STEPS = 0
-    LOGGING_STEPS = 1
-    SAVE_STEPS = 2
-    SAVE_TOTAL_LIMIT = 1
-    USE_PARALLEL_REWARD = False
-    PARALLEL_REWARD_LAYERS = ()
-    PUSH_TO_HUB = False
-    MERGE_LORA_AFTER_TRAINING = False
-    # Keep the reward ref frozen for the 2-step smoke test so the snapshot
-    # logic is exercised but no extra checkpoint scan happens.
-    REWARD_REFRESH_EVERY_N_EPOCHS = 0
-    REWARD_REFRESH_EVERY_N_STEPS = 0
-    REWARD_REFRESH_WARMUP_STEPS = 0
+MERGE_LORA_AFTER_TRAINING: bool = not _USE_SMOKE_CONFIG
 
 SMB_CACHE_DIR: str = "./smb-cache"
 MAZE_CACHE_DIR: str = "./maze-cache"
@@ -448,7 +475,7 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
-if IS_KAGGLE:
+if not _USE_SMOKE_CONFIG:
     # Only needed for multimodal (image/video) inputs on Kaggle; the text
     # training path never touches the processor.
     processor: Any = AutoProcessor.from_pretrained(
@@ -457,7 +484,7 @@ if IS_KAGGLE:
 
 HFIntegration.register_infinidopamine_hf()
 
-if LOCAL_TEST:
+if _USE_SMOKE_CONFIG:
     # --- Local smoke test: tiny random-init text-only model ----------------
     # Uses the cached Qwen3.5 tokenizer (offline). Vocab size falls back to
     # InfiniDopamineTextConfig's default (248320, matching Qwen3.5) so the
@@ -1225,7 +1252,7 @@ def build_streaming_dataset(
     dataset_names: list[str],
     seed: int = 42,
 ) -> IterableDataset:
-    use_capped = LOCAL_TEST and _CAPPED_FULL
+    use_capped = _CAPPED_FULL
     if use_capped:
         print(
             f"[capped-full] using {_capped_rows()} mocked rows per dataset for {len(dataset_names)} datasets"
@@ -1376,19 +1403,26 @@ def build_reward_values(
     _model = model_ref
     _was_training = _model.training
     _model.eval()
+    # Ref model may stay on CPU (deepcopy) while training model is on GPU.
+    try:
+        _ref_device = next(_model.parameters()).device
+    except StopIteration:
+        _ref_device = input_ids.device
+    _input_ids = input_ids.to(_ref_device)
+    _attention_mask = attention_mask.to(_ref_device)
     with torch.no_grad():
         base_outputs = _model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
+            input_ids=_input_ids,
+            attention_mask=_attention_mask,
         )
         shift_logits = base_outputs.logits[..., :-1, :].contiguous()
-        shift_labels = input_ids[..., 1:].contiguous()
+        shift_labels = _input_ids[..., 1:].contiguous()
 
         token_loss = F.cross_entropy(
             shift_logits.view(-1, shift_logits.size(-1)),
             shift_labels.view(-1),
             reduction="none",
-        ).view(input_ids.size(0), -1)
+        ).view(_input_ids.size(0), -1)
 
         if REWARD_LOSS_TYPE in ("nll", "ce"):
             rewards = -token_loss * REWARD_SCALE
@@ -1396,7 +1430,7 @@ def build_reward_values(
             rewards = (-token_loss).exp() * REWARD_SCALE
 
         reward_values = torch.zeros_like(input_ids, dtype=TORCH_DTYPE)
-        reward_values[:, 1:] = rewards.to(TORCH_DTYPE)
+        reward_values[:, 1:] = rewards.to(TORCH_DTYPE).to(input_ids.device)
         reward_values = reward_values * attention_mask
 
     if _was_training:
@@ -1505,6 +1539,16 @@ class CPTSFTTrainer(SFTTrainer):
             merged_state = merged.state_dict()
         else:
             merged_state = peft_model.state_dict()
+
+        # Align devices: merged state may be on GPU while ref stays on CPU.
+        try:
+            _ref_device = next(self._reward_ref_model.parameters()).device
+        except StopIteration:
+            _ref_device = torch.device("cpu")
+        merged_state = {
+            k: v.to(_ref_device) if isinstance(v, torch.Tensor) else v
+            for k, v in merged_state.items()
+        }
 
         # Load into the ref model (strict=False so new init weights for
         # exclusive layers are preserved when they have no checkpoint entry).
@@ -1682,8 +1726,8 @@ class RewardRefresher(TrainerCallback):
 _rewards_refresher = RewardRefresher()
 
 
-_smoke_device = "cuda" if torch.cuda.is_available() else "cpu"
-_dummy_ids = torch.tensor([tokenizer("Hello world")["input_ids"]], device=_smoke_device)
+_model_device = next(model.parameters()).device
+_dummy_ids = torch.tensor([tokenizer("Hello world")["input_ids"]], device=_model_device)
 _dummy_mask = torch.ones_like(_dummy_ids)
 _dummy_rewards = torch.zeros_like(_dummy_ids, dtype=TORCH_DTYPE)
 with torch.no_grad():
@@ -1698,19 +1742,19 @@ if IS_MAIN:
     # Reward-path probe: one Taichi delta step, so the reward kernel
     # compiles and runs even when the local model has no parallel
     # reward branch attached.
-    _probe_state = torch.zeros(1, 4, 4)
+    _probe_state = torch.zeros(1, 4, 4, device=_model_device)
     _probe_out = delta_core_step(
         _probe_state,
-        torch.randn(1, 4),
-        torch.randn(1, 4),
-        torch.full((1, 1), 0.5),
-        torch.full((1, 1), 0.5),
-        torch.rand(1, 4),
-        torch.rand(1, 4),
+        torch.randn(1, 4, device=_model_device),
+        torch.randn(1, 4, device=_model_device),
+        torch.full((1, 1), 0.5, device=_model_device),
+        torch.full((1, 1), 0.5, device=_model_device),
+        torch.rand(1, 4, device=_model_device),
+        torch.rand(1, 4, device=_model_device),
     )
     print(f"Taichi delta probe : {tuple(_probe_out.shape)}")
     del _probe_state, _probe_out
-del _dummy_ids, _dummy_mask, _dummy_rewards, _out
+del _dummy_ids, _dummy_mask, _dummy_rewards, _out, _model_device
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
@@ -1718,7 +1762,7 @@ if torch.cuda.is_available():
 # ## Training
 
 # %% [code.17]
-if LOCAL_TEST:
+if _USE_SMOKE_CONFIG:
     # CPU smoke tests: plain AdamW (bitsandbytes is a CUDA dependency).
     _training_optim = "adamw_torch"
 else:
@@ -1749,7 +1793,7 @@ training_args = TrainingArguments(
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
     optim=_training_optim,
-    report_to="none" if (LOCAL_TEST or not IS_MAIN) else ["tensorboard"],
+    report_to="none" if (_USE_SMOKE_CONFIG or not IS_MAIN) else ["tensorboard"],
     seed=42,
     data_seed=42,
     # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.

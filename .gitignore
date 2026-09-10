@@ -27,3 +27,6 @@ build/
 # AGENTS.md
 skills-lock.json
 ./skills-lock.json
+runs/
+sandbox/runs/
+sandbox/.venv-kaggle/

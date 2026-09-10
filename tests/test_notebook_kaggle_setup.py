@@ -45,7 +45,9 @@ def test_kaggle_install_fallback_pip_not_forced_upgrade() -> None:
     text = _read(NOTEBOOK_PY)
     import re
 
-    has_pip_upgrade = bool(re.search(r'sys\.executable.*pip.*--upgrade', text, re.DOTALL))
+    has_pip_upgrade = bool(
+        re.search(r"sys\.executable.*pip.*--upgrade", text, re.DOTALL)
+    )
     assert not has_pip_upgrade, (
         "pip fallback still uses --upgrade which forces transitive upgrade churn; "
         "remove --upgrade or constrain versions."

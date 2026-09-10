@@ -7,20 +7,35 @@ authors = [
     { name = "Joao Gabriel Souza Amaral", email = "jgsa75005@gmail.com" }
 ]
 requires-python = ">=3.12,<3.14"
+# Core includes GPU torch by default (pytorch-cu128) so a plain `uv pip install
+# git+https://github.com/Gabz4200/QwenDopamine.git` works on Kaggle. CPU laptops
+# should use `uv sync --extra cpu` — the marker in [tool.uv.sources] swaps to
+# pytorch-cpu. This trades plain-install simplicity for ~800MB GPU wheels on CPU.
 dependencies = [
+    "accelerate>=1.14.0",
+    "bitsandbytes>=0.50.2",
+    "datasets>=4.3.0",
     "einops>=0.8.2",
     "gguf>=0.19.0",
     "huggingface-hub>=1.30.0",
     "hydra-core>=1.3.6",
     "matplotlib>=3.11.1",
     "numpy>=2.0.0",
-    "scipy>=1.13.0",
     "omegaconf>=2.3.1",
+    "peft>=0.20.0",
+    "Pillow>=12.3.0",
     "safetensors>=0.8.0",
+    "scipy>=1.13.0",
+    "sentencepiece>=0.2.2",
     "taichi>=1.7.4",
+    "tensorboard>=2.21.0",
     "tokenizers>=0.22.0",
+    "torch>=2.11.0",
+    "torchao>=0.17.0",
+    "torchvision>=0.20.0",
     "tqdm>=4.70.0",
     "transformers>=5.15.0",
+    "trl>=0.24.0",
 ]
 include-package-data = true
 
@@ -34,6 +49,14 @@ cpu = [
     "sentencepiece>=0.2.2",
 ]
 cu128 = [
+    "torch>=2.11.0",
+    "torchvision>=0.20.0",
+    "torchao>=0.17.0",
+    "accelerate>=1.14.0",
+    "trl>=0.24.0",
+    "tensorboard>=2.21.0",
+]
+cuda = [
     "torch>=2.11.0",
     "torchvision>=0.20.0",
     "torchao>=0.17.0",
@@ -75,8 +98,11 @@ dev = [
 [tool.uv]
 conflicts = [
     [{ extra = "cpu" }, { extra = "cu128" }],
+    [{ extra = "cpu" }, { extra = "cuda" }],
     [{ extra = "cpu" }, { extra = "gpu" }],
+    [{ extra = "cu128" }, { extra = "cuda" }],
     [{ extra = "cu128" }, { extra = "gpu" }],
+    [{ extra = "cuda" }, { extra = "gpu" }],
 ]
 
 [[tool.uv.index]]
@@ -93,17 +119,23 @@ explicit = true
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "cu128" },
+    { index = "pytorch-cu128", extra = "cuda" },
     { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-cu128", marker = "extra != 'cpu' and extra != 'cu128' and extra != 'cuda' and extra != 'gpu'" },
 ]
 torchvision = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "cu128" },
+    { index = "pytorch-cu128", extra = "cuda" },
     { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-cu128", marker = "extra != 'cpu' and extra != 'cu128' and extra != 'cuda' and extra != 'gpu'" },
 ]
 torchao = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "cu128" },
+    { index = "pytorch-cu128", extra = "cuda" },
     { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-cu128", marker = "extra != 'cpu' and extra != 'cu128' and extra != 'cuda' and extra != 'gpu'" },
 ]
 
 [project.scripts]

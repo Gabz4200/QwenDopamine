@@ -40,14 +40,10 @@
 #     tiny random-init text-only model (fits a CPU/RAM-limited laptop), and
 #     ``QWD_LOCAL_STEPS`` training steps (default 2).
 #
-# On Kaggle this cell installs/upgrades every dependency (including the
-# package wheel) with pip. Locally it only verifies that the uv-provisioned
-# environment is complete and never touches pip (that would fight ``uv sync``).
-#
-# NumPy 2.x changed private C-API symbols used by older SciPy builds.
-# The SciPy pin below keeps Kaggle from hitting
-# ``ImportError: cannot import name '_center' from 'numpy._core.umath'``
-# through ``peft -> transformers -> sklearn -> scipy -> numpy``.
+# On Kaggle this cell installs the package from git with uv, letting uv
+# resolve and upgrade all transitive dependencies (no pinned version list).
+# Locally it only verifies that the uv-provisioned environment is complete
+# and never touches pip/uv (that would fight ``uv sync``).
 import importlib.metadata
 import importlib.util
 import os
@@ -95,55 +91,44 @@ if LOCAL_TEST:
             f"[setup] WARNING: transformers {_tf_ver} < {_MIN_TRANSFORMERS}; "
             "refresh the environment with `uv sync --extra cpt`."
         )
-    print("[setup] Local runtime detected; skipping pip (Kaggle-only).")
+    print("[setup] Local runtime detected; skipping pip/uv (Kaggle-only).")
     _HF_TOKEN_FROM_SECRETS: str | None = None
 else:
-    print("[setup] Kaggle runtime detected — installing all dependencies via pip...")
-    _WHEEL_URL = "https://github.com/Gabz4200/QwenDopamine/archive/refs/heads/main.zip"
-    _pkgs = [
-        sys.executable,
-        "-m",
+    print("[setup] Kaggle runtime detected — installing via uv...")
+    _GIT_URL = "git+https://github.com/Gabz4200/QwenDopamine.git"
+    # cuda: GPU torch via pytorch-cu128 index; cpt: streaming CPT deps (datasets/peft/trl/Pillow);
+    # hf: datasets/tokenizers (overlaps cpt but kept for minimal Kaggle image). gpu/cu128 are
+    # aliases for cuda — not included together to avoid [tool.uv] conflicts.
+    _PACKAGE_SPEC = f"qwendopamine[cuda,cpt,hf] @ {_GIT_URL}"
+    _uv_cmd = [
+        "uv",
         "pip",
         "install",
+        "--system",
         "--upgrade",
-        "-q",
-        "accelerate>=1.14.0",
-        "bitsandbytes>=0.50.2",
-        "datasets>=4.3.0",
-        "einops>=0.8.2",
-        "gguf>=0.19.0",
-        "huggingface-hub>=1.30.0",
-        "hydra-core>=1.3.6",
-        "ipykernel>=7.3.0",
-        "jupyterlab>=4.6.3",
-        "jupytext>=1.19.5",
-        "matplotlib>=3.11.1",
-        "notebook>=7.6.2",
-        "numpy>=2.0.0",
-        "scipy>=1.13.0",
-        "omegaconf>=2.3.1",
-        "peft>=0.20.0",
-        "Pillow>=12.3.0",
-        "pyrefly>=1.2.0",
-        "pytest>=9.1.1",
-        "ruff>=0.16.6",
-        "safetensors>=0.8.0",
-        "sentencepiece>=0.2.2",
-        "taichi>=1.7.4",
-        "tensorboard>=2.21.0",
-        "tokenizers>=0.22.0",
-        "torch>=2.11.0",
-        "torchao>=0.18.0",
-        "torchvision>=0.26.0",
-        "tqdm>=4.70.0",
-        "transformers>=5.15.0",
-        "trl>=0.24.0",
-        _WHEEL_URL,
+        "--refresh",
+        "--reinstall",
+        _PACKAGE_SPEC,
     ]
-    _proc = subprocess.run(_pkgs, check=False)
+    try:
+        _proc = subprocess.run(_uv_cmd, check=False)
+    except FileNotFoundError:
+        print("[setup] uv not found, falling back to pip...")
+        _proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--break-system-packages",
+                _PACKAGE_SPEC,
+            ],
+            check=False,
+        )
     if _proc.returncode != 0:
         raise RuntimeError(
-            "pip install failed. On Kaggle, ensure Internet is ON and "
+            "uv/pip install failed. On Kaggle, ensure Internet is ON and "
             "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
     # Fetch HF token from Kaggle secrets (never from env directly).
@@ -285,6 +270,8 @@ elif torch.cuda.is_bf16_supported():
     TORCH_DTYPE = torch.bfloat16
 else:
     TORCH_DTYPE = torch.float16
+# 4-bit paged AdamW is available on Kaggle via bitsandbytes, but kept off by default
+# to avoid torchao/bnb conflict during smoke tests — enable for full CPT if needed.
 LOAD_IN_4BIT: bool = False
 
 USE_LORA: bool = True
@@ -387,9 +374,11 @@ if IS_KAGGLE:
     _RUN_ROOT = os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
 else:
     _RUN_ROOT = os.environ.get("QWD_LOCAL_RUN_DIR", os.path.join(os.getcwd(), "runs"))
+# Include rank to avoid PID collision across distributed workers sharing a filesystem.
+_RANK_SUFFIX = f"-rank{RANK}" if "RANK" in globals() else ""
 OUTPUT_DIR: str = os.path.join(
     _RUN_ROOT,
-    f"infini-dopamine-cpt-{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}-{os.getpid()}",
+    f"infini-dopamine-cpt-{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}-{os.getpid()}{_RANK_SUFFIX}",
 )
 RESUME_FROM_CHECKPOINT: str | None = None
 HUB_MODEL_ID: str = os.environ.get("HUB_MODEL_ID", "")
@@ -555,39 +544,36 @@ def ensure_all_trainable(model: Any, missing_keys: list[str]) -> None:
         print(f"Unfrozen {unfrozen} newly initialized parameters.")
 
 
+# Centralized substrings for direct-trained exclusive weights; keeps notebook and
+# `qwendopamine.models` in sync — update here if model naming changes.
+_NORM_SUBSTRINGS = frozenset(
+    {"input_layernorm", "post_attention_layernorm", "q_norm", "k_norm", "model.norm"}
+)
+_GDN2_SUBSTRINGS = frozenset({"dt_bias", "A_log", "betas", "conv1d", ".norm"})
+_REWARD_SUBSTRINGS = frozenset(
+    {
+        "scaler.raw_alpha",
+        "stats_normalizer.gamma",
+        "k_conv1d",
+        "v_conv1d",
+        "reward_branch_norm",
+        "q_norm",
+        "k_norm",
+    }
+)
+
+
 def _should_unfreeze(name: str) -> bool:
     if "embed_tokens" in name or "lm_head" in name:
         return True
-    if any(
-        k in name
-        for k in (
-            "input_layernorm",
-            "post_attention_layernorm",
-            "q_norm",
-            "k_norm",
-            "model.norm",
-        )
-    ):
+    if any(k in name for k in _NORM_SUBSTRINGS):
         return True
-    if "linear_attn" in name and any(
-        k in name for k in ("dt_bias", "A_log", "betas", "conv1d", ".norm")
-    ):
+    if "linear_attn" in name and any(k in name for k in _GDN2_SUBSTRINGS):
         return True
     if "reward_branch" in name:
         if ".norm" in name:
             return True
-        if any(
-            k in name
-            for k in (
-                "scaler.raw_alpha",
-                "stats_normalizer.gamma",
-                "k_conv1d",
-                "v_conv1d",
-                "reward_branch_norm",
-                "q_norm",
-                "k_norm",
-            )
-        ):
+        if any(k in name for k in _REWARD_SUBSTRINGS):
             return True
     return False
 
@@ -666,7 +652,10 @@ def _flatten_messages(messages: Any) -> str:
     if isinstance(messages, str):
         stripped = messages.strip()
         if stripped.startswith(("[", "{")):
-            messages = json.loads(stripped)
+            try:
+                messages = json.loads(stripped)
+            except json.JSONDecodeError:
+                return messages
         else:
             return messages
     if not isinstance(messages, list):
@@ -782,7 +771,10 @@ def format_alfworld(example: dict) -> dict:
     if isinstance(steps_raw, str):
         stripped = steps_raw.strip()
         if stripped.startswith(("[", "{")):
-            steps = json.loads(stripped)
+            try:
+                steps = json.loads(stripped)
+            except json.JSONDecodeError:
+                steps = []
         else:
             steps = []
     else:
@@ -901,7 +893,10 @@ def format_r0b0tlab(example: dict) -> dict:
     if isinstance(raw_value, str):
         stripped = raw_value.strip()
         if stripped.startswith(("[", "{")):
-            raw = json.loads(stripped)
+            try:
+                raw = json.loads(stripped)
+            except json.JSONDecodeError:
+                raw = []
         else:
             raw = []
     else:
@@ -1239,6 +1234,8 @@ def build_streaming_dataset(
     streams = [_stream_for(n, use_capped) for n in dataset_names]
     if len(streams) == 1:
         return streams[0]
+    # all_exhausted ensures wikitext (50k capped) doesn't stop larger streams early — the
+    # 17-way interleave keeps sampling until every source is drained, balancing world-model traces.
     return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted")
 
 
@@ -1246,12 +1243,15 @@ def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> Iterable
     rank_seed = seed + RANK
     train_dataset = build_streaming_dataset(dataset_names, seed=rank_seed)
     if IS_MAIN:
-        sample = next(iter(train_dataset.take(1)))
-        print(f"Sample keys  : {list(sample.keys())}")
-        print(f"Sample text  : {str(sample.get('text', ''))[:240]}")
-        print(f"Sample length: {len(str(sample.get('text', '')))}")
-        del sample
-        gc.collect()
+        sample = next(iter(train_dataset.take(1)), None)
+        if sample is None:
+            print("[peek] warning: streaming dataset returned no samples")
+        else:
+            print(f"Sample keys  : {list(sample.keys())}")
+            print(f"Sample text  : {str(sample.get('text', ''))[:240]}")
+            print(f"Sample length: {len(str(sample.get('text', '')))}")
+            del sample
+            gc.collect()
     return train_dataset
 
 
@@ -1281,6 +1281,8 @@ cols_to_remove = [
 
 from transformers import DataCollatorWithPadding
 
+# Collator pads to longest in batch (batch=1, so no-op) — packing is off and sequences are
+# pre-truncated to MAX_SEQ_LENGTH, so DataCollatorForLanguageModeling would duplicate labels.
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 
@@ -1359,7 +1361,7 @@ def find_latest_checkpoint(run_dir: str | os.PathLike[str]) -> Path | None:
 def build_reward_values(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
-    model_ref: Any | None = None,
+    model_ref: Any,
 ) -> torch.Tensor:
     """Compute per-token pseudo-rewards from a detached base-model pass.
 
@@ -1367,19 +1369,14 @@ def build_reward_values(
     the reward of token x(t). This is achieved by shifting rewards
     one position forward: reward_values[:, 1:] = rewards.
 
-    When ``model_ref`` is provided it is set to eval mode (so dropout is
-    disabled during reward estimation) and restored to its prior training
-    state afterwards. The global ``model`` (passed implicitly when
-    ``model_ref`` is ``None``) is left untouched — callers must manage its
-    mode externally.
+    ``model_ref`` is set to eval mode (so dropout is disabled during
+    reward estimation) and restored to its prior training state afterwards.
     """
-    if model_ref is not None:
-        _model = model_ref
-        _was_training = _model.training
-        _model.eval()
-    else:
-        _model = model
-        _was_training = None
+    if model_ref is None:
+        raise ValueError("model_ref must be provided")
+    _model = model_ref
+    _was_training = _model.training
+    _model.eval()
     with torch.no_grad():
         base_outputs = _model(
             input_ids=input_ids,

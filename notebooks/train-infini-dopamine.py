@@ -2096,6 +2096,50 @@ class RewardRefresher(TrainerCallback):
 _rewards_refresher = RewardRefresher()
 
 
+class MetricsLogger(TrainerCallback):
+    """Save loss/NLL and eval metrics to disk for plotting.
+
+    Logs every `on_log` event to `OUTPUT_DIR/metrics.jsonl` and keeps an
+    in-memory list for final plotting. `loss` from HF is cross-entropy = NLL;
+    we also store `nll` alias and `perplexity = exp(nll)`.
+    """
+
+    def __init__(self, output_dir: str | os.PathLike[str]) -> None:
+        self.output_dir = Path(output_dir)
+        self.metrics: list[dict[str, Any]] = []
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def on_log(self, args: Any, state: Any, control: Any, logs: dict[str, float] | None = None, **kwargs: Any) -> None:
+        if logs is None or not IS_MAIN:
+            return
+        entry: dict[str, Any] = {"step": int(state.global_step), "epoch": float(state.epoch or 0)}
+        for k in ("loss", "eval_loss", "learning_rate", "grad_norm"):
+            if k in logs:
+                entry[k] = float(logs[k])
+                if k in ("loss", "eval_loss"):
+                    # NLL is cross-entropy loss for causal LM; ppl = exp(NLL)
+                    nll = float(logs[k])
+                    entry[k.replace("loss", "nll") if k == "loss" else "eval_nll"] = nll
+                    try:
+                        import math
+
+                        entry[k.replace("loss", "ppl") if k == "loss" else "eval_ppl"] = float(math.exp(nll))
+                    except OverflowError:
+                        entry[k.replace("loss", "ppl") if k == "loss" else "eval_ppl"] = float("inf")
+        # Also capture stage name if set via TrainingArguments.run_name
+        entry["run_name"] = getattr(args, "run_name", "") or ""
+        self.metrics.append(entry)
+        # Append to jsonl for persistence across stages
+        try:
+            with open(self.output_dir / "metrics.jsonl", "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except OSError:
+            pass
+
+
+_metrics_logger = MetricsLogger(OUTPUT_DIR)
+
+
 _model_device = next(model.parameters()).device
 _dummy_ids = torch.tensor([tokenizer("Hello world")["input_ids"]], device=_model_device)
 _dummy_mask = torch.ones_like(_dummy_ids)
@@ -2208,6 +2252,7 @@ if _USE_SMOKE_CONFIG:
         reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
         reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
         reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
+        callbacks=[_rewards_refresher, _metrics_logger],
     )
     trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 elif USE_CURRICULUM:
@@ -2249,6 +2294,7 @@ elif USE_CURRICULUM:
             reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
             reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
             reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
+            callbacks=[_rewards_refresher, _metrics_logger],
         )
         trainer.train(resume_from_checkpoint=_last_checkpoint)
         # Drop this stage's heavy caches before next stage to keep peak disk low.
@@ -2284,10 +2330,109 @@ else:
         reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
         reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
         reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
+        callbacks=[_rewards_refresher, _metrics_logger],
     )
     trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 
 ACCEL_STATE.wait_for_everyone()
+
+# Metrics plot — saved to OUTPUT_DIR/metrics.png and metrics.json
+if IS_MAIN:
+    try:
+        import math
+
+        import matplotlib.pyplot as plt
+
+        metrics_path = Path(OUTPUT_DIR) / "metrics.jsonl"
+        # Prefer in-memory logger (covers all stages) but fall back to file
+        all_metrics = list(_metrics_logger.metrics)
+        if not all_metrics and metrics_path.exists():
+            with open(metrics_path) as f:
+                for line in f:
+                    try:
+                        all_metrics.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        # Also merge trainer.state.log_history if logger missed something (e.g. final eval)
+        if "trainer" in globals() and hasattr(trainer, "state") and trainer.state.log_history:
+            for entry in trainer.state.log_history:
+                if any(k in entry for k in ("loss", "eval_loss")):
+                    all_metrics.append(entry)
+        if all_metrics:
+            # Deduplicate by step, keep last
+            by_step: dict[int, dict[str, Any]] = {}
+            for m in all_metrics:
+                step = int(m.get("step", 0))
+                by_step[step] = {**by_step.get(step, {}), **m}
+            steps = sorted(by_step)
+            train_loss = [by_step[s].get("loss") for s in steps]
+            eval_loss = [by_step[s].get("eval_loss") for s in steps]
+            nll = [by_step[s].get("nll", by_step[s].get("loss")) for s in steps]
+            eval_nll = [by_step[s].get("eval_nll", by_step[s].get("eval_loss")) for s in steps]
+            lr = [by_step[s].get("learning_rate") for s in steps]
+
+            # Save combined metrics json for later analysis
+            with open(Path(OUTPUT_DIR) / "metrics.json", "w") as f:
+                json.dump([by_step[s] for s in steps], f, indent=2)
+
+            fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+            fig.suptitle(f"Training Metrics — {Path(OUTPUT_DIR).name}")
+
+            ax = axes[0, 0]
+            ax.plot(steps, train_loss, label="train loss", color="#1f77b4")
+            ax.plot(steps, eval_loss, label="eval loss", color="#ff7f0e", linestyle="--")
+            ax.set_ylabel("loss")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+            ax = axes[0, 1]
+            ax.plot(steps, nll, label="train NLL", color="#1f77b4")
+            ax.plot(steps, eval_nll, label="eval NLL", color="#ff7f0e", linestyle="--")
+            ax.set_ylabel("NLL")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+            ax = axes[1, 0]
+            # Perplexity = exp(NLL), clip for display
+            ppl = [min(math.exp(v), 1e4) if v is not None else None for v in nll]
+            eval_ppl = [min(math.exp(v), 1e4) if v is not None else None for v in eval_nll]
+            ax.plot(steps, ppl, label="train ppl", color="#2ca02c")
+            ax.plot(steps, eval_ppl, label="eval ppl", color="#d62728", linestyle="--")
+            ax.set_ylabel("perplexity")
+            ax.set_yscale("log")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+
+            ax = axes[1, 1]
+            ax.plot(steps, lr, color="#9467bd")
+            ax.set_ylabel("learning_rate")
+            ax.set_xlabel("step")
+            ax.grid(True, alpha=0.3)
+
+            for ax in axes.flat:
+                ax.set_xlabel("step")
+
+            plt.tight_layout()
+            plot_path = Path(OUTPUT_DIR) / "metrics.png"
+            plt.savefig(plot_path, dpi=150)
+            print(f"[metrics] plot saved to {plot_path}")
+            # Also save CSV for easy import
+            import csv
+
+            csv_path = Path(OUTPUT_DIR) / "metrics.csv"
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=sorted({k for m in by_step.values() for k in m}))
+                writer.writeheader()
+                for s in steps:
+                    writer.writerow(by_step[s])
+            print(f"[metrics] csv saved to {csv_path}")
+        else:
+            print("[metrics] no metrics to plot")
+    except Exception as e:  # noqa: BLE001 - plot must not crash training
+        print(f"[metrics] plot failed: {e}")
+        import traceback
+
+        traceback.print_exc()
 
 # %% [markdown.18]
 # ## Checkpoint Export & Save

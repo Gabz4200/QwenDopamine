@@ -51,7 +51,10 @@ import os
 import subprocess
 import sys
 
-from packaging.version import Version
+try:
+    from packaging.version import Version
+except ImportError:
+    Version = None  # type: ignore[assignment]
 
 IS_KAGGLE: bool = (
     os.path.isdir("/kaggle/working") or os.environ.get("KAGGLE_KERNEL_RUN") == "true"
@@ -59,7 +62,7 @@ IS_KAGGLE: bool = (
 LOCAL_TEST: bool = not IS_KAGGLE
 _CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"
 _USE_SMOKE_CONFIG: bool = not IS_KAGGLE or _CAPPED_FULL
-_MIN_TRANSFORMERS = Version("5.15.0")
+_MIN_TRANSFORMERS = Version("5.15.0") if Version is not None else None  # type: ignore[no-any-return]
 _FORCE_INSTALL: bool = os.environ.get("QWD_DEBUG_INSTALL", "0") == "1"
 _SKIP_INSTALL: bool = os.environ.get("QWD_SKIP_INSTALL", "0") == "1"
 _SHOULD_INSTALL: bool = (IS_KAGGLE or _FORCE_INSTALL) and not _SKIP_INSTALL
@@ -88,7 +91,12 @@ if not _SHOULD_INSTALL:
         _tf_ver = importlib.metadata.version("transformers")
     except importlib.metadata.PackageNotFoundError:
         _tf_ver = "not installed"
-    if _tf_ver != "not installed" and Version(_tf_ver) < _MIN_TRANSFORMERS:
+    if (
+        _tf_ver != "not installed"
+        and Version is not None
+        and _MIN_TRANSFORMERS is not None
+        and Version(_tf_ver) < _MIN_TRANSFORMERS
+    ):
         print(
             f"[setup] WARNING: transformers {_tf_ver} < {_MIN_TRANSFORMERS}; "
             "refresh the environment with `uv sync --extra cpt`."
@@ -99,27 +107,36 @@ else:
     _install_reason = "Kaggle" if IS_KAGGLE else "debug flag QWD_DEBUG_INSTALL"
     print(f"[setup] {_install_reason} detected — installing via uv...")
     _GIT_URL = "git+https://github.com/Gabz4200/QwenDopamine.git"
-    # cuda: GPU torch via pytorch-cu128 index; cpt: streaming CPT deps (datasets/peft/trl/Pillow);
-    # hf: datasets/tokenizers (overlaps cpt but kept for minimal Kaggle image). gpu/cu128 are
-    # aliases for cuda — not included together to avoid [tool.uv] conflicts.
-    _PACKAGE_SPEC = f"qwendopamine[cuda,cpt,hf] @ {_GIT_URL}"
+    # gpu: GPU torch via pytorch-cu128 index; cpt: streaming CPT deps (datasets/peft/trl/Pillow);
+    # hf: datasets/tokenizers (overlaps cpt but kept for minimal Kaggle image).
+    _PACKAGE_SPEC = os.environ.get(
+        "QWD_PACKAGE_SPEC", f"qwendopamine[gpu,cpt,hf] @ {_GIT_URL}"
+    )
     _uv_cmd = [
         "uv",
         "pip",
         "install",
-        "--system",
-        "--refresh-package",
-        "qwendopamine",
+        "--python",
+        sys.executable,
+        "--break-system-packages",
+        "--upgrade",
         _PACKAGE_SPEC,
     ]
     try:
         _proc = subprocess.run(_uv_cmd, check=False)
         if _proc.returncode != 0:
-            # `--system` fails on Arch/externally-managed or sandbox without system flag
-            _uv_nosystem = [c for c in _uv_cmd if c != "--system"]
-            _proc2 = subprocess.run(_uv_nosystem, check=False)
-            if _proc2.returncode == 0:
-                _proc = _proc2
+            # Fallback to pip if uv returns error
+            _proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--break-system-packages",
+                    _PACKAGE_SPEC,
+                ],
+                check=False,
+            )
     except FileNotFoundError:
         print("[setup] uv not found, falling back to pip...")
         _proc = subprocess.run(
@@ -138,41 +155,25 @@ else:
             "uv/pip install failed. On Kaggle, ensure Internet is ON and "
             "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
-    # Pillow>=12.3 needed for torchvision (PIL._typing._Ink). Kaggle base has
-    # old Pillow and --refresh-package qwendopamine alone won't upgrade it.
-    _pillow_spec = "Pillow>=12.3.0"
-    _pillow_cmd = ["uv", "pip", "install", "--system", _pillow_spec]
-    try:
-        _pillow_proc = subprocess.run(_pillow_cmd, check=False)
-        if _pillow_proc.returncode != 0:
-            _pillow_nosystem = [c for c in _pillow_cmd if c != "--system"]
-            _pillow_proc2 = subprocess.run(_pillow_nosystem, check=False)
-            if _pillow_proc2.returncode == 0:
-                _pillow_proc = _pillow_proc2
-    except FileNotFoundError:
-        _pillow_proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--break-system-packages",
-                _pillow_spec,
-            ],
-            check=False,
-        )
-    if _pillow_proc.returncode != 0:
-        print(
-            f"[setup] WARNING: Pillow upgrade to {_pillow_spec} failed; import may fail with PIL._typing._Ink."
-        )
     # Fetch HF token from Kaggle secrets (never from env directly).
     if IS_KAGGLE:
-        from kaggle_secrets import UserSecretsClient  # type: ignore[import-not-found]
+        try:
+            from kaggle_secrets import (  # type: ignore[missing-import]
+                UserSecretsClient,  # type: ignore[import-not-found]
+            )
+        except ImportError:
+            _HF_TOKEN_FROM_SECRETS: str | None = None
+        else:
+            _kaggle_user_secrets = UserSecretsClient()
+            _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret(
+                "HF_TOKEN"
+            )
 
-        _kaggle_user_secrets = UserSecretsClient()
-        _HF_TOKEN_FROM_SECRETS: str | None = _kaggle_user_secrets.get_secret("HF_TOKEN")
     else:
         _HF_TOKEN_FROM_SECRETS: str | None = None
+    for _mod in list(sys.modules):
+        if _mod == "PIL" or _mod.startswith("PIL."):
+            sys.modules.pop(_mod, None)
     print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
 
 # %% [code.2]
@@ -185,17 +186,6 @@ from pathlib import Path
 from typing import Any
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# Pillow compat guard: torchvision>=0.23 needs Pillow>=12.3 (_Ink). Give
-# actionable hint if Kaggle setup cell was skipped or Pillow not upgraded.
-try:
-    from PIL._typing import _Ink  # noqa: F401
-except ImportError as _pil_err:
-    raise ImportError(
-        f"{_pil_err}\n[HINT] Pillow too old (needs >=12.3.0 for torchvision). "
-        'Run `pip install "Pillow>=12.3.0"` and restart kernel. '
-        "On Kaggle, re-run the setup cell above."
-    ) from _pil_err
 
 import numpy as np
 import torch

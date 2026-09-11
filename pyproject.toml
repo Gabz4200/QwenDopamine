@@ -30,7 +30,7 @@ dependencies = [
     "taichi>=1.7.4",
     "tensorboard>=2.21.0",
     "tokenizers>=0.22.0",
-    "torch>=2.11.0",
+    "torch>=2.4.0",
     "torchao>=0.17.0",
     "torchvision>=0.20.0",
     "tqdm>=4.70.0",
@@ -41,15 +41,15 @@ include-package-data = true
 
 [project.optional-dependencies]
 cpu = [
-    "torch>=2.11.0",
+    "torch>=2.4.0",
     "torchvision>=0.20.0",
-    "torchao>=0.18.0",
+    "torchao>=0.17.0",
     "accelerate>=1.14.0",
     "bitsandbytes>=0.50.2",
     "sentencepiece>=0.2.2",
 ]
 cu128 = [
-    "torch>=2.11.0",
+    "torch>=2.4.0",
     "torchvision>=0.20.0",
     "torchao>=0.17.0",
     "accelerate>=1.14.0",
@@ -57,7 +57,7 @@ cu128 = [
     "tensorboard>=2.21.0",
 ]
 cuda = [
-    "torch>=2.11.0",
+    "torch>=2.4.0",
     "torchvision>=0.20.0",
     "torchao>=0.17.0",
     "accelerate>=1.14.0",
@@ -65,7 +65,7 @@ cuda = [
     "tensorboard>=2.21.0",
 ]
 gpu = [
-    "torch>=2.11.0",
+    "torch>=2.4.0",
     "torchvision>=0.20.0",
     "torchao>=0.17.0",
     "accelerate>=1.14.0",

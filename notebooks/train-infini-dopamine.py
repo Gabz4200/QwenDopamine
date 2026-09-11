@@ -414,12 +414,14 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
         "Lichess/standard-chess-games",
     ],
     # Stage 2 — Spatial world-models + tool use (Maze isolated to this stage)
+    # + small LLM replay (wikitext 3k) to keep instruction-following alive.
     "2_spatial": [
         "Kalso42/WorldModelForMaze",
         "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg",
         "lockon/ToolACE",
         "Decix/ReBel-ALFWorld-SFT-Trajectories",
         "thuml/bytesized32-world-model-cot",
+        "Salesforce/wikitext",
     ],
     # Stage 3 — ARC-AGI-3 core agent trajectories (MAIN TARGET, 5+2 datasets)
     # 4 codex/kimi rollouts + Nemotron SFT (large_reasoning_and_tools).
@@ -471,7 +473,7 @@ CURRICULUM_WEIGHT_DECAY: dict[str, float] = {
     "4_reasoning_world": 0.02,
 }
 # Dataset caps per stage to prevent large chess from dwarfing ARC (50-400 ex)
-# and to keep LLM replay small (5k) while retaining capabilities.
+# and to keep LLM replay small (3-5k) while retaining capabilities.
 # Applied in build_streaming_dataset via DATASET_SUBSET_MAP override.
 CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
     "1_arc_foundation": {
@@ -479,8 +481,8 @@ CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
         "laion/strategic_game_chess": 5_000,
     },
     "2_spatial": {
-        # Maze already isolated; keep other spatial caps moderate
         "thuml/bytesized32-world-model-cot": 20_000,
+        "Salesforce/wikitext": 3_000,
     },
     "3_arc_agent": {
         "nvidia/Nemotron-SFT-ARC-AGI-v1": 50_000,
@@ -492,6 +494,32 @@ CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
         "Salesforce/wikitext": 5_000,
         "faunix/Qwen3.8-27B-Distillation-40K": 5_000,
     },
+}
+# Weighted interleave probabilities per stage (order matches CURRICULUM_STAGES).
+# None = equal round-robin (default); list = sampling weight per dataset in stage.
+# Used to upweight tiny ARC sets (50-400) vs large chess (15k capped).
+CURRICULUM_PROBABILITIES: dict[str, list[float] | None] = {
+    "0_foundation": None,
+    "1_arc_foundation": [0.25, 0.25, 0.20, 0.15, 0.15],  # arc2, CoD, schema, laion, lichess
+    "2_spatial": None,
+    "3_arc_agent": None,
+    "4_reasoning_world": None,
+}
+# NEFTune noise alpha per stage: only early LM/ARC foundation need embedding noise.
+CURRICULUM_NEFTUNE: dict[str, float | None] = {
+    "0_foundation": 5.0,
+    "1_arc_foundation": 5.0,
+    "2_spatial": None,
+    "3_arc_agent": None,
+    "4_reasoning_world": None,
+}
+# Epochs per stage: ARC agent core (main target) gets 2 epochs to converge.
+CURRICULUM_EPOCHS: dict[str, int] = {
+    "0_foundation": 1,
+    "1_arc_foundation": 1,
+    "2_spatial": 1,
+    "3_arc_agent": 2,
+    "4_reasoning_world": 1,
 }
 
 DATASET_TEXT_COLUMN: str = "text"
@@ -1558,10 +1586,18 @@ def build_streaming_dataset(
     streams = [_stream_for(n, use_capped, stage_name=stage_name) for n in dataset_names]
     if len(streams) == 1:
         return streams[0]
+    # Weighted interleave per stage: upweight tiny ARC sets (50-400) vs large chess (15k capped)
+    # in 1_arc_foundation. Other stages keep equal round-robin.
+    probs = None
+    if stage_name is not None:
+        probs = CURRICULUM_PROBABILITIES.get(stage_name)  # type: ignore[name-defined]
+        if probs is not None and len(probs) != len(streams):
+            print(f"[warn] probabilities length mismatch for {stage_name}: {len(probs)} vs {len(streams)}, using equal")
+            probs = None
     # all_exhausted ensures wikitext (50k capped) doesn't stop larger streams early — the
     # 24-way interleave keeps sampling until every source is drained, balancing world-model traces.
     # Per-stage caps above (CURRICULUM_SUBSET_OVERRIDES) keep tiny ARC sets from being dwarfed.
-    return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted")
+    return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted", probabilities=probs)
 
 
 def peek_streaming_dataset(dataset_names: list[str], seed: int = 42, stage_name: str | None = None) -> IterableDataset:
@@ -1584,6 +1620,14 @@ def _drop_stage_cache(stage_datasets: list[str]) -> None:
     """Remove snapshot caches for datasets in the finished stage to free disk."""
     import shutil
 
+    def _log_disk(prefix: str) -> None:
+        try:
+            du = shutil.disk_usage(".")
+            print(f"[disk] {prefix}: {du.free / 1024**3:.1f}GB free / {du.total / 1024**3:.1f}GB total")
+        except OSError:
+            pass
+
+    _log_disk("before drop")
     if "DylanRiden/smb-worldmodel-data" in stage_datasets:
         p = Path(SMB_CACHE_DIR)
         if p.exists():
@@ -1594,6 +1638,7 @@ def _drop_stage_cache(stage_datasets: list[str]) -> None:
         if p.exists():
             print(f"[curriculum] dropping Maze cache {p}")
             shutil.rmtree(p, ignore_errors=True)
+    _log_disk("after drop")
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -2099,9 +2144,11 @@ else:
 
 
 def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
-    # Per-stage LR/WD decay across curriculum to avoid overfitting late ARC stages.
+    # Per-stage LR/WD/epochs/neftune decay across curriculum to avoid overfitting late ARC stages.
     lr = CURRICULUM_LEARNING_RATES.get(stage_name, LEARNING_RATE) if stage_name else LEARNING_RATE  # type: ignore[name-defined]
     wd = CURRICULUM_WEIGHT_DECAY.get(stage_name, WEIGHT_DECAY) if stage_name else WEIGHT_DECAY  # type: ignore[name-defined]
+    epochs = CURRICULUM_EPOCHS.get(stage_name, NUM_TRAIN_EPOCHS) if stage_name else NUM_TRAIN_EPOCHS  # type: ignore[name-defined]
+    neftune = CURRICULUM_NEFTUNE.get(stage_name, NEFTUNE_NOISE_ALPHA) if stage_name is not None else NEFTUNE_NOISE_ALPHA  # type: ignore[name-defined]
     run_name = f"curriculum-{stage_name}" if stage_name else None
     # Use warmup_ratio (not steps) so curriculum stages with different sizes get proportional warmup.
     warmup_steps = 0 if not _USE_SMOKE_CONFIG else WARMUP_STEPS
@@ -2115,7 +2162,7 @@ def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
         lr_scheduler_type=LR_SCHEDULER_TYPE,
         warmup_steps=warmup_steps,
         warmup_ratio=warmup_ratio,
-        num_train_epochs=NUM_TRAIN_EPOCHS,
+        num_train_epochs=epochs,
         max_steps=MAX_TRAIN_STEPS,
         logging_steps=LOGGING_STEPS,
         save_steps=SAVE_STEPS,
@@ -2134,11 +2181,14 @@ def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
         data_seed=42,
         label_smoothing_factor=LABEL_SMOOTHING_FACTOR,
         max_grad_norm=MAX_GRAD_NORM,
-        neftune_noise_alpha=NEFTUNE_NOISE_ALPHA,
+        neftune_noise_alpha=neftune,
         eval_strategy=EVAL_STRATEGY if not _USE_SMOKE_CONFIG else "no",
         eval_steps=EVAL_STEPS if not _USE_SMOKE_CONFIG else None,
         save_strategy="steps",
-        load_best_model_at_end=False,
+        load_best_model_at_end=not _USE_SMOKE_CONFIG,
+        metric_for_best_model="eval_loss" if not _USE_SMOKE_CONFIG else None,
+        greater_is_better=False,
+        eval_accumulation_steps=1,
         # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.
         ddp_find_unused_parameters=True,
         dataloader_drop_last=True,
@@ -2215,12 +2265,19 @@ elif USE_CURRICULUM:
         if IS_MAIN:
             print(f"[stage {_stage_name}] complete; next checkpoint: {_last_checkpoint}")
 else:
-    # Legacy single-pass over all 17 datasets (capped-full or non-curriculum override).
+    # Legacy single-pass over all 24 datasets (capped-full or non-curriculum override).
+    # Create small eval split from same datasets with different seed for overfitting detection.
+    _legacy_eval_ds = None
+    if not _USE_SMOKE_CONFIG:
+        _legacy_eval_raw = build_streaming_dataset(CPT_DATASETS, seed=99).take(500)
+        _legacy_eval_cols = _cols_to_remove_for(_legacy_eval_raw)
+        _legacy_eval_ds = _legacy_eval_raw.map(tokenize_fn, batched=False, remove_columns=_legacy_eval_cols).filter(_keep_tokenized)
     training_args = _stage_training_args(None)
     trainer = CPTSFTTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
+        eval_dataset=_legacy_eval_ds,
         processing_class=tokenizer,
         data_collator=data_collator,
         reward_every_n_steps=REWARD_EVERY_N_STEPS,

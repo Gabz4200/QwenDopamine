@@ -367,6 +367,15 @@ CPT_DATASETS: list[str] = [
 # dataset (see the dataset cell below).
 # ---------------------------------------------------------------------------
 LOCAL_SYNTHETIC_DATASET: str = "__local_synthetic__"
+# Re-derive if kernel was restarted and setup cell skipped (setup defines these).
+if "_USE_SMOKE_CONFIG" not in globals():
+    import os as _os_fallback
+
+    IS_KAGGLE = _os_fallback.path.isdir("/kaggle/working") or _os_fallback.environ.get("KAGGLE_KERNEL_RUN") == "true"  # type: ignore[no-redef]
+    _CAPPED_FULL = _os_fallback.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"  # type: ignore[no-redef]
+    _USE_SMOKE_CONFIG = not IS_KAGGLE or _CAPPED_FULL  # type: ignore[no-redef]
+if "_HF_TOKEN_FROM_SECRETS" not in globals():
+    _HF_TOKEN_FROM_SECRETS = None  # type: ignore[no-redef]
 if _USE_SMOKE_CONFIG and not _CAPPED_FULL:
     CPT_DATASETS = [LOCAL_SYNTHETIC_DATASET]
 

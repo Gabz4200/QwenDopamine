@@ -360,6 +360,14 @@ CPT_DATASETS: list[str] = [
     "Glint-Research/Fable-5-traces",
     "Salesforce/wikitext",
     "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
+    # ARC AGI 3 target — extremely important, spread across curriculum stages
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-s5i5",
+    "AgentNativeResearchLab/arc-agi3-kimi-k2.7-g50t",
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l",
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l",
+    "nvidia/Nemotron-SFT-ARC-AGI-v1",
+    "zhmz90/arc-agi-2",
+    "dvilasuero/chain-of-draft-r1",
 ]
 
 # ---------------------------------------------------------------------------
@@ -379,14 +387,16 @@ if "_HF_TOKEN_FROM_SECRETS" not in globals():
 if _USE_SMOKE_CONFIG and not _CAPPED_FULL:
     CPT_DATASETS = [LOCAL_SYNTHETIC_DATASET]
 
-# Curriculum Learning: 4 stages easy→hard (Bengio 2009). Each stage
+# Curriculum Learning: 5 stages easy→hard (Bengio 2009). Each stage
 # holds ~4-5 datasets; after a stage finishes its cache/dataset objects
 # are dropped (`del` + gc + cache wipe) before the next stage, so
-# peak disk stays ~8-17GB instead of ~20GB+ for all 17. Order by
-# transition-horizon and supervision density: general language →
-# deterministic games → spatial world-models → long-horizon CoT/reward.
+# peak disk stays ~17GB max (Maze isolated) not 20GB+ for all 24.
+# Order by transition-horizon: general language → ARC fundamentals →
+# spatial world-models → ARC-AGI-3 agent trajectories (main target) →
+# long-horizon world-reasoning. ARC datasets spread so early stages see
+# ARC-2/CoD/schema, core ARC-3 agent stage sees 4 codex/kimi rollouts.
 CURRICULUM_STAGES: dict[str, list[str]] = {
-    # Stage 0 — Foundation language & distillation (short horizon, dense supervision)
+    # Stage 0 — Foundation language & distillation (short horizon, dense LM)
     "0_foundation": [
         "Salesforce/wikitext",
         "ryanmarten/OpenThoughts-1k-sample",
@@ -394,25 +404,36 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
         "faunix/Qwen3.8-27B-Distillation-40K",
         "greghavens/kimi-k3-coding-and-debugging-traces",
     ],
-    # Stage 1 — Game & tool trajectories (deterministic state→action)
-    "1_game_tool": [
+    # Stage 1 — ARC fundamentals + efficient reasoning (ARC-2, CoD, schema, chess)
+    # Introduces grid pattern + concise chain-of-draft before full ARC-3.
+    "1_arc_foundation": [
+        "zhmz90/arc-agi-2",
+        "dvilasuero/chain-of-draft-r1",
+        "schema-harness/arc-agi-3-schema-traces",
         "laion/strategic_game_chess",
         "Lichess/standard-chess-games",
-        "lockon/ToolACE",
-        "Decix/ReBel-ALFWorld-SFT-Trajectories",
     ],
-    # Stage 2 — Spatial world-models (partial observability, grid dynamics)
-    # Maze (17GB snapshot isolated here) + Sokoban + ARC need latent map.
+    # Stage 2 — Spatial world-models + tool use (Maze isolated to this stage)
     "2_spatial": [
         "Kalso42/WorldModelForMaze",
         "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg",
-        "schema-harness/arc-agi-3-schema-traces",
-    ],
-    # Stage 3 — Reasoning world-models & agent CoT (long horizon, reward-conditioned)
-    # SMB (1GB zip isolated away from Maze) + bytesized/world_model_corpus + cot-eval + Fable
-    "3_reasoning_world": [
-        "DylanRiden/smb-worldmodel-data",
+        "lockon/ToolACE",
+        "Decix/ReBel-ALFWorld-SFT-Trajectories",
         "thuml/bytesized32-world-model-cot",
+    ],
+    # Stage 3 — ARC-AGI-3 core agent trajectories (MAIN TARGET, 5 datasets)
+    # 4 codex/kimi rollouts + Nemotron SFT (large_reasoning_and_tools).
+    # All streaming, no snapshot, so 5 together is fine.
+    "3_arc_agent": [
+        "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-s5i5",
+        "AgentNativeResearchLab/arc-agi3-kimi-k2.7-g50t",
+        "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l",
+        "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l",
+        "nvidia/Nemotron-SFT-ARC-AGI-v1",
+    ],
+    # Stage 4 — Reasoning world-models & long CoT (SMB isolated away from Maze)
+    "4_reasoning_world": [
+        "DylanRiden/smb-worldmodel-data",
         "PatronusAI/world_model_corpus",
         "cot-leaderboard/cot-eval-traces-2.0",
         "Glint-Research/Fable-5-traces",
@@ -1067,6 +1088,81 @@ def format_r0b0tlab(example: dict) -> dict:
     return {"text": text}
 
 
+def format_arc2(example: dict) -> dict:
+    """zhmz90/arc-agi-2: train/test grids with filename."""
+    filename = example.get("filename", "")
+    parts = [f"ARC-AGI-2 [{filename}]"]
+    train = example.get("train", [])
+    test = example.get("test", [])
+    if train:
+        parts.append(f"Train examples: {len(train)}")
+        for i, ex in enumerate(train[:3]):
+            inp = ex.get("input", ex) if isinstance(ex, dict) else ex
+            out = ex.get("output", "") if isinstance(ex, dict) else ""
+            parts.append(f"  Train {i} input: {inp} -> output: {out}")
+    if test:
+        parts.append(f"Test examples: {len(test)}")
+        for i, ex in enumerate(test[:2]):
+            inp = ex.get("input", ex) if isinstance(ex, dict) else ex
+            out = ex.get("output", "") if isinstance(ex, dict) else ""
+            parts.append(f"  Test {i} input: {inp} -> output: {out}")
+    return {"text": "\n".join(parts)}
+
+
+def format_chain_of_draft(example: dict) -> dict:
+    """dvilasuero/chain-of-draft-r1: question + CoD vs standard."""
+    question = example.get("question", "")
+    answer = example.get("answer", "")
+    cod = example.get("cod", "")
+    standard = example.get("standard", "")
+    parts = []
+    if question:
+        parts.append(f"Question: {question}")
+    # Prefer CoD (concise draft) for efficient reasoning; fall back to standard.
+    reasoning = cod.strip() if cod and cod.strip() else standard
+    if reasoning:
+        parts.append(f"Reasoning: {reasoning}")
+    if answer:
+        parts.append(f"Answer: {answer}")
+    return {"text": "\n".join(parts)}
+
+
+def format_nemotron(example: dict) -> dict:
+    """nvidia/Nemotron-SFT-ARC-AGI-v1: messages with system+user ARC puzzle."""
+    text = _flatten_messages(example.get("messages", []))
+    tools = example.get("tools", [])
+    if tools:
+        tool_names = ", ".join(t.get("name", "?") for t in tools if isinstance(t, dict))
+        text = f"[Tools: {tool_names}]\n{text}"
+    meta = example.get("metadata", "")
+    if meta:
+        text = f"{text}\n[metadata: {meta}]"
+    return {"text": text}
+
+
+def format_ara_agent(example: dict) -> dict:
+    """AgentNativeResearchLab ARC-AGI-3 agent trajectories (episodes + ara stats).
+
+    Streaming yields mixed rows: episodes (turn/action/state/frame) and
+    accounting (ts/claims/trace_nodes). Handle both without dropping.
+    """
+    if "frame" in example:
+        turn = example.get("turn", "")
+        action = example.get("action", "")
+        state = example.get("state", "")
+        levels = example.get("levels_completed", "")
+        frame = str(example.get("frame", ""))[:1200]
+        return {"text": f"ARC3 Episode turn={turn} action={action} state={state} levels={levels}\nFrame:\n{frame}"}
+    if "ts" in example:
+        turn = example.get("turn", "")
+        trace_nodes = example.get("trace_nodes", "")
+        ara_bytes = example.get("ara_bytes", "")
+        claims = example.get("claims", "")
+        return {"text": f"ARC3 Trace ts={example.get('ts','')} turn={turn} nodes={trace_nodes} bytes={ara_bytes} claims={claims}"}
+    # Fallback for ledger/predictions rows
+    return {"text": " ".join(str(v)[:500] for v in example.values() if isinstance(v, (str, int, float)))}
+
+
 DATASET_FORMATTERS = {
     "DylanRiden/smb-worldmodel-data": format_smb,
     "Kalso42/WorldModelForMaze": format_maze,
@@ -1085,6 +1181,13 @@ DATASET_FORMATTERS = {
     "Glint-Research/Fable-5-traces": format_fable5,
     "Salesforce/wikitext": format_wikitext,
     "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation": format_r0b0tlab,
+    "zhmz90/arc-agi-2": format_arc2,
+    "dvilasuero/chain-of-draft-r1": format_chain_of_draft,
+    "nvidia/Nemotron-SFT-ARC-AGI-v1": format_nemotron,
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-s5i5": format_ara_agent,
+    "AgentNativeResearchLab/arc-agi3-kimi-k2.7-g50t": format_ara_agent,
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l": format_ara_agent,
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l": format_ara_agent,
 }
 
 
@@ -1213,6 +1316,8 @@ DATASET_CONFIG_MAP = {
     "Glint-Research/Fable-5-traces": ("pi_agent", "train"),
     "Salesforce/wikitext": ("wikitext-103-raw-v1", "train"),
     "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation": ("sft_balanced", "train"),
+    "schema-harness/arc-agi-3-schema-traces": ("default", "test"),
+    "nvidia/Nemotron-SFT-ARC-AGI-v1": ("large_reasoning_and_tools", "train"),
 }
 
 DATASET_SUBSET_MAP = {

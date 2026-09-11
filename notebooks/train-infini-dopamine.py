@@ -448,6 +448,39 @@ if USE_CURRICULUM:
     assert LOCAL_SYNTHETIC_DATASET not in _all_curriculum, "curriculum must use real datasets only"
     assert all(not n.startswith("__") for n in _all_curriculum), "no synthetic keys in curriculum"
 
+# Per-stage hyperparameters tuned for overfitting: LR decay across curriculum,
+# caps to balance tiny ARC sets (50-400) vs large chess (500k).
+CURRICULUM_LEARNING_RATES: dict[str, float] = {
+    "0_foundation": 5e-5,
+    "1_arc_foundation": 3e-5,
+    "2_spatial": 2e-5,
+    "3_arc_agent": 1.5e-5,
+    "4_reasoning_world": 1e-5,
+}
+CURRICULUM_WEIGHT_DECAY: dict[str, float] = {
+    "0_foundation": 0.02,
+    "1_arc_foundation": 0.03,
+    "2_spatial": 0.02,
+    "3_arc_agent": 0.03,
+    "4_reasoning_world": 0.02,
+}
+# Dataset caps per stage to prevent large chess from dwarfing ARC (50-400 ex).
+# Applied in build_streaming_dataset via DATASET_SUBSET_MAP override.
+CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
+    "1_arc_foundation": {
+        "Lichess/standard-chess-games": 15_000,
+        "laion/strategic_game_chess": 5_000,
+    },
+    "2_spatial": {
+        # Maze already isolated; keep other spatial caps moderate
+        "thuml/bytesized32-world-model-cot": 20_000,
+    },
+    "3_arc_agent": {
+        # All 5 are ARC streaming small; no cap needed, but keep Nemotron moderate
+        "nvidia/Nemotron-SFT-ARC-AGI-v1": 50_000,
+    },
+}
+
 DATASET_TEXT_COLUMN: str = "text"
 MAX_SEQ_LENGTH: int = 1024
 
@@ -463,8 +496,10 @@ LOAD_IN_4BIT: bool = False
 USE_LORA: bool = True
 LORA_R: int = 16
 LORA_ALPHA: int = 32
-LORA_DROPOUT: float = 0.05
+LORA_DROPOUT: float = 0.10
 USE_RSLORA: bool = True
+# Extra regularization for ARC-heavy curriculum: higher dropout on later ARC stages
+# is applied via per-stage LORA_DROPOUT_OVERRIDES below.
 # Targets resolved to nn.Linear; shared Qwen3.5 Linear weights are trained
 # via QLoRA, exclusive InfiniDopamine Linear weights that can be LoRA are
 # also via LoRA, and exclusive non-Linear weights are trained directly.
@@ -541,18 +576,26 @@ REWARD_REFRESH_WARMUP_STEPS: int = 0 if _USE_SMOKE_CONFIG else 100
 
 PER_DEVICE_TRAIN_BATCH_SIZE: int = 1
 GRADIENT_ACCUMULATION_STEPS: int = 1 if _USE_SMOKE_CONFIG else 16
-LEARNING_RATE: float = 1e-4
-WEIGHT_DECAY: float = 0.01
+# Tuned to avoid overfitting on 24-dataset curriculum (esp. ARC 50-400 ex stages):
+# base LR 5e-5 with per-stage decay, higher weight decay + dropout + label smoothing.
+LEARNING_RATE: float = 5e-5
+WEIGHT_DECAY: float = 0.02
 LR_SCHEDULER_TYPE: str = "cosine"
-WARMUP_STEPS: int = 0 if _USE_SMOKE_CONFIG else 100
+WARMUP_STEPS: int = 0 if _USE_SMOKE_CONFIG else 200
+WARMUP_RATIO: float = 0.06
 NUM_TRAIN_EPOCHS: int = 1
 MAX_TRAIN_STEPS: int | None = (
     int(os.environ.get("QWD_LOCAL_STEPS", "2")) if _USE_SMOKE_CONFIG else None
 )
+LABEL_SMOOTHING_FACTOR: float = 0.05
+MAX_GRAD_NORM: float = 1.0
+NEFTUNE_NOISE_ALPHA: float | None = 5.0
 
 LOGGING_STEPS: int = 1 if _USE_SMOKE_CONFIG else 10
 SAVE_STEPS: int = 2 if _USE_SMOKE_CONFIG else 500
 SAVE_TOTAL_LIMIT: int = 1 if _USE_SMOKE_CONFIG else 2
+EVAL_STEPS: int = 500
+EVAL_STRATEGY: str = "steps"
 
 _RUN_ROOT = (
     os.environ.get("KAGGLE_WORKING_DIR", "/kaggle/working")
@@ -1445,8 +1488,13 @@ def _mock_stream_for_dataset(name: str, n: int | None = None) -> IterableDataset
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
-def _apply_subset(ds: Any, dataset_name: str) -> IterableDataset:
-    max_rows = DATASET_SUBSET_MAP.get(dataset_name)
+def _apply_subset(ds: Any, dataset_name: str, stage_name: str | None = None) -> IterableDataset:
+    # Stage-specific caps override global DATASET_SUBSET_MAP to balance tiny ARC sets.
+    max_rows = None
+    if stage_name is not None:
+        max_rows = CURRICULUM_SUBSET_OVERRIDES.get(stage_name, {}).get(dataset_name)  # type: ignore[name-defined]
+    if max_rows is None:
+        max_rows = DATASET_SUBSET_MAP.get(dataset_name)
     if max_rows is None:
         result: IterableDataset = ds
         return result
@@ -1460,7 +1508,7 @@ def _apply_subset(ds: Any, dataset_name: str) -> IterableDataset:
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
-def _stream_for(name: str, use_capped: bool) -> IterableDataset:
+def _stream_for(name: str, use_capped: bool, stage_name: str | None = None) -> IterableDataset:
     if name == LOCAL_SYNTHETIC_DATASET and IS_KAGGLE:
         raise RuntimeError("synthetic dataset not allowed on Kaggle; curriculum must use real datasets")
     if use_capped:
@@ -1480,30 +1528,32 @@ def _stream_for(name: str, use_capped: bool) -> IterableDataset:
     fmt = DATASET_FORMATTERS.get(name)
     if fmt is not None:
         ds = ds.map(_fmt, batched=False)
-    result: IterableDataset = _apply_subset(ds, name)
+    result: IterableDataset = _apply_subset(ds, name, stage_name=stage_name)
     return result
 
 
 def build_streaming_dataset(
     dataset_names: list[str],
     seed: int = 42,
+    stage_name: str | None = None,
 ) -> IterableDataset:
     use_capped = _CAPPED_FULL
     if use_capped:
         print(
             f"[capped-full] using {_capped_rows()} mocked rows per dataset for {len(dataset_names)} datasets"
         )
-    streams = [_stream_for(n, use_capped) for n in dataset_names]
+    streams = [_stream_for(n, use_capped, stage_name=stage_name) for n in dataset_names]
     if len(streams) == 1:
         return streams[0]
     # all_exhausted ensures wikitext (50k capped) doesn't stop larger streams early — the
-    # 17-way interleave keeps sampling until every source is drained, balancing world-model traces.
+    # 24-way interleave keeps sampling until every source is drained, balancing world-model traces.
+    # Per-stage caps above (CURRICULUM_SUBSET_OVERRIDES) keep tiny ARC sets from being dwarfed.
     return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted")
 
 
-def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> IterableDataset:
+def peek_streaming_dataset(dataset_names: list[str], seed: int = 42, stage_name: str | None = None) -> IterableDataset:
     rank_seed = seed + RANK
-    train_dataset = build_streaming_dataset(dataset_names, seed=rank_seed)
+    train_dataset = build_streaming_dataset(dataset_names, seed=rank_seed, stage_name=stage_name)
     if IS_MAIN:
         sample = next(iter(train_dataset.take(1)), None)
         if sample is None:
@@ -2036,16 +2086,22 @@ else:
 
 
 def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
-    # Reused for each curriculum stage; stage_name only affects run_name for TB.
+    # Per-stage LR/WD decay across curriculum to avoid overfitting late ARC stages.
+    lr = CURRICULUM_LEARNING_RATES.get(stage_name, LEARNING_RATE) if stage_name else LEARNING_RATE  # type: ignore[name-defined]
+    wd = CURRICULUM_WEIGHT_DECAY.get(stage_name, WEIGHT_DECAY) if stage_name else WEIGHT_DECAY  # type: ignore[name-defined]
     run_name = f"curriculum-{stage_name}" if stage_name else None
+    # Use warmup_ratio (not steps) so curriculum stages with different sizes get proportional warmup.
+    warmup_steps = 0 if not _USE_SMOKE_CONFIG else WARMUP_STEPS
+    warmup_ratio = WARMUP_RATIO if not _USE_SMOKE_CONFIG else 0.0
     return TrainingArguments(
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        learning_rate=LEARNING_RATE,
-        weight_decay=WEIGHT_DECAY,
+        learning_rate=lr,
+        weight_decay=wd,
         lr_scheduler_type=LR_SCHEDULER_TYPE,
-        warmup_steps=WARMUP_STEPS,
+        warmup_steps=warmup_steps,
+        warmup_ratio=warmup_ratio,
         num_train_epochs=NUM_TRAIN_EPOCHS,
         max_steps=MAX_TRAIN_STEPS,
         logging_steps=LOGGING_STEPS,
@@ -2063,9 +2119,17 @@ def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
         run_name=run_name,
         seed=42,
         data_seed=42,
+        label_smoothing_factor=LABEL_SMOOTHING_FACTOR,
+        max_grad_norm=MAX_GRAD_NORM,
+        neftune_noise_alpha=NEFTUNE_NOISE_ALPHA,
+        eval_strategy=EVAL_STRATEGY if not _USE_SMOKE_CONFIG else "no",
+        eval_steps=EVAL_STEPS if not _USE_SMOKE_CONFIG else None,
+        save_strategy="steps",
+        load_best_model_at_end=False,
         # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.
         ddp_find_unused_parameters=True,
         dataloader_drop_last=True,
+        dataloader_num_workers=0,
     )
 
 
@@ -2095,18 +2159,27 @@ elif USE_CURRICULUM:
             for _n in _stage_datasets:
                 print(f"  - {_n}")
         # Build and tokenize only this stage's datasets; previous stage's caches
-        # have already been wiped via _drop_stage_cache.
-        _stage_ds = peek_streaming_dataset(_stage_datasets)
+        # have already been wiped via _drop_stage_cache. Stage caps balance tiny ARC
+        # sets (50-400) vs large chess (15k capped) to avoid overfitting.
+        _stage_ds = peek_streaming_dataset(_stage_datasets, stage_name=_stage_name)
         _stage_cols = _cols_to_remove_for(_stage_ds)
         _stage_ds = _stage_ds.map(tokenize_fn, batched=False, remove_columns=_stage_cols)
         _stage_ds = _stage_ds.filter(_keep_tokenized)
+        # Small eval split (500 ex) for overfitting detection per stage; uses same
+        # stage datasets but different seed so eval doesn't overlap train.
+        _stage_eval_ds = None
+        if not _USE_SMOKE_CONFIG:
+            _eval_raw = build_streaming_dataset(_stage_datasets, seed=43 + _stage_idx, stage_name=_stage_name).take(500)  # type: ignore[name-defined]
+            _eval_cols = _cols_to_remove_for(_eval_raw)
+            _stage_eval_ds = _eval_raw.map(tokenize_fn, batched=False, remove_columns=_eval_cols).filter(_keep_tokenized)
         if IS_MAIN:
-            print(f"[stage {_stage_name}] tokenized, total stages remaining disk freed after prior stage")
+            print(f"[stage {_stage_name}] tokenized train+eval, disk freed after prior stage")
         training_args = _stage_training_args(_stage_name)
         trainer = CPTSFTTrainer(
             model=model,
             args=training_args,
             train_dataset=_stage_ds,
+            eval_dataset=_stage_eval_ds,
             processing_class=tokenizer,
             data_collator=data_collator,
             reward_every_n_steps=REWARD_EVERY_N_STEPS,
@@ -2121,7 +2194,7 @@ elif USE_CURRICULUM:
         # Resolve latest checkpoint for next stage resume (if any).
         _latest = find_latest_checkpoint(OUTPUT_DIR)
         _last_checkpoint = str(_latest) if _latest is not None else None
-        del _stage_ds, _stage_cols
+        del _stage_ds, _stage_cols, _stage_eval_ds, _eval_raw, _eval_cols  # type: ignore[possibly-undefined]
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

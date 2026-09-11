@@ -60,6 +60,11 @@ except ImportError:
 IS_KAGGLE: bool = (
     os.path.isdir("/kaggle/working") or os.environ.get("KAGGLE_KERNEL_RUN") == "true"
 )
+# Kaggle batch (commit) vs interactive detection via KAGGLE_KERNEL_RUN_TYPE
+# Batch = Save & Run All / Commit, Interactive = notebook editor.
+KAGGLE_KERNEL_RUN_TYPE: str = os.environ.get("KAGGLE_KERNEL_RUN_TYPE", "")
+IS_BATCH: bool = KAGGLE_KERNEL_RUN_TYPE == "Batch"
+IS_INTERACTIVE: bool = IS_KAGGLE and not IS_BATCH
 LOCAL_TEST: bool = not IS_KAGGLE
 _CAPPED_FULL: bool = os.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"
 _USE_SMOKE_CONFIG: bool = not IS_KAGGLE or _CAPPED_FULL
@@ -106,88 +111,119 @@ if not _SHOULD_INSTALL:
     _HF_TOKEN_FROM_SECRETS: str | None = None
 else:
     _install_reason = "Kaggle" if IS_KAGGLE else "debug flag QWD_DEBUG_INSTALL"
-    print(f"[setup] {_install_reason} detected — installing via uv...")
-    _GIT_URL = "git+https://github.com/Gabz4200/QwenDopamine.git"
-    # gpu: GPU torch via pytorch-cu128 index; cpt: streaming CPT deps (datasets/peft/trl/Pillow);
-    # hf: datasets/tokenizers (overlaps cpt but kept for minimal Kaggle image).
-    _PACKAGE_SPEC = os.environ.get(
-        "QWD_PACKAGE_SPEC", f"qwendopamine[gpu,cpt,hf] @ {_GIT_URL}"
-    )
-    # Force-reinstall the numpy/scipy/sklearn trio together so their C
-    # extensions stay ABI-matched. Without this a Kaggle image with a stale
-    # scipy + new numpy yields `ImportError: _center` on the next cell.
-    _COMPAT_PINS = [
-        "numpy>=2.0,<2.5",
-        "scipy>=1.15,<1.18",
-        "scikit-learn>=1.6.0",
-    ]
-
-    def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+    # In batch (commit) the kernel is fresh, so pip install before any
+    # numpy/scipy import does not require a manual restart. In interactive,
+    # the kernel may already hold stale C extensions, so we warn to restart.
+    # Detect trio health first to skip install entirely when possible (batch-friendly).
+    def _trio_healthy() -> bool:
         try:
-            return subprocess.run(cmd, check=False)
-        except FileNotFoundError:
-            return subprocess.CompletedProcess(cmd, returncode=127)
+            _chk = subprocess.run(
+                [sys.executable, "-c", "from scipy.sparse import csr_matrix; import sklearn; print('ok')"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return _chk.returncode == 0
+        except Exception:  # noqa: BLE001 - health check must not crash setup
+            return False
 
-    def _pip_fallback(spec: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--break-system-packages", spec],
+    _skip_install = False
+    if not _FORCE_INSTALL and _trio_healthy():
+        try:
+            _existing_ver = importlib.metadata.version("qwendopamine")
+            _skip_install = True
+            print(f"[setup] trio healthy and qwendopamine {_existing_ver} present, skipping install (batch-friendly)")
+        except importlib.metadata.PackageNotFoundError:
+            _skip_install = False
+
+    if not _skip_install:
+        print(f"[setup] {_install_reason} detected — installing via uv...")
+        _GIT_URL = "git+https://github.com/Gabz4200/QwenDopamine.git"
+        # gpu: GPU torch via pytorch-cu128 index; cpt: streaming CPT deps (datasets/peft/trl/Pillow);
+        # hf: datasets/tokenizers (overlaps cpt but kept for minimal Kaggle image).
+        _PACKAGE_SPEC = os.environ.get(
+            "QWD_PACKAGE_SPEC", f"qwendopamine[gpu,cpt,hf] @ {_GIT_URL}"
+        )
+        # Force-reinstall the numpy/scipy/sklearn trio together so their C
+        # extensions stay ABI-matched. Without this a Kaggle image with a stale
+        # scipy + new numpy yields `ImportError: _center` on the next cell.
+        _COMPAT_PINS = [
+            "numpy>=2.0,<2.5",
+            "scipy>=1.15,<1.18",
+            "scikit-learn>=1.6.0",
+        ]
+
+        def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+            try:
+                return subprocess.run(cmd, check=False)
+            except FileNotFoundError:
+                return subprocess.CompletedProcess(cmd, returncode=127)
+
+        def _pip_fallback(spec: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--break-system-packages", spec],
+                check=False,
+            )
+
+        # Step 1: compat trio
+        _trio_cmd = [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--break-system-packages",
+            "--upgrade",
+            *_COMPAT_PINS,
+        ]
+        _proc = _run(_trio_cmd)
+        if _proc.returncode != 0:
+            for _pin in _COMPAT_PINS:
+                _proc = _pip_fallback(_pin)
+                if _proc.returncode != 0:
+                    break
+
+        # Step 2: main package
+        _uv_cmd = [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--break-system-packages",
+            "--upgrade",
+            _PACKAGE_SPEC,
+        ]
+        _proc = _run(_uv_cmd)
+        if _proc.returncode != 0:
+            _proc = _pip_fallback(_PACKAGE_SPEC)
+        if _proc.returncode == 127:
+            print("[setup] uv not found, falling back to pip...")
+            _proc = _pip_fallback(_PACKAGE_SPEC)
+        if _proc.returncode != 0:
+            raise RuntimeError(
+                "uv/pip install failed. On Kaggle, ensure Internet is ON and "
+                "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
+            )
+        # Validate trio in a fresh subprocess — the current interpreter may still
+        # hold stale compiled extensions until the kernel restarts (interactive only).
+        _validate = subprocess.run(
+            [sys.executable, "-c", "from scipy.sparse import csr_matrix; import sklearn; print('[setup] trio OK')"],
             check=False,
+            capture_output=True,
+            text=True,
         )
-
-    # Step 1: compat trio
-    _trio_cmd = [
-        "uv",
-        "pip",
-        "install",
-        "--python",
-        sys.executable,
-        "--break-system-packages",
-        "--upgrade",
-        *_COMPAT_PINS,
-    ]
-    _proc = _run(_trio_cmd)
-    if _proc.returncode != 0:
-        for _pin in _COMPAT_PINS:
-            _proc = _pip_fallback(_pin)
-            if _proc.returncode != 0:
-                break
-
-    # Step 2: main package
-    _uv_cmd = [
-        "uv",
-        "pip",
-        "install",
-        "--python",
-        sys.executable,
-        "--break-system-packages",
-        "--upgrade",
-        _PACKAGE_SPEC,
-    ]
-    _proc = _run(_uv_cmd)
-    if _proc.returncode != 0:
-        _proc = _pip_fallback(_PACKAGE_SPEC)
-    if _proc.returncode == 127:
-        print("[setup] uv not found, falling back to pip...")
-        _proc = _pip_fallback(_PACKAGE_SPEC)
-    if _proc.returncode != 0:
-        raise RuntimeError(
-            "uv/pip install failed. On Kaggle, ensure Internet is ON and "
-            "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
-        )
-    # Validate trio in a fresh subprocess — the current interpreter may still
-    # hold stale compiled extensions until the kernel restarts.
-    _validate = subprocess.run(
-        [sys.executable, "-c", "from scipy.sparse import csr_matrix; import sklearn; print('[setup] trio OK')"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if _validate.returncode != 0:
-        print("[setup] WARNING: scipy/sklearn import failed after install:")
-        print(_validate.stderr[-2000:])
-        print("[setup] Restart the kernel and re-run (Kaggle: Kernel -> Restart).")
+        if _validate.returncode != 0:
+            print("[setup] WARNING: scipy/sklearn import failed after install:")
+            print(_validate.stderr[-2000:])
+            if IS_BATCH:
+                print("[setup] Batch mode: continuing anyway, next cell will import fresh (no manual restart needed).")
+            else:
+                print("[setup] Restart the kernel and re-run (Kaggle: Kernel -> Restart).")
+        else:
+            print(_validate.stdout.strip())
     else:
-        print(_validate.stdout.strip())
+        print("[setup] Skipping install, trio already healthy.")
     # Fetch HF token from Kaggle secrets (never from env directly).
     if IS_KAGGLE:
         try:
@@ -207,7 +243,12 @@ else:
     for _mod in list(sys.modules):
         if _mod == "PIL" or _mod.startswith("PIL."):
             sys.modules.pop(_mod, None)
-    print("[setup] Done. Restart the kernel once and skip this cell on reruns.")
+    if IS_BATCH:
+        print("[setup] Done (batch/commit mode, no restart needed, will continue).")
+    elif _skip_install:
+        print("[setup] Done (trio healthy, no restart needed).")
+    else:
+        print("[setup] Done. Restart the kernel once and skip this cell on reruns (interactive).")
 
 # %% [code.2]
 import datetime

@@ -25,7 +25,7 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         r"^mtp.*",
     ]
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, *args: Any, **kwargs: Any) -> None:
         r"""__init__(self, config: Any) -> None
 
         Initialize the conditional generation model and LM head.
@@ -34,6 +34,9 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
             self - .
             config (Any) - .
         """
+        for _k in ("load_in_4bit", "load_in_8bit", "torch_dtype", "dtype", "quantization_config", "device_map"):
+            kwargs.pop(_k, None)
+        _ = args
         super().__init__(config)
         self.model = self._build_conditional_model(config)
         self.lm_head = nn.Linear(

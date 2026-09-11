@@ -22,7 +22,7 @@ class FamilyForCausalLM(Qwen3ForCausalLM):
         r"^model.visual.*",
     ]
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, *args: Any, **kwargs: Any) -> None:
         r"""__init__(self, config: Any) -> None
 
         Build the causal LM head and underlying text model.
@@ -31,6 +31,11 @@ class FamilyForCausalLM(Qwen3ForCausalLM):
             self - .
             config (Any) - .
         """
+        # from_pretrained may forward deprecated kwargs (load_in_4bit, torch_dtype)
+        # even when they should have been consumed earlier; ignore them here.
+        for _k in ("load_in_4bit", "load_in_8bit", "torch_dtype", "dtype", "quantization_config", "device_map"):
+            kwargs.pop(_k, None)
+        _ = args  # ignore any positional extras forwarded by AutoModel
         if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):
             config = config.text_config
         super().__init__(config)

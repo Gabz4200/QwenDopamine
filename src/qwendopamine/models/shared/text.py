@@ -43,7 +43,7 @@ class FamilyTextModel(Qwen3NextModel):
     config_class: type
     config: Any
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, *args: Any, **kwargs: Any) -> None:
         r"""__init__(self, config: Any) -> None
 
         FamilyTextModel(config: Any) -> None
@@ -53,6 +53,9 @@ class FamilyTextModel(Qwen3NextModel):
                 Args:
                     config (Any): Text model configuration.
         """
+        for _k in ("load_in_4bit", "load_in_8bit", "torch_dtype", "dtype", "quantization_config", "device_map"):
+            kwargs.pop(_k, None)
+        _ = args
         super().__init__(config)
         self._build_text_layers(config)
 

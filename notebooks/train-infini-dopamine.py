@@ -584,14 +584,21 @@ else:
     model = InfiniDopamineForConditionalGeneration(infini_cfg)
 
     print("Loading base model weights...")
-    base_model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL_NAME,
-        torch_dtype=TORCH_DTYPE,
-        device_map="cpu",
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-        load_in_4bit=LOAD_IN_4BIT,
-    )
+    _base_kwargs: dict[str, object] = {
+        "dtype": TORCH_DTYPE,
+        "device_map": "cpu",
+        "trust_remote_code": True,
+        "low_cpu_mem_usage": True,
+    }
+    if LOAD_IN_4BIT:
+        from transformers import BitsAndBytesConfig as _BNBConfig
+
+        _base_kwargs["quantization_config"] = _BNBConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=TORCH_DTYPE,
+        )
+    base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL_NAME, **_base_kwargs)  # type: ignore[arg-type]
 
     # Each rank loads from the shared HF cache. Rank 0 pays the network fetch,
     # the rest hit disk. Avoids pickling ~1.6 GB of weights over the process group.

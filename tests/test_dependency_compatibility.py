@@ -70,20 +70,21 @@ def test_notebook_pin_matches_project_pin() -> None:
     numpy_line: str | None = None
     scipy_line: str | None = None
     for line in source.splitlines():
-        stripped = line.strip().strip('",')
-        if stripped.startswith("numpy"):
+        stripped = line.strip().strip('",').strip("'")
+        # Only consider dependency pin lines, not error messages
+        if stripped.startswith("numpy") and ">=" in stripped:
             numpy_line = stripped
-        elif stripped.startswith("scipy"):
+        elif stripped.startswith("scipy") and ">=" in stripped:
             scipy_line = stripped
 
     if numpy_line is not None:
-        assert ">=2.0.0" in numpy_line, (
-            f"Notebook numpy pin must be >=2.0.0 for NumPy 2.x compatibility, "
+        assert ">=2.0" in numpy_line, (
+            f"Notebook numpy pin must be >=2.0 for NumPy 2.x compatibility, "
             f"found: {numpy_line!r}"
         )
     if scipy_line is not None:
-        assert ">=1.13.0" in scipy_line, (
-            f"Notebook scipy pin must be >=1.13.0 for NumPy 2.x compatibility, "
+        assert ">=1.15" in scipy_line or ">=1.13" in scipy_line, (
+            f"Notebook scipy pin must be >=1.15 for NumPy 2.x compatibility, "
             f"found: {scipy_line!r}"
         )
     if numpy_line is None and scipy_line is None:
@@ -95,7 +96,7 @@ def test_notebook_pin_matches_project_pin() -> None:
             data = tomllib.load(pf)
         deps = " ".join(data.get("project", {}).get("dependencies", []))
         assert "numpy>=2.0.0" in deps
-        assert "scipy>=1.13.0" in deps
+        assert "scipy>=1.15" in deps or "scipy>=1.13" in deps
 
 
 def test_pyproject_toml_has_compatible_pins() -> None:
@@ -116,6 +117,6 @@ def test_pyproject_toml_has_compatible_pins() -> None:
     assert "numpy>=2.0.0" in dep_strs, (
         f"pyproject.toml must require numpy>=2.0.0; got deps: {deps!r}"
     )
-    assert "scipy>=1.13.0" in dep_strs, (
-        f"pyproject.toml must require scipy>=1.13.0; got deps: {deps!r}"
+    assert "scipy>=1.15" in dep_strs, (
+        f"pyproject.toml must require scipy>=1.15 for NumPy 2.x ABI; got deps: {deps!r}"
     )

@@ -40,9 +40,10 @@
 #     tiny random-init text-only model (fits a CPU/RAM-limited laptop), and
 #     ``QWD_LOCAL_STEPS`` training steps (default 2).
 #
-# On Kaggle this cell installs the package from git with uv, refreshing only
-# the package itself; transitive deps are constrained by pyproject upper bounds
-# (numpy<2.5, scipy<1.18) to avoid `ImportError: _center` via sklearn/scipy.
+# On Kaggle this cell installs the package from git with uv; transitive deps
+# are constrained by pyproject bounds (numpy<2.5, scipy>=1.15) to avoid
+# `ImportError: _center` via sklearn/scipy. The numpy/scipy/sklearn trio is
+# force-reinstalled together so their compiled extensions stay ABI-matched.
 # Locally it only verifies that the uv-provisioned environment is complete
 # and never touches pip/uv (that would fight ``uv sync``).
 import importlib.metadata
@@ -112,6 +113,46 @@ else:
     _PACKAGE_SPEC = os.environ.get(
         "QWD_PACKAGE_SPEC", f"qwendopamine[gpu,cpt,hf] @ {_GIT_URL}"
     )
+    # Force-reinstall the numpy/scipy/sklearn trio together so their C
+    # extensions stay ABI-matched. Without this a Kaggle image with a stale
+    # scipy + new numpy yields `ImportError: _center` on the next cell.
+    _COMPAT_PINS = [
+        "numpy>=2.0,<2.5",
+        "scipy>=1.15,<1.18",
+        "scikit-learn>=1.6.0",
+    ]
+
+    def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(cmd, check=False)
+        except FileNotFoundError:
+            return subprocess.CompletedProcess(cmd, returncode=127)
+
+    def _pip_fallback(spec: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--break-system-packages", spec],
+            check=False,
+        )
+
+    # Step 1: compat trio
+    _trio_cmd = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "--break-system-packages",
+        "--upgrade",
+        *_COMPAT_PINS,
+    ]
+    _proc = _run(_trio_cmd)
+    if _proc.returncode != 0:
+        for _pin in _COMPAT_PINS:
+            _proc = _pip_fallback(_pin)
+            if _proc.returncode != 0:
+                break
+
+    # Step 2: main package
     _uv_cmd = [
         "uv",
         "pip",
@@ -122,39 +163,31 @@ else:
         "--upgrade",
         _PACKAGE_SPEC,
     ]
-    try:
-        _proc = subprocess.run(_uv_cmd, check=False)
-        if _proc.returncode != 0:
-            # Fallback to pip if uv returns error
-            _proc = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--break-system-packages",
-                    _PACKAGE_SPEC,
-                ],
-                check=False,
-            )
-    except FileNotFoundError:
+    _proc = _run(_uv_cmd)
+    if _proc.returncode != 0:
+        _proc = _pip_fallback(_PACKAGE_SPEC)
+    if _proc.returncode == 127:
         print("[setup] uv not found, falling back to pip...")
-        _proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--break-system-packages",
-                _PACKAGE_SPEC,
-            ],
-            check=False,
-        )
+        _proc = _pip_fallback(_PACKAGE_SPEC)
     if _proc.returncode != 0:
         raise RuntimeError(
             "uv/pip install failed. On Kaggle, ensure Internet is ON and "
             "that the repo is reachable at https://github.com/Gabz4200/QwenDopamine."
         )
+    # Validate trio in a fresh subprocess — the current interpreter may still
+    # hold stale compiled extensions until the kernel restarts.
+    _validate = subprocess.run(
+        [sys.executable, "-c", "from scipy.sparse import csr_matrix; import sklearn; print('[setup] trio OK')"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if _validate.returncode != 0:
+        print("[setup] WARNING: scipy/sklearn import failed after install:")
+        print(_validate.stderr[-2000:])
+        print("[setup] Restart the kernel and re-run (Kaggle: Kernel -> Restart).")
+    else:
+        print(_validate.stdout.strip())
     # Fetch HF token from Kaggle secrets (never from env directly).
     if IS_KAGGLE:
         try:
@@ -190,18 +223,58 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+# Fail fast if the Kaggle image has a stale scipy/numpy/sklearn trio.
+# This must run before `peft`/`transformers` because transformers eagerly
+# imports `sklearn.metrics` via `candidate_generator`, which pulls scipy and
+# triggers `ImportError: _center` when the trio is ABI-mismatched. The setup
+# cell above reinstalls the trio, but the kernel must be restarted for the
+# new compiled extensions to load.
+try:
+    import scipy.sparse
+except ImportError as _trio_err:
+    raise ImportError(
+        "scipy import failed (likely numpy/scipy ABI mismatch after pip install). "
+        "Restart the kernel (Kaggle: Kernel -> Restart) and skip the setup cell, "
+        "then re-run. If using papermill, ensure the notebook install cell runs "
+        "in a fresh kernel. Original error: " + str(_trio_err)
+    ) from _trio_err
+try:
+    import scipy.sparse  # noqa: F401 re-check after sklearn pulled scipy
+    import sklearn  # noqa: F401
+except ImportError as _sk_err:
+    if "_center" in str(_sk_err) or "numpy._core" in str(_sk_err):
+        raise ImportError(
+            "sklearn/scipy import failed due to numpy ABI mismatch (`_center`). "
+            "Restart kernel after setup cell. Original: " + str(_sk_err)
+        ) from _sk_err
+    # If sklearn not installed, transformers will skip it — not an error.
+
 from accelerate import PartialState
 from datasets import IterableDataset, interleave_datasets, load_dataset
-from peft import LoraConfig, TaskType, get_peft_model
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoProcessor,
-    AutoTokenizer,
-    TrainingArguments,
-)
-from transformers.trainer_callback import TrainerCallback
-from trl import SFTTrainer
+
+try:
+    from peft import LoraConfig, TaskType, get_peft_model
+    from transformers import (
+        AutoConfig,
+        AutoModelForCausalLM,
+        AutoProcessor,
+        AutoTokenizer,
+        TrainingArguments,
+    )
+    from transformers.trainer_callback import TrainerCallback
+    from trl import SFTTrainer
+except ImportError as _imp_err:
+    # Most common cause is the numpy/scipy _center mismatch bubbling through
+    # transformers -> sklearn -> scipy.
+    if "_center" in str(_imp_err) or "numpy._core" in str(_imp_err):
+        raise ImportError(
+            "Import failed due to numpy/scipy ABI mismatch (`_center` missing). "
+            "Restart the kernel and re-run; the setup cell already reinstalled "
+            "a compatible trio (numpy<2.5, scipy>=1.15, scikit-learn>=1.6). "
+            "Original error: " + str(_imp_err)
+        ) from _imp_err
+    raise
 
 from qwendopamine.integrations.huggingface import HFIntegration
 from qwendopamine.models.infinidopamine import (

@@ -1134,7 +1134,7 @@ def build_synthetic_dataset(
 
 
 def load_smb_dataset() -> IterableDataset:
-    import shutil
+    import io
     import zipfile
 
     from huggingface_hub import hf_hub_download
@@ -1143,14 +1143,6 @@ def load_smb_dataset() -> IterableDataset:
     cache_dir = Path(SMB_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Kaggle /kaggle/working is ~20GB; avoid filling it and falling back only after OSError.
-    try:
-        if shutil.disk_usage(cache_dir).free < 2 * 1024**3:
-            print(f"[disk-low] {repo_id} needs ~1GB; {shutil.disk_usage(cache_dir).free / 1024**3:.1f}GB free — using mocked rows")
-            return _mock_stream_for_dataset(repo_id)
-    except OSError:
-        pass
-
     zip_path = hf_hub_download(
         repo_id=repo_id,
         filename="smb_frames.zip",
@@ -1158,46 +1150,38 @@ def load_smb_dataset() -> IterableDataset:
         cache_dir=str(cache_dir),
     )
 
-    extract_dir = cache_dir / "smb_frames"
-    if not extract_dir.exists():
-        print(f"Extracting {zip_path} -> {extract_dir}")
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
-
-    npz_files = sorted(extract_dir.rglob("*.npz"))
-    print(f"Found {len(npz_files)} SMB .npz files")
-
     def _gen() -> Iterator[dict]:
-        for npz_path in npz_files:
-            data = np.load(npz_path)
-            action = data["action"]
-            if action.ndim == 0:
-                action = np.array([0.0] * 8)
-            buttons = ["Up", "Down", "Left", "Right", "A", "B", "Start", "Select"]
-            action_str = ", ".join(
-                f"{b}={float(v):.1f}" for b, v in zip(buttons, action.flatten()[:8])
-            )
-            yield {"text": f"SMB Frame Action: [{action_str}]"}
+        # Stream directly from the zip without extracting 118k files to disk.
+        # The zip itself (~307MB) stays cached; we read one npz at a time via
+        # BytesIO, so peak disk stays ~307MB instead of ~1GB+ extracted.
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            names = sorted(n for n in zf.namelist() if n.endswith(".npz"))
+            print(f"Found {len(names)} SMB .npz files (streamed from {zip_path})")
+            for name in names:
+                with zf.open(name) as f:
+                    data = np.load(io.BytesIO(f.read()))
+                    action = data["action"]
+                    if action.ndim == 0:
+                        action = np.array([0.0] * 8)
+                    buttons = ["Up", "Down", "Left", "Right", "A", "B", "Start", "Select"]
+                    action_str = ", ".join(
+                        f"{b}={float(v):.1f}" for b, v in zip(buttons, action.flatten()[:8])
+                    )
+                    yield {"text": f"SMB Frame Action: [{action_str}]"}
 
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
 def load_maze_dataset() -> IterableDataset:
-    import shutil
-
     from huggingface_hub import snapshot_download
 
     cache_dir = Path(MAZE_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        # Maze repo is ~17GB; Kaggle working disk is ~20GB and already holds SMB cache.
-        if shutil.disk_usage(cache_dir).free < 8 * 1024**3:
-            print(f"[disk-low] Kalso42/WorldModelForMaze needs ~17GB; {shutil.disk_usage(cache_dir).free / 1024**3:.1f}GB free — using mocked rows")
-            return _mock_stream_for_dataset("Kalso42/WorldModelForMaze")
-    except OSError:
-        pass
-
+    # Deferred per-curriculum stage: this snapshot (~17GB, 1526 files) is only
+    # downloaded when stage 2_spatial is active. Previous stages are streaming-only
+    # (no snapshot), and _drop_stage_cache wipes this directory before stage 3,
+    # so SMB (stage 3) and Maze never co-reside on disk.
     maze_dir = snapshot_download(
         repo_id="Kalso42/WorldModelForMaze",
         repo_type="dataset",
@@ -1372,21 +1356,9 @@ def _stream_for(name: str, use_capped: bool) -> IterableDataset:
     if name == LOCAL_SYNTHETIC_DATASET:
         return build_synthetic_dataset()
     if name == "DylanRiden/smb-worldmodel-data":
-        try:
-            return load_smb_dataset()
-        except OSError as _e:
-            if _e.errno == 28 or "No space left" in str(_e) or "No space" in str(_e):
-                print(f"[disk-full] {name} snapshot failed ({_e}); falling back to {_capped_rows()} mocked rows")
-                return _mock_stream_for_dataset(name)
-            raise
+        return load_smb_dataset()
     if name == "Kalso42/WorldModelForMaze":
-        try:
-            return load_maze_dataset()
-        except OSError as _e:
-            if _e.errno == 28 or "No space left" in str(_e) or "No space" in str(_e):
-                print(f"[disk-full] {name} snapshot failed ({_e}); falling back to {_capped_rows()} mocked rows")
-                return _mock_stream_for_dataset(name)
-            raise
+        return load_maze_dataset()
     cfg, split = DATASET_CONFIG_MAP.get(name, ("default", "train"))
     ds = load_dataset(name, config=cfg, split=split, streaming=True)
 

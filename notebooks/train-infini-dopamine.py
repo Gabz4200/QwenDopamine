@@ -379,6 +379,49 @@ if "_HF_TOKEN_FROM_SECRETS" not in globals():
 if _USE_SMOKE_CONFIG and not _CAPPED_FULL:
     CPT_DATASETS = [LOCAL_SYNTHETIC_DATASET]
 
+# Curriculum Learning: 4 stages easy→hard (Bengio 2009). Each stage
+# holds ~4-5 datasets; after a stage finishes its cache/dataset objects
+# are dropped (`del` + gc + cache wipe) before the next stage, so
+# peak disk stays ~8-17GB instead of ~20GB+ for all 17. Order by
+# transition-horizon and supervision density: general language →
+# deterministic games → spatial world-models → long-horizon CoT/reward.
+CURRICULUM_STAGES: dict[str, list[str]] = {
+    # Stage 0 — Foundation language & distillation (short horizon, dense supervision)
+    "0_foundation": [
+        "Salesforce/wikitext",
+        "ryanmarten/OpenThoughts-1k-sample",
+        "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
+        "faunix/Qwen3.8-27B-Distillation-40K",
+        "greghavens/kimi-k3-coding-and-debugging-traces",
+    ],
+    # Stage 1 — Game & tool trajectories (deterministic state→action)
+    "1_game_tool": [
+        "laion/strategic_game_chess",
+        "Lichess/standard-chess-games",
+        "lockon/ToolACE",
+        "Decix/ReBel-ALFWorld-SFT-Trajectories",
+    ],
+    # Stage 2 — Spatial world-models (partial observability, grid dynamics)
+    # Maze (17GB snapshot isolated here) + Sokoban + ARC need latent map.
+    "2_spatial": [
+        "Kalso42/WorldModelForMaze",
+        "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg",
+        "schema-harness/arc-agi-3-schema-traces",
+    ],
+    # Stage 3 — Reasoning world-models & agent CoT (long horizon, reward-conditioned)
+    # SMB (1GB zip isolated away from Maze) + bytesized/world_model_corpus + cot-eval + Fable
+    "3_reasoning_world": [
+        "DylanRiden/smb-worldmodel-data",
+        "thuml/bytesized32-world-model-cot",
+        "PatronusAI/world_model_corpus",
+        "cot-leaderboard/cot-eval-traces-2.0",
+        "Glint-Research/Fable-5-traces",
+    ],
+}
+# Start stage override for resuming/debugging (env QWD_CURRICULUM_STAGE).
+CURRICULUM_START_STAGE: int = int(__import__("os").environ.get("QWD_CURRICULUM_STAGE", "0"))
+USE_CURRICULUM: bool = not _USE_SMOKE_CONFIG and not _CAPPED_FULL
+
 DATASET_TEXT_COLUMN: str = "text"
 MAX_SEQ_LENGTH: int = 1024
 
@@ -1390,7 +1433,33 @@ def peek_streaming_dataset(dataset_names: list[str], seed: int = 42) -> Iterable
     return train_dataset
 
 
-train_dataset = peek_streaming_dataset(CPT_DATASETS)
+def _drop_stage_cache(stage_datasets: list[str]) -> None:
+    """Remove snapshot caches for datasets in the finished stage to free disk."""
+    import shutil
+
+    if "DylanRiden/smb-worldmodel-data" in stage_datasets:
+        p = Path(SMB_CACHE_DIR)
+        if p.exists():
+            print(f"[curriculum] dropping SMB cache {p}")
+            shutil.rmtree(p, ignore_errors=True)
+    if "Kalso42/WorldModelForMaze" in stage_datasets:
+        p = Path(MAZE_CACHE_DIR)
+        if p.exists():
+            print(f"[curriculum] dropping Maze cache {p}")
+            shutil.rmtree(p, ignore_errors=True)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+if USE_CURRICULUM:
+    _curriculum_keys = list(CURRICULUM_STAGES.keys())
+    _active_keys = _curriculum_keys[CURRICULUM_START_STAGE:]
+    print(f"[curriculum] {len(CURRICULUM_STAGES)} stages total; starting at {CURRICULUM_START_STAGE}: {', '.join(_active_keys)}")
+    # Defer dataset build to stage loop in the training cell; keep placeholder.
+    train_dataset = None  # type: ignore[assignment]
+else:
+    train_dataset = peek_streaming_dataset(CPT_DATASETS)
 
 
 # %% [code.13]
@@ -1408,11 +1477,14 @@ def tokenize_fn(example: dict) -> dict:
     }
 
 
-cols_to_remove = [
-    c
-    for c in (getattr(train_dataset, "column_names", None) or [])
-    if c not in {"text", "input_ids", "attention_mask", "labels"}
-]
+# Keep column logic as a function so curriculum stages can reuse it per-stage.
+def _cols_to_remove_for(ds: Any) -> list[str]:
+    return [c for c in (getattr(ds, "column_names", None) or []) if c not in {"text", "input_ids", "attention_mask", "labels"}]
+
+
+def _keep_tokenized(example: dict) -> bool:
+    return len(example.get("input_ids") or []) > 0
+
 
 from transformers import DataCollatorWithPadding
 
@@ -1420,23 +1492,20 @@ from transformers import DataCollatorWithPadding
 # pre-truncated to MAX_SEQ_LENGTH, so DataCollatorForLanguageModeling would duplicate labels.
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-
-train_dataset = train_dataset.map(
-    tokenize_fn,
-    batched=False,
-    remove_columns=cols_to_remove,
-)
-
-
-# Drop rows that tokenize_fn rejected (empty sequences).
-def _keep_tokenized(example: dict) -> bool:
-    return len(example.get("input_ids") or []) > 0
-
-
-train_dataset = train_dataset.filter(_keep_tokenized)
-
-print(f"Tokenized columns : {train_dataset.column_names}")
-print(f"Max seq length    : {MAX_SEQ_LENGTH}")
+if not USE_CURRICULUM:
+    cols_to_remove = _cols_to_remove_for(train_dataset)
+    train_dataset = train_dataset.map(  # type: ignore[union-attr]
+        tokenize_fn,
+        batched=False,
+        remove_columns=cols_to_remove,
+    )
+    train_dataset = train_dataset.filter(_keep_tokenized)  # type: ignore[union-attr]
+    print(f"Tokenized columns : {train_dataset.column_names}")  # type: ignore[union-attr]
+    print(f"Max seq length    : {MAX_SEQ_LENGTH}")
+else:
+    # Tokenization deferred: each curriculum stage builds and tokenizes its own dataset
+    # inside the training cell so disk from the previous stage can be freed first.
+    print("[curriculum] tokenization deferred to stage loop")
 
 # %% [markdown.14]
 # ## Reward Conditioning, Parallel Branch & Custom Trainer
@@ -1881,48 +1950,115 @@ else:
 
     _training_optim = "paged_adamw_8bit"
 
-training_args = TrainingArguments(
-    output_dir=OUTPUT_DIR,
-    per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
-    gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-    learning_rate=LEARNING_RATE,
-    weight_decay=WEIGHT_DECAY,
-    lr_scheduler_type=LR_SCHEDULER_TYPE,
-    warmup_steps=WARMUP_STEPS,
-    num_train_epochs=NUM_TRAIN_EPOCHS,
-    max_steps=MAX_TRAIN_STEPS,
-    logging_steps=LOGGING_STEPS,
-    save_steps=SAVE_STEPS,
-    save_total_limit=SAVE_TOTAL_LIMIT,
-    push_to_hub=PUSH_TO_HUB and IS_MAIN,
-    hub_model_id=HUB_MODEL_ID or None,
-    hub_token=HF_TOKEN,
-    bf16=(TORCH_DTYPE == torch.bfloat16),
-    fp16=(TORCH_DTYPE == torch.float16),
-    gradient_checkpointing=True,
-    gradient_checkpointing_kwargs={"use_reentrant": False},
-    optim=_training_optim,
-    report_to="none" if (_USE_SMOKE_CONFIG or not IS_MAIN) else ["tensorboard"],
-    seed=42,
-    data_seed=42,
-    # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.
-    ddp_find_unused_parameters=True,
-    dataloader_drop_last=True,
-)
 
-trainer = CPTSFTTrainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    processing_class=tokenizer,
-    data_collator=data_collator,
-    reward_every_n_steps=REWARD_EVERY_N_STEPS,
-    reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
-    reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
-    reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
-)
+def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
+    # Reused for each curriculum stage; stage_name only affects run_name for TB.
+    run_name = f"curriculum-{stage_name}" if stage_name else None
+    return TrainingArguments(
+        output_dir=OUTPUT_DIR,
+        per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
+        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+        learning_rate=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+        lr_scheduler_type=LR_SCHEDULER_TYPE,
+        warmup_steps=WARMUP_STEPS,
+        num_train_epochs=NUM_TRAIN_EPOCHS,
+        max_steps=MAX_TRAIN_STEPS,
+        logging_steps=LOGGING_STEPS,
+        save_steps=SAVE_STEPS,
+        save_total_limit=SAVE_TOTAL_LIMIT,
+        push_to_hub=PUSH_TO_HUB and IS_MAIN,
+        hub_model_id=HUB_MODEL_ID or None,
+        hub_token=HF_TOKEN,
+        bf16=(TORCH_DTYPE == torch.bfloat16),
+        fp16=(TORCH_DTYPE == torch.float16),
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        optim=_training_optim,
+        report_to="none" if (_USE_SMOKE_CONFIG or not IS_MAIN) else ["tensorboard"],
+        run_name=run_name,
+        seed=42,
+        data_seed=42,
+        # PEFT + GatedRewardNet can leave sub-graphs unused on some steps under DDP.
+        ddp_find_unused_parameters=True,
+        dataloader_drop_last=True,
+    )
 
-trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
+
+if _USE_SMOKE_CONFIG:
+    training_args = _stage_training_args(None)
+    trainer = CPTSFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        processing_class=tokenizer,
+        data_collator=data_collator,
+        reward_every_n_steps=REWARD_EVERY_N_STEPS,
+        reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
+        reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
+        reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
+    )
+    trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
+elif USE_CURRICULUM:
+    # Curriculum: iterate stages, building+tokenizing one stage at a time,
+    # training, then dropping its snapshot caches before the next stage.
+    _last_checkpoint: str | None = RESUME_FROM_CHECKPOINT
+    trainer = None  # type: ignore[assignment]
+    for _stage_idx, _stage_name in enumerate(_active_keys):  # type: ignore[name-defined]
+        _stage_datasets = CURRICULUM_STAGES[_stage_name]
+        if IS_MAIN:
+            print(f"\n{'='*60}\n[stage {_stage_idx+1}/{len(_active_keys)}] {_stage_name}: {len(_stage_datasets)} datasets\n{'='*60}")
+            for _n in _stage_datasets:
+                print(f"  - {_n}")
+        # Build and tokenize only this stage's datasets; previous stage's caches
+        # have already been wiped via _drop_stage_cache.
+        _stage_ds = peek_streaming_dataset(_stage_datasets)
+        _stage_cols = _cols_to_remove_for(_stage_ds)
+        _stage_ds = _stage_ds.map(tokenize_fn, batched=False, remove_columns=_stage_cols)
+        _stage_ds = _stage_ds.filter(_keep_tokenized)
+        if IS_MAIN:
+            print(f"[stage {_stage_name}] tokenized, total stages remaining disk freed after prior stage")
+        training_args = _stage_training_args(_stage_name)
+        trainer = CPTSFTTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=_stage_ds,
+            processing_class=tokenizer,
+            data_collator=data_collator,
+            reward_every_n_steps=REWARD_EVERY_N_STEPS,
+            reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
+            reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
+            reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
+        )
+        trainer.train(resume_from_checkpoint=_last_checkpoint)
+        # Drop this stage's heavy caches before next stage to keep peak disk low.
+        # The model weights stay in memory; only the dataset snapshots are removed.
+        _drop_stage_cache(_stage_datasets)
+        # Resolve latest checkpoint for next stage resume (if any).
+        _latest = find_latest_checkpoint(OUTPUT_DIR)
+        _last_checkpoint = str(_latest) if _latest is not None else None
+        del _stage_ds, _stage_cols
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        ACCEL_STATE.wait_for_everyone()
+        if IS_MAIN:
+            print(f"[stage {_stage_name}] complete; next checkpoint: {_last_checkpoint}")
+else:
+    # Legacy single-pass over all 17 datasets (capped-full or non-curriculum override).
+    training_args = _stage_training_args(None)
+    trainer = CPTSFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        processing_class=tokenizer,
+        data_collator=data_collator,
+        reward_every_n_steps=REWARD_EVERY_N_STEPS,
+        reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
+        reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
+        reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
+    )
+    trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 
 ACCEL_STATE.wait_for_everyone()
 

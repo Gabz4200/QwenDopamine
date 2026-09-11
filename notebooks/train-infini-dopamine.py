@@ -421,6 +421,11 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
 # Start stage override for resuming/debugging (env QWD_CURRICULUM_STAGE).
 CURRICULUM_START_STAGE: int = int(__import__("os").environ.get("QWD_CURRICULUM_STAGE", "0"))
 USE_CURRICULUM: bool = not _USE_SMOKE_CONFIG and not _CAPPED_FULL
+if USE_CURRICULUM:
+    # Fail fast if any stage accidentally references synthetic/mocked data.
+    _all_curriculum = [n for stage in CURRICULUM_STAGES.values() for n in stage]
+    assert LOCAL_SYNTHETIC_DATASET not in _all_curriculum, "curriculum must use real datasets only"
+    assert all(not n.startswith("__") for n in _all_curriculum), "no synthetic keys in curriculum"
 
 DATASET_TEXT_COLUMN: str = "text"
 MAX_SEQ_LENGTH: int = 1024
@@ -1351,6 +1356,8 @@ def _apply_subset(ds: Any, dataset_name: str) -> IterableDataset:
 
 
 def _stream_for(name: str, use_capped: bool) -> IterableDataset:
+    if name == LOCAL_SYNTHETIC_DATASET and IS_KAGGLE:
+        raise RuntimeError("synthetic dataset not allowed on Kaggle; curriculum must use real datasets")
     if use_capped:
         return _mock_stream_for_dataset(name)
     if name == LOCAL_SYNTHETIC_DATASET:

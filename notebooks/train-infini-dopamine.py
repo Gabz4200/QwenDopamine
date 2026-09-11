@@ -1657,6 +1657,30 @@ def peek_streaming_dataset(dataset_names: list[str], seed: int = 42, stage_name:
     return train_dataset
 
 
+def log_gpu(prefix: str = "") -> None:
+    """Log nvidia-smi + torch CUDA memory for manual review (user requested)."""
+    tag = f" {prefix}" if prefix else ""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5, check=False)
+        if out.returncode == 0 and out.stdout.strip():
+            print(f"[gpu{tag}] nvidia-smi: {out.stdout.strip()}")
+        else:
+            # Fallback to full nvidia-smi
+            out2 = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5, check=False)
+            if out2.stdout:
+                print(f"[gpu{tag}] nvidia-smi:\n{out2.stdout[:2000]}")
+    except (FileNotFoundError, subprocess.SubprocessError, OSError) as _e:  # noqa: BLE001
+        print(f"[gpu{tag}] nvidia-smi not available: {_e}")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            try:
+                alloc = torch.cuda.memory_allocated(i) / 1024**3
+                reserv = torch.cuda.memory_reserved(i) / 1024**3
+                print(f"[gpu{tag}] cuda:{i} allocated {alloc:.2f}GB reserved {reserv:.2f}GB")
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _drop_stage_cache(stage_datasets: list[str]) -> None:
     """Remove snapshot caches for datasets in the finished stage to free disk."""
     import shutil
@@ -1683,6 +1707,7 @@ def _drop_stage_cache(stage_datasets: list[str]) -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    log_gpu("after cache drop")
 
 
 if USE_CURRICULUM:

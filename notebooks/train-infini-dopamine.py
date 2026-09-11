@@ -1091,6 +1091,7 @@ def build_synthetic_dataset(
 
 
 def load_smb_dataset() -> IterableDataset:
+    import shutil
     import zipfile
 
     from huggingface_hub import hf_hub_download
@@ -1098,6 +1099,14 @@ def load_smb_dataset() -> IterableDataset:
     repo_id = "DylanRiden/smb-worldmodel-data"
     cache_dir = Path(SMB_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Kaggle /kaggle/working is ~20GB; avoid filling it and falling back only after OSError.
+    try:
+        if shutil.disk_usage(cache_dir).free < 2 * 1024**3:
+            print(f"[disk-low] {repo_id} needs ~1GB; {shutil.disk_usage(cache_dir).free / 1024**3:.1f}GB free — using mocked rows")
+            return _mock_stream_for_dataset(repo_id)
+    except OSError:
+        pass
 
     zip_path = hf_hub_download(
         repo_id=repo_id,
@@ -1131,10 +1140,20 @@ def load_smb_dataset() -> IterableDataset:
 
 
 def load_maze_dataset() -> IterableDataset:
+    import shutil
+
     from huggingface_hub import snapshot_download
 
     cache_dir = Path(MAZE_CACHE_DIR)
     cache_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Maze repo is ~17GB; Kaggle working disk is ~20GB and already holds SMB cache.
+        if shutil.disk_usage(cache_dir).free < 8 * 1024**3:
+            print(f"[disk-low] Kalso42/WorldModelForMaze needs ~17GB; {shutil.disk_usage(cache_dir).free / 1024**3:.1f}GB free — using mocked rows")
+            return _mock_stream_for_dataset("Kalso42/WorldModelForMaze")
+    except OSError:
+        pass
 
     maze_dir = snapshot_download(
         repo_id="Kalso42/WorldModelForMaze",
@@ -1310,9 +1329,21 @@ def _stream_for(name: str, use_capped: bool) -> IterableDataset:
     if name == LOCAL_SYNTHETIC_DATASET:
         return build_synthetic_dataset()
     if name == "DylanRiden/smb-worldmodel-data":
-        return load_smb_dataset()
+        try:
+            return load_smb_dataset()
+        except OSError as _e:
+            if _e.errno == 28 or "No space left" in str(_e) or "No space" in str(_e):
+                print(f"[disk-full] {name} snapshot failed ({_e}); falling back to {_capped_rows()} mocked rows")
+                return _mock_stream_for_dataset(name)
+            raise
     if name == "Kalso42/WorldModelForMaze":
-        return load_maze_dataset()
+        try:
+            return load_maze_dataset()
+        except OSError as _e:
+            if _e.errno == 28 or "No space left" in str(_e) or "No space" in str(_e):
+                print(f"[disk-full] {name} snapshot failed ({_e}); falling back to {_capped_rows()} mocked rows")
+                return _mock_stream_for_dataset(name)
+            raise
     cfg, split = DATASET_CONFIG_MAP.get(name, ("default", "train"))
     ds = load_dataset(name, config=cfg, split=split, streaming=True)
 

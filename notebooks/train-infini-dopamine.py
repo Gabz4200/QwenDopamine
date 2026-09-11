@@ -421,22 +421,28 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
         "Decix/ReBel-ALFWorld-SFT-Trajectories",
         "thuml/bytesized32-world-model-cot",
     ],
-    # Stage 3 — ARC-AGI-3 core agent trajectories (MAIN TARGET, 5 datasets)
+    # Stage 3 — ARC-AGI-3 core agent trajectories (MAIN TARGET, 5+2 datasets)
     # 4 codex/kimi rollouts + Nemotron SFT (large_reasoning_and_tools).
-    # All streaming, no snapshot, so 5 together is fine.
+    # All streaming, no snapshot, so 5 together is fine. +2 LLM replay to retain
+    # general capabilities while specializing for ARC-AGI-3 game play.
     "3_arc_agent": [
         "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-s5i5",
         "AgentNativeResearchLab/arc-agi3-kimi-k2.7-g50t",
         "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l",
         "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l",
         "nvidia/Nemotron-SFT-ARC-AGI-v1",
+        "Salesforce/wikitext",
+        "ryanmarten/OpenThoughts-1k-sample",
     ],
     # Stage 4 — Reasoning world-models & long CoT (SMB isolated away from Maze)
+    # + LLM replay to prevent catastrophic forgetting after ARC specialization.
     "4_reasoning_world": [
         "DylanRiden/smb-worldmodel-data",
         "PatronusAI/world_model_corpus",
         "cot-leaderboard/cot-eval-traces-2.0",
         "Glint-Research/Fable-5-traces",
+        "Salesforce/wikitext",
+        "faunix/Qwen3.8-27B-Distillation-40K",
     ],
 }
 # Start stage override for resuming/debugging (env QWD_CURRICULUM_STAGE).
@@ -464,7 +470,8 @@ CURRICULUM_WEIGHT_DECAY: dict[str, float] = {
     "3_arc_agent": 0.03,
     "4_reasoning_world": 0.02,
 }
-# Dataset caps per stage to prevent large chess from dwarfing ARC (50-400 ex).
+# Dataset caps per stage to prevent large chess from dwarfing ARC (50-400 ex)
+# and to keep LLM replay small (5k) while retaining capabilities.
 # Applied in build_streaming_dataset via DATASET_SUBSET_MAP override.
 CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
     "1_arc_foundation": {
@@ -476,8 +483,14 @@ CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
         "thuml/bytesized32-world-model-cot": 20_000,
     },
     "3_arc_agent": {
-        # All 5 are ARC streaming small; no cap needed, but keep Nemotron moderate
         "nvidia/Nemotron-SFT-ARC-AGI-v1": 50_000,
+        # LLM replay to retain general capabilities while specializing for ARC-AGI-3
+        "Salesforce/wikitext": 5_000,
+        "ryanmarten/OpenThoughts-1k-sample": 500,
+    },
+    "4_reasoning_world": {
+        "Salesforce/wikitext": 5_000,
+        "faunix/Qwen3.8-27B-Distillation-40K": 5_000,
     },
 }
 

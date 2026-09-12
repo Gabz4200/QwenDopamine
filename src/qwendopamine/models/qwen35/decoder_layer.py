@@ -13,11 +13,13 @@ from transformers.integrations import (
     use_kernelized_func,
 )
 from transformers.modeling_layers import GradientCheckpointingLayer
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5Attention as _Qwen3_5AttentionBase,
+    Qwen3_5GatedDeltaNet as _Qwen3_5GatedDeltaNetBase,
+    Qwen3_5MLP as _Qwen3_5MLPBase,
+    Qwen3_5RMSNorm as _Qwen3_5RMSNormBase,
+)
 from transformers.models.qwen3_next.modeling_qwen3_next import (
-    Qwen3NextAttention,
-    Qwen3NextGatedDeltaNet,
-    Qwen3NextMLP,
-    Qwen3NextRMSNorm,
     causal_conv1d_fn,
     causal_conv1d_update,
     torch_chunk_gated_delta_rule,
@@ -38,13 +40,19 @@ from qwendopamine.models.qwen35.configs import Qwen3_5Config, Qwen3_5TextConfig
         causal_conv1d_update,
     ]
 )
-class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
+class Qwen3_5GatedDeltaNet(_Qwen3_5GatedDeltaNetBase):
     r"""Qwen3_5GatedDeltaNet(config: Qwen3_5Config | Qwen3_5TextConfig, layer_idx: int) -> None
 
-    Qwen3.5 linear-attention layer backed by Gated Delta Rule 2.
+    Qwen3.5 linear-attention layer backed by the upstream Qwen3Next
+    Gated Delta Rule (GDN-1, ``torch_chunk_gated_delta_rule``) with HF
+    checkpoint compatibility.
 
     Replaces the upstream ``in_proj_qkvz`` / ``in_proj_ba`` with a fused
-    ``in_proj_qkv`` projection.
+    ``in_proj_qkv`` projection. This is the HF-faithful baseline; the
+    research GDN-2 variant lives in :class:`GatedDeltaNet2`
+    (:mod:`qwendopamine.models.gdn2`) and
+    :class:`InfiniDopamineGatedDeltaNet` which fuses SWA + GDN-2 via a
+    per-head sigmoid gate and hosts the parallel Reward branch.
 
     Args:
         config (Qwen3_5Config | Qwen3_5TextConfig): Qwen3.5 configuration.
@@ -71,8 +79,9 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
     ) -> None:
         super().__init__(config, layer_idx)
 
-        del self.in_proj_qkvz
-        del self.in_proj_ba
+        for _name in ("in_proj_qkvz", "in_proj_ba"):
+            if hasattr(self, _name):
+                delattr(self, _name)
 
         # QKV_SPLIT tells the forward how to slice the fused QKV
         # projection. Keep the order and sizes in lockstep with
@@ -237,13 +246,13 @@ class Qwen3_5GatedDeltaNet(Qwen3NextGatedDeltaNet):
         return result
 
 
-class Qwen3_5Attention(Qwen3NextAttention):
+class Qwen3_5Attention(_Qwen3_5AttentionBase):
     r"""Qwen3_5Attention: standard full-attention layer (inherits from
-    :class:`Qwen3NextAttention`.
+    :class:`Qwen3_5Attention`.
     """
 
 
-class Qwen3_5MLP(Qwen3NextMLP):
+class Qwen3_5MLP(_Qwen3_5MLPBase):
     r"""Qwen3_5MLP(config: Qwen3_5Config, intermediate_size: int) -> None
 
     MLP block wrapping the upstream :class:`Qwen3NextMLP` with an explicit
@@ -259,7 +268,7 @@ class Qwen3_5MLP(Qwen3NextMLP):
         self.intermediate_size = intermediate_size
 
 
-class Qwen3_5RMSNorm(Qwen3NextRMSNorm):
+class Qwen3_5RMSNorm(_Qwen3_5RMSNormBase):
     r"""Qwen3_5RMSNorm: RMS normalization (inherits from
     :class:`Qwen3NextRMSNorm`.
     """

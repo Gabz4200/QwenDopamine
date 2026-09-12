@@ -26,6 +26,11 @@ class ParallelRewardBranch(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
         self.reward_gate_proj = nn.Linear(config.hidden_size, 1, bias=True)
+        # Zero-init weight + bias -5 => sigmoid(-5)=0.0067 branch starts silent
+        # (ControlNet/LORA residual pattern). Preserved exactly for test and
+        # cloned via hook when Qwen checkpoint lacks this key, so Qwen weights
+        # are never overridden – only this exclusive gate keeps its principled
+        # near-zero start.
         nn.init.zeros_(self.reward_gate_proj.weight)
         nn.init.constant_(
             self.reward_gate_proj.bias,

@@ -8,15 +8,15 @@ from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPooling,
 )
-from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    Qwen3VLForConditionalGeneration,
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5ForConditionalGeneration as _Qwen3_5ForConditionalGeneration,
 )
 from transformers.utils import can_return_tuple
 
-from qwendopamine.models.shared.outputs import FamilyModelOutputWithPast
+from qwendopamine.models.shared.outputs import FamilyCausalLMOutputWithPast
 
 
-class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
+class FamilyForConditionalGeneration(_Qwen3_5ForConditionalGeneration):
     r"""Base for family-specific ``ForConditionalGeneration`` subclasses."""
 
     config_class: type
@@ -117,8 +117,8 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
         logits_to_keep: int | torch.Tensor = 0,
         reward_values: torch.Tensor | None = None,
         **kwargs: Any,
-    ) -> tuple | FamilyModelOutputWithPast:
-        r"""forward(self, input_ids: torch.LongTensor | None=None, attention_mask: torch.Tensor | None=None, position_ids: torch.LongTensor | None=None, past_key_values: Cache | None=None, inputs_embeds: torch.FloatTensor | None=None, labels: torch.LongTensor | None=None, pixel_values: torch.Tensor | None=None, pixel_values_videos: torch.FloatTensor | None=None, image_grid_thw: torch.LongTensor | None=None, video_grid_thw: torch.LongTensor | None=None, mm_token_type_ids: torch.IntTensor | None=None, logits_to_keep: int | torch.Tensor=0, reward_values: torch.Tensor | None=None, **kwargs: Any) -> tuple | FamilyModelOutputWithPast
+    ) -> tuple | FamilyCausalLMOutputWithPast:
+        r"""forward(self, input_ids: torch.LongTensor | None=None, attention_mask: torch.Tensor | None=None, position_ids: torch.LongTensor | None=None, past_key_values: Cache | None=None, inputs_embeds: torch.FloatTensor | None=None, labels: torch.LongTensor | None=None, pixel_values: torch.Tensor | None=None, pixel_values_videos: torch.FloatTensor | None=None, image_grid_thw: torch.LongTensor | None=None, video_grid_thw: torch.LongTensor | None=None, mm_token_type_ids: torch.IntTensor | None=None, logits_to_keep: int | torch.Tensor=0, reward_values: torch.Tensor | None=None, **kwargs: Any) -> tuple | FamilyCausalLMOutputWithPast
 
         Compute conditional generation logits and optional loss.
 
@@ -140,7 +140,7 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
             kwargs (Any) - .
 
         Returns:
-            tuple | FamilyModelOutputWithPast - .
+            tuple | FamilyCausalLMOutputWithPast - .
         """
         outputs = self.model(
             input_ids=input_ids,
@@ -175,10 +175,8 @@ class FamilyForConditionalGeneration(Qwen3VLForConditionalGeneration):
             )
 
         self._apply_conditional_postprocessing(loss, outputs)
-        if loss is not None:
-            outputs.loss = loss
 
-        return FamilyModelOutputWithPast(
+        return FamilyCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,

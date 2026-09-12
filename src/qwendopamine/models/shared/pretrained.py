@@ -20,10 +20,12 @@ from typing import ClassVar
 
 from torch import nn
 from transformers.modeling_utils import PreTrainedModel
-from transformers.models.qwen3_next.modeling_qwen3_next import Qwen3NextPreTrainedModel
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5PreTrainedModel as _Qwen3_5PreTrainedModel,
+)
 
 
-class FamilyPreTrainedModel(Qwen3NextPreTrainedModel):
+class FamilyPreTrainedModel(_Qwen3_5PreTrainedModel):
     r"""Base for family-specific ``PreTrainedModel`` subclasses."""
 
     _no_split_modules: ClassVar[list[str]] = []

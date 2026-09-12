@@ -23,13 +23,13 @@ from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPooling,
 )
-from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel
+from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model as _Qwen3_5Model
 from transformers.utils import can_return_tuple
 
 from qwendopamine.models.shared.outputs import FamilyModelOutputWithPast
 
 
-class FamilyModel(Qwen3VLModel):
+class FamilyModel(_Qwen3_5Model):
     r"""Base for family-specific ``Model`` subclasses.
 
     Subclasses must set ``config_class`` and optionally override

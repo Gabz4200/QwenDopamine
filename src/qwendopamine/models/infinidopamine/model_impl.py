@@ -119,9 +119,13 @@ class InfiniDopamineVisionModel(FamilyVisionModel):
     _no_split_modules: ClassVar[list[str]] = ["InfiniDopamineVisionBlock"]
 
     def _delete_vision_attributes(self) -> None:
-        """Remove vision-specific attributes for language-only inference."""
-        del self.deepstack_visual_indexes
-        del self.deepstack_merger_list
+        """Preserve Qwen3_5 vision tower as-is for multimodal use.
+
+        The Qwen3_5 vision tower has no deepstack attributes to strip;
+        deleting would throw away pretrained vision weights needed for
+        CPT initialization from Qwen3.5. Keep the tower intact.
+        """
+        return
 
 
 class InfiniDopamineTextModel(FamilyTextModel):

@@ -20,8 +20,10 @@ from typing import Any, ClassVar
 
 import torch
 from transformers.modeling_outputs import BaseModelOutputWithPooling
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5VisionModel as _Qwen3_5VisionModel,
+)
 from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    Qwen3VLVisionModel,
     get_vision_attention_seqlens,
     get_vision_interpolation_indices_and_weights,
     get_vision_position_ids,
@@ -30,7 +32,7 @@ from transformers.utils.generic import merge_with_config_defaults
 from transformers.utils.output_capturing import capture_outputs
 
 
-class FamilyVisionModel(Qwen3VLVisionModel):
+class FamilyVisionModel(_Qwen3_5VisionModel):
     r"""Base for family-specific ``VisionModel`` subclasses.
 
     Subclasses only need to set ``config_class``; the ``__init__`` and

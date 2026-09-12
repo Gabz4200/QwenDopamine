@@ -27,13 +27,13 @@ from transformers.masking_utils import (
 )
 from transformers.modeling_layers import GenericForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPast
-from transformers.models.qwen3_next.modeling_qwen3_next import Qwen3NextModel
+from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextModel as _Qwen3_5TextModel
 
 from qwendopamine.models._transformers_utils import expand_position_ids_to_multimodal
 from qwendopamine.models.shared.pretrained import FamilyPreTrainedModel
 
 
-class FamilyTextModel(Qwen3NextModel):
+class FamilyTextModel(_Qwen3_5TextModel):
     r"""Base for family-specific ``TextModel`` subclasses.
 
     Subclasses must set ``config_class`` and optionally override

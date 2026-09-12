@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from transformers.models.qwen3_next.configuration_qwen3_next import Qwen3NextConfig
-from transformers.models.qwen3_vl.configuration_qwen3_vl import (
-    Qwen3VLConfig,
-    Qwen3VLVisionConfig,
+from transformers.models.qwen3_5.configuration_qwen3_5 import (
+    Qwen3_5Config,
+    Qwen3_5TextConfig,
+    Qwen3_5VisionConfig,
 )
 
 
@@ -49,7 +49,7 @@ class _UnsupportedAttr:
         instance.__dict__[self._name] = value
 
 
-class InfiniDopamineTextConfig(Qwen3NextConfig):
+class InfiniDopamineTextConfig(Qwen3_5TextConfig):
     r"""Text configuration for InfiniDopamine models."""
 
     model_type = "infinidopamine_text"
@@ -254,7 +254,7 @@ class InfiniDopamineTextConfig(Qwen3NextConfig):
             del self.__dict__["mlp_only_layers"]
 
 
-class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
+class InfiniDopamineVisionConfig(Qwen3_5VisionConfig):
     r"""Vision configuration for InfiniDopamine models."""
 
     model_type = "infinidopamine_vision"
@@ -263,7 +263,7 @@ class InfiniDopamineVisionConfig(Qwen3VLVisionConfig):
     )
 
 
-class InfiniDopamineConfig(Qwen3VLConfig):
+class InfiniDopamineConfig(Qwen3_5Config):
     """Master configuration for InfiniDopamine multimodal models."""
 
     model_type = "infinidopamine"

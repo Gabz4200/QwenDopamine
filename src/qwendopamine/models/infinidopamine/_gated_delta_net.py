@@ -17,31 +17,36 @@ from transformers.integrations import (
     use_kernel_forward_from_hub,
     use_kernelized_func,
 )
+from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 from transformers.models.qwen3_next.modeling_qwen3_next import (
-    Qwen3NextGatedDeltaNet,
     causal_conv1d_fn,
     causal_conv1d_update,
 )
 from transformers.utils.generic import TransformersKwargs
 
+# Register torch.ops.qwendopamine.* so training can use torch.compile / opcheck
+# via the public custom ops. Ops.gdn2 already delegates to Taichi kernels
+# directly, but the custom_op registration must be loaded for the
+# torch.library path to be available in notebooks.
+import qwendopamine.integrations.pytorch.custom_ops as _taichi_custom_ops  # noqa: F401
 from qwendopamine.models.core import apply_mask_to_padding_states
-from qwendopamine.models.gdn2 import torch_chunk_gdn2, torch_recurrent_gdn2
 from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,
     InfiniDopamineTextConfig,
 )
+from qwendopamine.ops.gdn2 import chunk_taichi_gdn2, recurrent_taichi_gdn2
 
 
 @use_kernel_forward_from_hub("InfiniDopamineGatedDeltaNet")
 @use_kernelized_func(
     [
-        torch_chunk_gdn2,
-        torch_recurrent_gdn2,
+        chunk_taichi_gdn2,
+        recurrent_taichi_gdn2,
         causal_conv1d_fn,
         causal_conv1d_update,
     ]
 )
-class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
+class InfiniDopamineGatedDeltaNet(Qwen3_5GatedDeltaNet):
     r"""InfiniDopamineGatedDeltaNet(config, layer_idx) -> None
 
     This is a framework adapter. It exists so the rest of the codebase
@@ -64,8 +69,12 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
     ) -> None:
         super().__init__(config, layer_idx)
 
-        del self.in_proj_qkvz
-        del self.in_proj_ba
+        for _name in ("in_proj_qkvz", "in_proj_ba", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a", "in_proj_w", "in_proj_gate"):
+            if hasattr(self, _name):
+                try:
+                    delattr(self, _name)
+                except AttributeError:
+                    pass
 
         self.sliding_window = getattr(config, "sliding_window", 1024)
         self.attention_dropout = getattr(
@@ -89,11 +98,24 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             self.hidden_size, self.num_v_heads * self.head_v_dim, bias=False
         )
         self.in_proj_gate = nn.Linear(self.hidden_size, self.num_v_heads, bias=False)
-        nn.init.zeros_(self.in_proj_gate.weight)
-        self.betas = nn.Parameter(torch.zeros(1, 1, self.num_v_heads, 1))
+        self.betas = nn.Parameter(torch.empty(1, 1, self.num_v_heads, 1))
         self.last_gate: torch.Tensor | None = None
+        self._init_exclusive_weights()
 
         self._register_load_state_dict_pre_hook(self._convert_gdn1_weights_hook)
+
+    def _init_exclusive_weights(self) -> None:
+        # Principled inits for GDN-2 exclusive params. Shared Q/K/V projections
+        # use HF trunc_normal std=0.02 (will be overwritten by Qwen3.5 checkpoint
+        # when CPT loads, so they never override Qwen weights). Exclusive SWA
+        # fusion gate keeps exact zeros for test-balanced 0.5 (betas+gate=0) –
+        # this is principled balanced init, not random, and is preserved when
+        # loading Qwen (hook clones zeros). Other new projs get small-variance
+        # trunc_normal to break symmetry without shifting mean.
+        for proj in (self.in_proj_qkv, self.in_proj_z, self.in_proj_a, self.in_proj_b, self.in_proj_w):
+            torch.nn.init.trunc_normal_(proj.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
+        torch.nn.init.zeros_(self.in_proj_gate.weight)
+        torch.nn.init.zeros_(self.betas)
 
     def _get_swa_mask(
         self,
@@ -273,7 +295,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
             else None
         )
         if use_precomputed_states and seq_len == 1:
-            gdn2_attn_out, last_recurrent_state = torch_recurrent_gdn2(
+            gdn2_attn_out, last_recurrent_state = recurrent_taichi_gdn2(
                 query,
                 key,
                 value,
@@ -286,7 +308,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3NextGatedDeltaNet):
                 **kwargs,
             )
         else:
-            gdn2_attn_out, last_recurrent_state = torch_chunk_gdn2(
+            gdn2_attn_out, last_recurrent_state = chunk_taichi_gdn2(
                 query,
                 key,
                 value,

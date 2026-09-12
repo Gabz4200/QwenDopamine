@@ -2096,7 +2096,7 @@ if _USE_SMOKE_CONFIG:
         reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
         reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
         reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
-        callbacks=[_rewards_refresher, _metrics_logger],
+        callbacks=[_metrics_logger],
     )
     trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 elif USE_CURRICULUM:
@@ -2148,7 +2148,7 @@ elif USE_CURRICULUM:
             reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
             reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
             reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
-            callbacks=[_rewards_refresher, _metrics_logger],
+            callbacks=[_metrics_logger],
         )
         trainer.train(resume_from_checkpoint=_last_checkpoint)
         # Drop this stage's heavy caches before next stage to keep peak disk low.
@@ -2188,7 +2188,7 @@ else:
         reward_ref_refresh_epochs=REWARD_REFRESH_EVERY_N_EPOCHS,
         reward_ref_refresh_steps=REWARD_REFRESH_EVERY_N_STEPS,
         reward_ref_warmup_steps=REWARD_REFRESH_WARMUP_STEPS,
-        callbacks=[_rewards_refresher, _metrics_logger],
+        callbacks=[_metrics_logger],
     )
     trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)
 
@@ -2332,13 +2332,13 @@ if IS_MAIN:
         print(
             "MERGE_LORA_AFTER_TRAINING=False; saving adapter and also full fused model for verification"
         )
-        model.save_pretrained(_PEFT_DIR)
+        model.save_pretrained(_PEFT_DIR, save_embedding_layers=False)
         tokenizer.save_pretrained(_PEFT_DIR)
         print(f"Adapter saved to {_PEFT_DIR}")
         try:
             merged_local = model.merge_and_unload()  # pyrefly: ignore[not-callable]
             _merged_local_dir = os.path.join(OUTPUT_DIR, "merged-final-local")
-            merged_local.save_pretrained(_merged_local_dir)  # pyrefly: ignore[not-callable]
+            merged_local.save_pretrained(_merged_local_dir, save_embedding_layers=False)  # pyrefly: ignore[not-callable]
             tokenizer.save_pretrained(_merged_local_dir)
             print(
                 f"Full fused model also saved to {_merged_local_dir} for no-loss verification"

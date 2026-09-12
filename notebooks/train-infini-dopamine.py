@@ -243,8 +243,19 @@ else:
     for _mod in list(sys.modules):
         if _mod == "PIL" or _mod.startswith("PIL."):
             sys.modules.pop(_mod, None)
-    if IS_BATCH:
-        print("[setup] Done (batch/commit mode, no restart needed, will continue).")
+    if IS_BATCH and not _skip_install:
+        # Kaggle batch/commit mode: the running kernel still holds stale
+        # numpy/scipy/sklearn C extensions loaded before `uv pip install`
+        # replaced them. The subprocess validation above passed because it
+        # is a fresh interpreter, but this kernel process cannot reload
+        # already-imported compiled modules in place. Force a kernel exit so
+        # Kaggle auto-restarts; on the next run _trio_healthy() will pass and
+        # the install is skipped, so cell 2 imports the freshly installed
+        # (ABI-matched) trio with a clean slate.
+        print("[setup] Batch install complete — forcing kernel restart for ABI sync.")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
     elif _skip_install:
         print("[setup] Done (trio healthy, no restart needed).")
     else:
@@ -350,12 +361,19 @@ if IS_MAIN:
 # the reward path (main mixer when layer_types selects it, plus the parallel
 # branch) needs the delta Taichi op. Taichi works on any hardware, so we import
 # and use it directly — a misconfigured env fails fast on its own.
+from qwendopamine.integrations.pytorch.custom_ops import (
+    is_registered as _taichi_ops_registered,
+)
 from qwendopamine.kernels.taichi import taichi_arch
+from qwendopamine.ops.gdn2 import chunk_taichi_gdn2, recurrent_taichi_gdn2
 from qwendopamine.ops.reward import delta_core_step
 
 _TAICHI_ARCH = taichi_arch()
+_TAICHI_OPS_REGISTERED = _taichi_ops_registered()
 if IS_MAIN:
     print(f"Taichi arch     : {_TAICHI_ARCH}")
+    print(f"Taichi ops reg  : {_TAICHI_OPS_REGISTERED} (torch.ops.qwendopamine.*)")
+    print(f"GDN-2 ops       : {chunk_taichi_gdn2.__module__}.{chunk_taichi_gdn2.__name__}, {recurrent_taichi_gdn2.__module__}.{recurrent_taichi_gdn2.__name__}")
 
 # %% [markdown.3]
 # ## Dataset Sources & Schema Mapping
@@ -1669,7 +1687,7 @@ def log_gpu(prefix: str = "") -> None:
             out2 = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5, check=False)
             if out2.stdout:
                 print(f"[gpu{tag}] nvidia-smi:\n{out2.stdout[:2000]}")
-    except (FileNotFoundError, subprocess.SubprocessError, OSError) as _e:  # noqa: BLE001
+    except (FileNotFoundError, subprocess.SubprocessError, OSError) as _e:
         print(f"[gpu{tag}] nvidia-smi not available: {_e}")
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
@@ -2260,9 +2278,13 @@ def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
     epochs = CURRICULUM_EPOCHS.get(stage_name, NUM_TRAIN_EPOCHS) if stage_name else NUM_TRAIN_EPOCHS  # type: ignore[name-defined]
     neftune = CURRICULUM_NEFTUNE.get(stage_name, NEFTUNE_NOISE_ALPHA) if stage_name is not None else NEFTUNE_NOISE_ALPHA  # type: ignore[name-defined]
     run_name = f"curriculum-{stage_name}" if stage_name else None
-    # Use warmup_ratio (not steps) so curriculum stages with different sizes get proportional warmup.
-    warmup_steps = 0 if not _USE_SMOKE_CONFIG else WARMUP_STEPS
-    warmup_ratio = WARMUP_RATIO if not _USE_SMOKE_CONFIG else 0.0
+    # Transformers 5.x removed warmup_ratio from TrainingArguments.
+    # Compute warmup_steps from the ratio so curriculum stages with different
+    # sizes get proportional warmup.
+    if _USE_SMOKE_CONFIG:
+        warmup_steps = WARMUP_STEPS
+    else:
+        warmup_steps = max(1, int(MAX_TRAIN_STEPS or 1) * WARMUP_RATIO) if MAX_TRAIN_STEPS else WARMUP_STEPS
     return TrainingArguments(
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
@@ -2271,7 +2293,6 @@ def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
         weight_decay=wd,
         lr_scheduler_type=LR_SCHEDULER_TYPE,
         warmup_steps=warmup_steps,
-        warmup_ratio=warmup_ratio,
         num_train_epochs=epochs,
         max_steps=MAX_TRAIN_STEPS,
         logging_steps=LOGGING_STEPS,

@@ -122,10 +122,7 @@ class FamilyTextModel(_Qwen3_5TextModel):
                 # ``DynamicCache`` (the common case) supports
                 # ``get_seq_length``; a custom cache without that
                 # method is treated as having zero past tokens.
-                try:
-                    past_seen_tokens = past_key_values.get_seq_length()
-                except (ValueError, NotImplementedError):
-                    past_seen_tokens = 0
+                past_seen_tokens = past_key_values.get_seq_length()
             else:
                 past_seen_tokens = 0
         else:

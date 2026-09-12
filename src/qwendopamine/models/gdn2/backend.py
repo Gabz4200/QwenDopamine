@@ -3,45 +3,14 @@
 
 r"""Backend resolution and execution dispatch for GDN-2.
 
-This module selects the concrete GDN-2 execution backend based on the runtime
-environment (CPU vs CUDA, training vs inference, sequence length) and the
-user-requested backend string.
+The Taichi backend is the single hardware-accelerated engine; Taichi
+itself picks CUDA → Vulkan → Metal/OpenGL → CPU. Backend resolution
+fails fast: if Taichi is unavailable, an error is raised.
 """
 
 from __future__ import annotations
 
-import logging
-
-from qwendopamine.ops._backend_registry import (
-    BackendResolutionError,
-    resolve_backend,
-)
-
-# Module-level single-warning guard for CPU fallback. Keyed on the
-# reason string so the same fallback reason only fires the first time.
-_WARNED_FALLBACKS: set[str] = set()
-
-_logger = logging.getLogger(__name__)
-
-
-def _warn_fallback_once(reason: str) -> None:
-    """Warn once per process per fallback reason.
-
-    Logs at WARNING level through the module's named logger (visible
-    in standard logging configuration) and also emits a Python
-    ``warnings.warn`` for users who don't configure logging. The
-    stacklevel is set so the warning points at the call site.
-    """
-    if reason in _WARNED_FALLBACKS:
-        return
-    _WARNED_FALLBACKS.add(reason)
-    import warnings
-
-    msg = f"[gdn2] Using pure PyTorch fallback: {reason}"
-    _logger_once = logging.getLogger("qwendopamine.gdn2")
-    _logger_once.warning(msg)
-    warnings.warn(msg, stacklevel=3)
-
+from qwendopamine.ops._backend_registry import resolve_backend
 
 GDN2_BACKENDS = (
     "auto",
@@ -54,22 +23,6 @@ GDN2_BACKENDS = (
     "fla",
 )
 
-_SINGLE_TOKEN_SEQ_LEN = 1
-_RECURRENT_SHORT_SEQ_LEN = 64
-
-_DEFAULT_CHUNK_SIZE = 64
-_DEFAULT_BACKEND = "auto"
-_DEFAULT_COMPILE_BACKEND = False
-
-
-def _taichi_ok() -> bool:
-    try:
-        from qwendopamine.ops.gdn2 import is_taichi_available
-
-        return is_taichi_available()
-    except (ImportError, RuntimeError):
-        return False
-
 
 def resolve_gdn2_backend(
     requested: str,
@@ -81,8 +34,22 @@ def resolve_gdn2_backend(
 
     The Taichi backend is the single hardware-accelerated engine; Taichi
     itself picks CUDA → Vulkan → Metal/OpenGL → CPU. ``"auto"`` selects
-    Taichi when available and otherwise falls back to the chunkwise /
-    recurrent pure-PyTorch reference kernels.
+    Taichi when available. If Taichi is unavailable, this raises
+    ``RuntimeError``.
+
+    Args:
+        requested: The backend name requested by the caller (``"auto"``,
+            ``"taichi"``, ``"torch"``, ``"torch-chunk"``,
+            ``"torch-recurrent"``, ``"compiled"``, ``"triton"``, ``"fla"``).
+        training: Whether the model is in training mode.
+        seq_len: Current sequence length (used for heuristic defaults).
+
+    Returns:
+        The resolved backend name string.
+
+    Raises:
+        ValueError: If *requested* is not a valid backend name.
+        RuntimeError: If Taichi is required but unavailable.
     """
     if requested not in GDN2_BACKENDS:
         raise ValueError(
@@ -92,31 +59,13 @@ def resolve_gdn2_backend(
         # The CUDA-bound triton/fla paths were replaced by Taichi; the
         # old scalar names now route to the equivalent path.
         if requested in ("triton", "fla"):
-            return "taichi" if _taichi_ok() else "torch-chunk"
+            return "taichi"
         if requested == "compiled":
             return "torch-chunk"
-        try:
-            return resolve_backend(requested)
-        except BackendResolutionError:
-            return requested
-
-    if _taichi_ok():
-        return "taichi"
-
-    try:
         return resolve_backend(requested)
-    except BackendResolutionError as exc:
-        _logger.debug(
-            "GDN-2 backend '%s' not resolved (%s); using fallback", requested, exc
-        )
 
-    if not training and seq_len <= _SINGLE_TOKEN_SEQ_LEN:
-        return "torch-recurrent"
-    if training:
-        return "torch-chunk"
-    if seq_len <= _RECURRENT_SHORT_SEQ_LEN:
-        return "torch-recurrent"
-    return "torch-chunk"
+    # "auto" — Taichi is a hard dependency, always available.
+    return "taichi"
 
 
 __all__ = [

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 from torch import nn
 
@@ -20,11 +21,10 @@ def test_when_model_has_parameters_then_returns_parameter_device() -> None:
     assert device.type == "cpu"
 
 
-def test_when_model_has_no_parameters_then_falls_back_to_cpu() -> None:
+def test_when_model_has_no_parameters_then_raises_stop_iteration() -> None:
     empty_model = nn.Module()
-    device = get_model_device(empty_model)
-    assert isinstance(device, torch.device)
-    assert device.type == "cpu"
+    with pytest.raises(StopIteration):
+        get_model_device(empty_model)
 
 
 def test_when_init_distributed_in_single_process_then_returns_zero_rank() -> None:

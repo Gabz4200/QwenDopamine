@@ -15,8 +15,8 @@ Detection order (most preferred first):
 
 PyTorch has no first-class Vulkan detection (Vulkan support in
 PyTorch is experimental and not exposed through ``is_available()``);
-we ask the Taichi runtime directly, because Taichi handles the
-CUDA → Vulkan → Metal/OpenGL → CPU fallback internally. This module
+we ask the Taichi runtime directly, because Taichi picks its own
+backend (CUDA → Vulkan → Metal/OpenGL → CPU). This module
 treats Taichi as the canonical "what GPU landed" probe.
 """
 
@@ -38,47 +38,32 @@ _ACTIVE: torch.device | None = None
 
 
 def _taichi_arch_safe() -> str | None:
-    """Return the active Taichi arch string, or None if Taichi is unavailable.
+    """Return the active Taichi arch string, or None if Taichi has not been initialised.
 
-    Wrapped in a try/except because ``taichi_arch()`` may raise when
-    Taichi is not installed or fails to initialise (e.g. inside a
-    Python REPL on a machine without the Vulkan loader).
-
-    The Taichi runtime is **lazy** — calling ``taichi_arch()``
-    triggers a full ``ti.init()`` if it hasn't happened yet, which
-    is slow on the first call (Vulkan JIT compiles a runtime
-    bitcode). We avoid that cost by checking whether the runtime
-    was already initialised.
+    The Taichi runtime is **lazy** — calling ``taichi_arch()`` triggers a
+    full ``ti.init()`` if it hasn't happened yet, which is slow on the
+    first call (Vulkan JIT compiles a runtime bitcode). We avoid that cost
+    by checking whether the runtime was already initialised.
     """
-    try:
-        from qwendopamine.kernels.taichi.runtime import _INITIALISED
+    from qwendopamine.kernels.taichi.runtime import _INITIALISED
 
-        if not _INITIALISED:
-            # Taichi has not been initialised yet; asking for the
-            # arch would trigger the slow first-init path. Defer.
-            return None
-        from qwendopamine.kernels.taichi import taichi_arch as _impl
-
-        return _impl()
-    except Exception as exc:  # noqa: BLE001 - probe must never raise
-        _logger.debug("Taichi arch probe failed: %s", exc)
+    if not _INITIALISED:
+        # Taichi has not been initialised yet; asking for the
+        # arch would trigger the slow first-init path. Defer.
         return None
+    from qwendopamine.kernels.taichi import taichi_arch as _impl
+
+    return _impl()
 
 
 def _device_count_signature() -> int:
     """Hash the visible accelerator counts so the cache can invalidate."""
-    try:
-        cuda = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    except Exception:  # noqa: BLE001
-        cuda = 0
-    try:
-        xpu = (
-            torch.xpu.device_count()
-            if hasattr(torch, "xpu") and torch.xpu.is_available()
-            else 0
-        )
-    except Exception:  # noqa: BLE001
-        xpu = 0
+    cuda = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    xpu = (
+        torch.xpu.device_count()
+        if hasattr(torch, "xpu") and torch.xpu.is_available()
+        else 0
+    )
     mps = (
         1
         if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
@@ -91,7 +76,7 @@ def detect_available_devices() -> list[str]:
     """Return the list of available accelerator names, ordered by preference.
 
     The list contains a subset of ``{"cuda", "xpu", "mps", "vulkan", "cpu"}``.
-    ``"cpu"`` is always present (the final fallback). The order is the
+    ``"cpu"`` is always present. The order is the
     preference order: the first element is the one
     :func:`default_device` will pick.
 
@@ -107,21 +92,12 @@ def detect_available_devices() -> list[str]:
         if _DETECTED is not None and _DETECTED_HASH == current_sig:
             return list(_DETECTED)
         available: list[str] = []
-        try:
-            if torch.cuda.is_available():
-                available.append("cuda")
-        except Exception as exc:  # noqa: BLE001
-            _logger.debug("CUDA probe failed: %s", exc)
-        try:
-            if hasattr(torch, "xpu") and torch.xpu.is_available():
-                available.append("xpu")
-        except Exception as exc:  # noqa: BLE001
-            _logger.debug("XPU probe failed: %s", exc)
-        try:
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                available.append("mps")
-        except Exception as exc:  # noqa: BLE001
-            _logger.debug("MPS probe failed: %s", exc)
+        if torch.cuda.is_available():
+            available.append("cuda")
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            available.append("xpu")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            available.append("mps")
         # Vulkan / Metal / OpenGL detection: ask Taichi what arch landed.
         taichi_arch = _taichi_arch_safe()
         if taichi_arch is not None:

@@ -38,19 +38,13 @@ def run_cpt_notebook(
     if extra_env:
         env.update(extra_env)
 
-    try:
-        from accelerate.state import PartialState
+    from accelerate.state import PartialState
 
-        PartialState._reset_state()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("PartialState reset skipped: %s", exc)
-    try:
-        import torch.distributed
+    PartialState._reset_state()
+    import torch.distributed
 
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Destroy process group skipped: %s", exc)
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
     old_argv, old_env = sys.argv, dict(os.environ)
     sys.argv = [str(notebook)]
@@ -63,19 +57,13 @@ def run_cpt_notebook(
         sys.argv = old_argv
         os.environ.clear()
         os.environ.update(old_env)
-        try:
-            from accelerate.state import PartialState
+        from accelerate.state import PartialState
 
-            PartialState._reset_state()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("PartialState reset skipped: %s", exc)
-        try:
-            import torch.distributed
+        PartialState._reset_state()
+        import torch.distributed
 
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                torch.distributed.destroy_process_group()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Destroy process group skipped: %s", exc)
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
     out = capsys.readouterr().out
     runs = list(tmp_path.iterdir())
@@ -90,32 +78,16 @@ def losses_from_trainer_state(run_dir: Path) -> list[float]:
         state_file = ckpt / "trainer_state.json"
         if not state_file.is_file():
             continue
-        try:
-            data = json.loads(state_file.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.debug("Skipping corrupt trainer_state %s: %s", state_file, exc)
-            continue
+        data = json.loads(state_file.read_text())
         for entry in data.get("log_history", []):
             if "loss" in entry:
-                try:
-                    v = float(entry["loss"])
-                except (ValueError, TypeError) as exc:
-                    logger.debug(
-                        "Skipping non-numeric loss %r: %s", entry.get("loss"), exc
-                    )
-                    continue
+                v = float(entry["loss"])
                 if math.isfinite(v):
                     losses.append(v)
                 continue
             for k in ("train_loss", "eval_loss"):
                 if k in entry:
-                    try:
-                        v = float(entry[k])
-                    except (ValueError, TypeError) as exc:
-                        logger.debug(
-                            "Skipping non-numeric %s %r: %s", k, entry.get(k), exc
-                        )
-                        continue
+                    v = float(entry[k])
                     if math.isfinite(v):
                         losses.append(v)
     return losses

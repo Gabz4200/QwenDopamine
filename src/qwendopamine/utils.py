@@ -9,21 +9,18 @@ from torch import nn
 
 
 def get_model_device(model: nn.Module) -> torch.device:
-    r"""get_model_device(model: nn.Module) -> torch.device
-
-    Return the device of the first parameter, falling back to CPU.
+    r"""Return the device of the first parameter of the model.
 
     Args:
         model (nn.Module): Model whose parameters are inspected.
 
     Returns:
-        torch.device: Device of the first parameter, or ``torch.device("cpu")``
-        if the model has no parameters.
+        torch.device: Device of the first parameter.
+
+    Raises:
+        StopIteration: If the model has no parameters.
     """
-    try:
-        return next(model.parameters()).device  # type: ignore[no-any-return-implicit]
-    except StopIteration:
-        return torch.device("cpu")
+    return next(model.parameters()).device  # type: ignore[no-any-return-implicit]
 
 
 def move_to_device(batch: Any, device: torch.device) -> Any:

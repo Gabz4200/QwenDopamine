@@ -113,7 +113,7 @@ class InfiniDopamineTextConfig(Qwen3_5TextConfig):
     the rest of the model has stabilised."""
     intermediate_size_linear: int | None = None
     r"""Optional intermediate size for the linear-mixer MLP head (when the
-    linear block is used as the main mixer). ``None`` falls back to
+    linear block is used as the main mixer). ``None`` uses
     :attr:`intermediate_size`."""
     attn_implementation: str | None = None
     r"""Optional attention implementation override (e.g. ``"eager"``,

@@ -2,8 +2,8 @@
 
 The public ops in :mod:`qwendopamine.ops` are exposed to PyTorch as
 ``torch.library.custom_op`` operators. The real implementation lives
-in the Taichi kernels (or, when Taichi is unavailable, the
-pure-PyTorch reference); the fake/meta implementation lets
+in the Taichi kernels; the pure-PyTorch reference provides a canonical
+implementation. The fake/meta implementation lets
 ``torch.compile`` and the Dynamo/AOT pipeline reason about shapes and
 dtypes without executing the kernel; the autograd Function records
 the backward rule.
@@ -24,8 +24,7 @@ Schema:
 Each registered op is the canonical entry point for code that wants
 ``torch.compile`` compatibility, ``opcheck`` validation, or PyTorch
 shape inference. The :mod:`qwendopamine.ops` package exposes plain
-Python functions that delegate to these custom ops when Taichi is
-unavailable (and to the Taichi kernel directly when it is — the
+Python functions that delegate to these custom ops (the
 custom-op registration is opt-in for callers that need it).
 """
 

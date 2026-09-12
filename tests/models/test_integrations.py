@@ -150,7 +150,7 @@ def test_when_load_qwen35_tokenizer_all_candidates_fail_then_raises_runtime_erro
 
     monkeypatch.setattr(AutoTokenizer, "from_pretrained", _mock_from_pretrained)
 
-    with pytest.raises(RuntimeError, match="Failed to load Qwen3.5 tokenizer"):
+    with pytest.raises(OSError, match="Simulated connection/file error"):
         load_qwen35_tokenizer("nonexistent/invalid-model-name")
 
 

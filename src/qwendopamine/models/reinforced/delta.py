@@ -144,67 +144,27 @@ class GatedRewardNet(nn.Module):
                 return conv[0], None
             return None
 
-        # Centralised cache-field-name table. The reward-namespaced
-        # attributes (``reward_recurrent_state`` etc.) take priority;
-        # the un-prefixed names are accepted as fallbacks so legacy
-        # caches built before the namespace was introduced keep
-        # working. Touching this list is the only place the cache
-        # schema lives — the write side in ``_write_cache`` mirrors it.
+        # Cache-field-name table. Dict caches use un-prefixed keys;
+        # DynamicCache layers use reward-namespaced attributes.
         if hasattr(past_key_values, "layers"):
             layers = getattr(past_key_values, "layers", [])
             if self.layer_idx is not None and self.layer_idx < len(layers):
                 lc = layers[self.layer_idx]
                 rec = getattr(lc, "reward_recurrent_state", None)
-                if rec is None:
-                    rec = getattr(lc, "recurrent_state", None)
-                if rec is None:
-                    rec = getattr(lc, "recurrent_states", None)
-                    if isinstance(rec, dict):
-                        rec = next((v for v in rec.values() if v is not None), None)
-                    elif isinstance(rec, (list, tuple)) and rec:
-                        rec = rec[0]
                 conv = getattr(lc, "reward_conv_states", None)
-                if conv is None:
-                    conv = getattr(lc, "conv_state", None)
-                if conv is None:
-                    conv = getattr(lc, "conv_states", None)
                 conv_pair = _extract_conv(conv)
                 baseline = getattr(lc, "reward_value_baseline", None)
-                if baseline is None:
-                    baseline = getattr(lc, "value_baseline", None)
                 running_mean = getattr(lc, "reward_running_mean", None)
-                if running_mean is None:
-                    running_mean = getattr(lc, "running_mean", None)
                 running_std = getattr(lc, "reward_running_std", None)
-                if running_std is None:
-                    running_std = getattr(lc, "running_std", None)
                 return rec, conv_pair, baseline, running_mean, running_std
             return None, None, None, None, None
         if isinstance(past_key_values, dict):
             rec = past_key_values.get("recurrent_state")
-            if rec is None:
-                rec = past_key_values.get("reward_recurrent_state")
-            if rec is None:
-                rec = past_key_values.get("recurrent_states")
-                if isinstance(rec, dict):
-                    rec = next((v for v in rec.values() if v is not None), None)
-                elif isinstance(rec, (list, tuple)) and rec:
-                    rec = rec[0]
             conv = past_key_values.get("conv_state")
-            if conv is None:
-                conv = past_key_values.get("reward_conv_states")
-            if conv is None:
-                conv = past_key_values.get("conv_states")
             conv_pair = _extract_conv(conv)
             baseline = past_key_values.get("value_baseline")
-            if baseline is None:
-                baseline = past_key_values.get("reward_value_baseline")
             running_mean = past_key_values.get("running_mean")
-            if running_mean is None:
-                running_mean = past_key_values.get("reward_running_mean")
             running_std = past_key_values.get("running_std")
-            if running_std is None:
-                running_std = past_key_values.get("reward_running_std")
             return rec, conv_pair, baseline, running_mean, running_std
         return None, None, None, None, None
 

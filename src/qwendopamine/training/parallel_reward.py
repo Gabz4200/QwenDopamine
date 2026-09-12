@@ -131,25 +131,23 @@ def collect_parallel_reward_metrics(
     # Cache state from the first active layer.
     layer = active_layers[0]
     if past_key_values is not None and hasattr(past_key_values, "layers"):
-        try:
-            layer_idx = getattr(layer, "layer_idx", None)
-            if layer_idx is None:
-                layer_idx = layers.index(layer)
-            lc = past_key_values.layers[layer_idx]
-            baseline = getattr(lc, "reward_value_baseline", None)
-            if baseline is not None:
-                metrics["parallel_reward/value_baseline"] = float(
-                    baseline.detach().float().abs().sum().item()
-                )
-            rec = getattr(lc, "reward_recurrent_state", None)
-            if rec is not None:
-                metrics["parallel_reward/recurrent_state_norm"] = _norm(rec)
-        except (AttributeError, IndexError) as e:
-            _logger.debug(
-                "parallel_reward: could not read cache state for layer %r: %r",
-                getattr(layer, "layer_idx", None),
-                e,
+        layer_idx = getattr(layer, "layer_idx", None)
+        if layer_idx is None:
+            layer_idx = layers.index(layer)
+        if layer_idx >= len(past_key_values.layers):
+            raise IndexError(
+                f"layer_idx={layer_idx} but past_key_values has only "
+                f"{len(past_key_values.layers)} layers."
             )
+        lc = past_key_values.layers[layer_idx]
+        baseline = getattr(lc, "reward_value_baseline", None)
+        if baseline is not None:
+            metrics["parallel_reward/value_baseline"] = float(
+                baseline.detach().float().abs().sum().item()
+            )
+        rec = getattr(lc, "reward_recurrent_state", None)
+        if rec is not None:
+            metrics["parallel_reward/recurrent_state_norm"] = _norm(rec)
 
     return metrics
 

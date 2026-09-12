@@ -10,12 +10,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import torch
-from transformers.cache_utils import Cache
-
-try:
-    from transformers.cache_utils import LinearAttentionCacheLayerMixin
-except ImportError:
-    LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
+from transformers.cache_utils import Cache, LinearAttentionCacheLayerMixin
 
 
 def get_cache(
@@ -117,18 +112,7 @@ def update_cache(
                 and hasattr(past_key_values, "update_recurrent_state")
                 and recurrent_state is not None
             ):
-                try:
-                    past_key_values.update_recurrent_state(recurrent_state, layer_idx)
-                except (
-                    TypeError,
-                    ValueError,
-                    AttributeError,
-                    RuntimeError,
-                    IndexError,
-                ) as e:
-                    from qwendopamine.models.gdn2.backend import _warn_fallback_once
-
-                    _warn_fallback_once(f"update_recurrent_state failed: {e}")
+                past_key_values.update_recurrent_state(recurrent_state, layer_idx)
             elif recurrent_state is not None:
                 rec_dict = getattr(layer_cache, "recurrent_states", None)
                 if isinstance(rec_dict, dict):
@@ -141,18 +125,7 @@ def update_cache(
                 and hasattr(past_key_values, "update_conv_state")
                 and conv_state is not None
             ):
-                try:
-                    past_key_values.update_conv_state(cast(Any, conv_state), layer_idx)
-                except (
-                    TypeError,
-                    ValueError,
-                    AttributeError,
-                    RuntimeError,
-                    IndexError,
-                ) as e:
-                    from qwendopamine.models.gdn2.backend import _warn_fallback_once
-
-                    _warn_fallback_once(f"update_conv_state failed: {e}")
+                past_key_values.update_conv_state(cast(Any, conv_state), layer_idx)
             elif conv_state is not None:
                 conv_dict = getattr(layer_cache, "conv_states", None)
                 if isinstance(conv_dict, dict):

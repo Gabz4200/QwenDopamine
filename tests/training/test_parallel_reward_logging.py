@@ -1,23 +1,18 @@
-"""M9: parallel reward monitoring must debug-log, not silently swallow."""
+"""M9: parallel reward must fail fast on cache mismatch, not silently swallow."""
 
 from __future__ import annotations
 
-import logging
-
 import pytest
+from torch import nn
 
 
-def test_parallel_reward_except_logs_at_debug(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """When cache reading fails, the helper must log at DEBUG, not pass.
+def test_parallel_reward_raises_on_layer_count_mismatch() -> None:
+    """When ``past_key_values.layers`` has fewer entries than the model's
+    layer_idx, ``collect_parallel_reward_metrics`` must raise IndexError.
 
-    Review M9: the previous code did ``except (AttributeError, IndexError):
-    pass`` which made misconfigured models invisible. The fix logs at
-    DEBUG so a user can diagnose without crashing the training loop.
+    The previous code caught this with ``except (AttributeError, IndexError):
+    pass``, hiding misconfigured caches. Now it fails fast.
     """
-    from torch import nn
-
     from qwendopamine.training import parallel_reward as pr
 
     class _Layer(nn.Module):
@@ -33,18 +28,11 @@ def test_parallel_reward_except_logs_at_debug(
             self.layers = nn.ModuleList([_Layer()])
 
     class _BadCache:
-        # Force the except branch by having ``layers`` be an empty list
-        # so ``layers[layer_idx]`` raises IndexError.
-        layers: list  # initialised in __init__ to avoid mutable class attr
+        layers: list
 
         def __init__(self) -> None:
             self.layers = []
 
     model = _Model()
-    with caplog.at_level(logging.DEBUG, logger=pr.__name__):
-        metrics = pr.collect_parallel_reward_metrics(model, past_key_values=_BadCache())
-    assert "parallel_reward/active_layers" in metrics
-    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
-    assert any("parallel_reward" in r.message for r in debug_records), (
-        f"Expected a DEBUG log; got {[r.message for r in caplog.records]!r}"
-    )
+    with pytest.raises(IndexError, match="layer_idx=0"):
+        pr.collect_parallel_reward_metrics(model, past_key_values=_BadCache())

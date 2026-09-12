@@ -54,6 +54,7 @@ class _LMWithAvgLoss(nn.Module):
     def __init__(self, loss_value: float = 0.5) -> None:
         super().__init__()
         self._loss = loss_value
+        self._dummy = nn.Parameter(torch.zeros(1))
 
     def forward(self, input_ids: torch.Tensor) -> object:
         out = type("Out", (), {})()  # pyrefly: ignore[bad-argument-type]

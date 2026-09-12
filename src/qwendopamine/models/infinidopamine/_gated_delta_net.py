@@ -79,10 +79,7 @@ class InfiniDopamineGatedDeltaNet(Qwen3_5GatedDeltaNet):
             "in_proj_gate",
         ):
             if hasattr(self, _name):
-                try:
-                    delattr(self, _name)
-                except AttributeError:
-                    pass
+                delattr(self, _name)
 
         self.sliding_window = getattr(config, "sliding_window", 1024)
         self.attention_dropout = getattr(

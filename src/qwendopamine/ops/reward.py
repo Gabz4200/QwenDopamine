@@ -1,9 +1,8 @@
-"""Reinforced Delta public op with Taichi fallback.
+"""Reinforced Delta public op backed by Taichi kernels.
 
 Backend choice is delegated to Taichi: the kernel runtime picks CUDA →
-Vulkan → Metal/OpenGL → CPU on its own. When Taichi is unavailable,
-this module falls back to a pure-PyTorch implementation of the same
-column-wise recurrence.
+Vulkan → Metal/OpenGL → CPU on its own. The pure-PyTorch
+implementation is the canonical reference.
 
 Two entry points are exposed:
 
@@ -13,7 +12,7 @@ Two entry points are exposed:
 - :func:`delta_core_step_out` — **in-place** API. Writes the result
   into the caller-supplied ``next_state`` buffer and returns it. The
   Taichi kernel uses this to avoid an allocation on every step. The
-  PyTorch fallback is implemented by delegating to
+  pure-PyTorch path delegates to
   :func:`delta_core_step` and ``copy_``-ing into the destination.
 
 Both paths use the same column-wise recurrence:
@@ -59,9 +58,7 @@ _register_reward_backends()
 
 def is_taichi_available() -> bool:
     r"""Return whether Taichi Reinforced Delta backend is available."""
-    from qwendopamine.kernels.taichi import is_available as _is_available
-
-    return _is_available()
+    return True
 
 
 def _reward_torch_step(
@@ -98,13 +95,13 @@ def delta_core_step(
 ) -> torch.Tensor:
     """Reinforced Delta per-token update with backend delegation (functional).
 
-    Both the Taichi kernel and the pure-PyTorch fallback are invoked
+    Both the Taichi kernel and the pure-PyTorch reference are invoked
     purely functionally: a fresh ``next_state`` is allocated and
     returned. No input tensor is mutated.
 
-    When Taichi is available, the autograd-aware kernel records the
-    per-token adjoint. When Taichi is unavailable, the pure-PyTorch
-    fallback below implements the same column-wise spec.
+    The Taichi kernel records the per-token adjoint via autograd.
+    The pure-PyTorch reference below implements the same column-wise
+    spec for backends that are not ``"taichi"``.
     """
     backend = resolve_backend("auto")
     if backend == "taichi":
@@ -131,7 +128,7 @@ def delta_core_step_out(
 
     Writes the result into the caller-supplied ``next_state`` buffer
     and returns it. The Taichi kernel uses this to avoid an allocation
-    on every step. The PyTorch fallback delegates to
+    on every step. The pure-PyTorch path delegates to
     :func:`delta_core_step` (functional) and ``copy_``-es into the
     destination, so the two paths share the same numerical contract.
 

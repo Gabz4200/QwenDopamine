@@ -1,8 +1,7 @@
-"""GDN-2 public ops with Taichi fallback.
+"""GDN-2 public ops backed by Taichi kernels.
 
 Backend choice is delegated to Taichi: the kernel runtime picks CUDA →
-Vulkan → Metal/OpenGL → CPU on its own. When Taichi is unavailable,
-this module falls back to the pure-PyTorch reference.
+Vulkan → Metal/OpenGL → CPU on its own.
 """
 
 import torch
@@ -17,8 +16,6 @@ from qwendopamine.ops._backend_registry import (
 
 
 def _register_default_backends() -> None:
-    from qwendopamine.kernels.taichi import is_available as taichi_is_available
-
     def _torch_chunk_backend() -> str:
         return "torch-chunk"
 
@@ -26,7 +23,7 @@ def _register_default_backends() -> None:
         return "torch-recurrent"
 
     def _taichi_backend() -> str:
-        return "taichi" if taichi_is_available() else "torch-chunk"
+        return "taichi"
 
     register_backend("torch-chunk", _torch_chunk_backend)
     register_backend("torch-recurrent", _torch_recurrent_backend)
@@ -39,9 +36,7 @@ _register_default_backends()
 
 def is_taichi_available() -> bool:
     r"""Return whether Taichi GDN-2 backend is available."""
-    from qwendopamine.kernels.taichi import is_available as _is_available
-
-    return _is_available()
+    return True
 
 
 def _resolve_backend(backend: str | None) -> str:
@@ -90,7 +85,7 @@ def chunk_taichi_gdn2(
     r"""GDN-2 chunkwise forward + backward.
 
     Executes one chunkwise GDN-2 recurrence step. Delegates to the Taichi
-    kernel when the runtime is available; otherwise falls back to the
+    kernel when the runtime is available; otherwise uses the
     pure-PyTorch reference (:func:`torch_chunk_gdn2`). Output is always
     returned as a contiguous tensor so downstream ``torch.compile`` /
     ``opcheck`` callers see a stable memory layout.
@@ -176,7 +171,7 @@ def recurrent_taichi_gdn2(
     r"""GDN-2 single-token recurrent forward + backward.
 
     Executes the GDN-2 recurrence token-by-token. Delegates to the Taichi
-    kernel when the runtime is available; otherwise falls back to the
+    kernel when the runtime is available; otherwise uses the
     pure-PyTorch reference (:func:`torch_recurrent_gdn2`). Output is always
     returned as a contiguous tensor so downstream ``torch.compile`` /
     ``opcheck`` callers see a stable memory layout.

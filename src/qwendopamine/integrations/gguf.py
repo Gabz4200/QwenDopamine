@@ -7,12 +7,7 @@ import re
 from typing import Any
 
 import torch
-
-try:
-    from gguf import GGUFReader, dequantize
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    GGUFReader = None
-    dequantize = None
+from gguf import GGUFReader, dequantize
 
 from qwendopamine import DEFAULT_QWEN35_REPO
 
@@ -91,11 +86,6 @@ def _dequantize_gguf_tensor(tensor: Any, hf_name: str) -> torch.Tensor:
     Returns:
         Tensor: dequantized tensor.
     """
-    if dequantize is None:
-        data = torch.as_tensor(tensor.data)
-        if hf_name.endswith(".conv1d.weight") and data.ndim == 2:
-            return data.unsqueeze(1)
-        return data
     dequantized = dequantize(tensor.data, tensor.tensor_type)
     if hf_name.endswith(".conv1d.weight") and dequantized.ndim == 2:
         return torch.from_numpy(dequantized.copy()).unsqueeze(1)

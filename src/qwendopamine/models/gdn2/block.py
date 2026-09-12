@@ -6,7 +6,7 @@ r"""Gated DeltaNet 2 (GDN-2) token-mixing block.
 This module defines :class:`GatedDeltaNet2`, the ``nn.Module`` that wraps the
 GDN-2 recurrence into a drop-in token mixer for Qwen-style Transformer blocks.
 It supports both GPU (accelerated via Triton/FLA when available) and CPU/
-device-agnostic execution via pure PyTorch reference fallbacks.
+device-agnostic execution via pure PyTorch reference kernels.
 
 GDN-2 extends KDA's scalar-beta erase gate to channel-wise erase (``b``) and
 write (``w``) gates:
@@ -27,21 +27,6 @@ import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
 
-from qwendopamine.models.gdn2.backend import resolve_gdn2_backend
-from qwendopamine.models.gdn2.ops.conv import ShortConvolution
-from qwendopamine.models.gdn2.ops.norm import RMSNormGated
-from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
-from qwendopamine.models.gdn2.recurrence.packing import (
-    get_unpad_data,
-    index_first_axis,
-)
-from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
-
-try:
-    from transformers.cache_utils import LinearAttentionCacheLayerMixin
-except ImportError:
-    LinearAttentionCacheLayerMixin = type(None)  # type: ignore[misc, assignment]
-
 from qwendopamine.models.gdn2._backend_helpers import _GATED_DELTA_NET_BACKENDS
 from qwendopamine.models.gdn2._block_meta import (
     _DEFAULT_ALLOW_NEG_EIGVAL,
@@ -59,6 +44,15 @@ from qwendopamine.models.gdn2._block_meta import (
     _DEFAULT_NUM_HEADS,
     _DEFAULT_USE_SHORT_CONV,
 )
+from qwendopamine.models.gdn2.backend import resolve_gdn2_backend
+from qwendopamine.models.gdn2.ops.conv import ShortConvolution
+from qwendopamine.models.gdn2.ops.norm import RMSNormGated
+from qwendopamine.models.gdn2.recurrence.chunk import torch_chunk_gdn2
+from qwendopamine.models.gdn2.recurrence.packing import (
+    get_unpad_data,
+    index_first_axis,
+)
+from qwendopamine.models.gdn2.recurrence.recurrent import torch_recurrent_gdn2
 
 _HAS_TAICHI_OPS: bool | None = None
 _taichi_chunk_gdn2 = None
@@ -67,18 +61,13 @@ _taichi_recurrent_gdn2 = None
 
 def _taichi_ops_available() -> bool:
     """Return whether the public Taichi ops path is available, caching the result."""
-    global _HAS_TAICHI_OPS
+    global _HAS_TAICHI_OPS, _taichi_chunk_gdn2, _taichi_recurrent_gdn2
     if _HAS_TAICHI_OPS is None:
-        try:
-            from qwendopamine.ops import chunk_taichi_gdn2, recurrent_taichi_gdn2
-            from qwendopamine.ops.gdn2 import is_taichi_available
+        from qwendopamine.ops import chunk_taichi_gdn2, recurrent_taichi_gdn2
 
-            global _taichi_chunk_gdn2, _taichi_recurrent_gdn2
-            _taichi_chunk_gdn2 = chunk_taichi_gdn2
-            _taichi_recurrent_gdn2 = recurrent_taichi_gdn2
-            _HAS_TAICHI_OPS = is_taichi_available()
-        except (ImportError, RuntimeError):
-            _HAS_TAICHI_OPS = False
+        _taichi_chunk_gdn2 = chunk_taichi_gdn2
+        _taichi_recurrent_gdn2 = recurrent_taichi_gdn2
+        _HAS_TAICHI_OPS = True
     return _HAS_TAICHI_OPS
 
 
@@ -283,27 +272,12 @@ class GatedDeltaNet2(nn.Module):
         self._init_output_head()
         self.apply(self._initialize_weights)
 
-        # Optional torch.compile backend. Best-effort: if induction fails (e.g.
-        # generic non-CPU/cuda devices), we transparently fall back to the plain
-        # chunk kernel so the signature stays identical. The exception is
-        # captured on ``self.compile_error`` so the user can introspect why
-        # the compile failed without grepping logs.
+        # Optional torch.compile backend. torch.compile is a no-op if it
+        # cannot trace the function — it will raise at call time.
         self._compiled_chunk: Any = None
         self.compile_error: BaseException | None = None
         if self.compile_backend:
-            try:
-                self._compiled_chunk = torch.compile(torch_chunk_gdn2, dynamic=True)
-            except (
-                RuntimeError,
-                ValueError,
-                TypeError,
-                AttributeError,
-            ) as e:  # compile is purely optional
-                from qwendopamine.models.gdn2.backend import _warn_fallback_once
-
-                _warn_fallback_once(f"torch.compile unavailable ({e})")
-                self._compiled_chunk = None
-                self.compile_error = e
+            self._compiled_chunk = torch.compile(torch_chunk_gdn2, dynamic=True)
 
     def _init_hyperparameters(self, **kwargs: Any) -> None:
         (self.hidden_size,) = (kwargs["hidden_size"],)
@@ -733,55 +707,34 @@ class GatedDeltaNet2(nn.Module):
         recurrent_state: torch.Tensor | None,
         use_cache: bool,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        r"""Run the Taichi kernel. Falls back to the torch path on failure."""
-        if not _taichi_ops_available():
-            raise RuntimeError(
-                "GDN-2 backend 'taichi' was requested but Taichi failed to "
-                "initialise. Reinstall the project with `uv sync` to ensure "
-                "the taichi dependency is present."
+        r"""Run the Taichi kernel. Raises if the kernel errors."""
+        _taichi_ops_available()  # ensure lazy import of ops
+        if mode == "chunk" and _taichi_chunk_gdn2 is not None:
+            return _taichi_chunk_gdn2(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                b=b,
+                w=w,
+                initial_state=recurrent_state,
+                output_final_state=use_cache or False,
+                use_qk_l2norm_in_kernel=True,
+                chunk_size=self.chunk_size,
             )
-        try:
-            if mode == "chunk" and _taichi_chunk_gdn2 is not None:
-                return _taichi_chunk_gdn2(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b,
-                    w=w,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache or False,
-                    use_qk_l2norm_in_kernel=True,
-                    chunk_size=self.chunk_size,
-                )
-            if _taichi_recurrent_gdn2 is not None:
-                return _taichi_recurrent_gdn2(
-                    q=q,
-                    k=k,
-                    v=v,
-                    g=g,
-                    b=b,
-                    w=w,
-                    initial_state=recurrent_state,
-                    output_final_state=use_cache or False,
-                    use_qk_l2norm_in_kernel=True,
-                )
-            raise RuntimeError("Taichi ops present but no kernel is callable")
-        except (
-            RuntimeError,
-            TypeError,
-            ValueError,
-            AttributeError,
-        ) as e:
-            from qwendopamine.models.gdn2.backend import _warn_fallback_once
-
-            _warn_fallback_once(
-                f"Taichi kernel failed ({e}); falling back to pure PyTorch"
+        if _taichi_recurrent_gdn2 is not None:
+            return _taichi_recurrent_gdn2(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                b=b,
+                w=w,
+                initial_state=recurrent_state,
+                output_final_state=use_cache or False,
+                use_qk_l2norm_in_kernel=True,
             )
-            fallback = "torch-chunk" if mode == "chunk" else "torch-recurrent"
-            return self._run_torch_backend(
-                fallback, mode, q, k, v, g, b, w, recurrent_state, use_cache
-            )
+        raise RuntimeError("Taichi ops present but no kernel is callable")
 
     def _run_torch_backend(
         self,

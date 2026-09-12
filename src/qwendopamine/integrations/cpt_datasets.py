@@ -2,7 +2,7 @@
 
 Extracted from ``notebooks/train-infini-dopamine.py`` so the notebook
 stays small and the formatters are unit-testable. The notebook imports
-from here with a fallback to inline definitions for old Kaggle wheels.
+form here.
 """
 
 from __future__ import annotations

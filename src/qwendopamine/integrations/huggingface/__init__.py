@@ -3,7 +3,7 @@
 Split into focused modules:
 
 - :mod:`qwendopamine.integrations.huggingface.configs` — HF PreTrainedConfig
-  adapters and optional-import fallbacks for ``transformers`` symbols.
+  adapters for ``transformers`` symbols.
 - :mod:`qwendopamine.integrations.huggingface.block` — :class:`GDN2HFBlock`
   nn.Module wrapper around :class:`GatedDeltaNet2`.
 - :mod:`qwendopamine.integrations.huggingface.integration` —

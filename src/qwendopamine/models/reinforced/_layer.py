@@ -196,7 +196,7 @@ class ReinforcedDeltaLayer(nn.Module):
         q_prime_t = gamma_t * q_t + beta_t  # (B, d)
 
         # Taichi path is only valid for the dense state (memory_rank is None);
-        # low-rank falls back to the pure-PyTorch DeltaMemoryCore.
+        # Low-rank state path uses pure-PyTorch DeltaMemoryCore.
         S_next, k_cache_out, v_cache_out = self._step_with_or_without_taichi(
             x=x,
             S_prev=S_prev,
@@ -248,14 +248,10 @@ class ReinforcedDeltaLayer(nn.Module):
         # kernel is autograd-aware (see :func:`delta_core_step_out`)
         # and takes the per-batch scalar plasticity (already shaped
         # ``[B, 1]``) plus the channel-wise write/erase gates. We use
-        # Taichi when the runtime is available and the model was
-        # configured to use it, regardless of grad mode (the kernel
-        # records the per-token adjoint when needed).
-        use_taichi_now = (
-            self.use_taichi
-            and self.memory_rank is None
-            and (not torch.is_grad_enabled() or self._taichi_dispatchable())
-        )
+        # Taichi when the model was configured to use it and the state
+        # is dense (memory_rank is None), regardless of grad mode (the
+        # kernel records the per-token adjoint when needed).
+        use_taichi_now = self.use_taichi and self.memory_rank is None
         if use_taichi_now:
             omega_W_scalar = plasticity_t * write_t  # (B, 1)
             omega_E_scalar = plasticity_t * erase_t  # (B, 1)
@@ -274,7 +270,7 @@ class ReinforcedDeltaLayer(nn.Module):
             ).to(S_prev.dtype)
             return S_next, k_cache_out, v_cache_out
 
-        # Pure-PyTorch fallback (also used when memory_rank is set).
+        # Pure-PyTorch path (used when Taichi is not enabled or memory_rank is set).
         return self.memory_core._apply_step(
             S_prev,
             k_t,
@@ -287,14 +283,6 @@ class ReinforcedDeltaLayer(nn.Module):
             k_cache_out=k_cache_out,
             v_cache_out=v_cache_out,
         )
-
-    def _taichi_dispatchable(self) -> bool:
-        """Return True when the Taichi runtime is usable."""
-        try:
-            from qwendopamine.ops.reward import is_taichi_available
-        except ImportError:
-            return False
-        return is_taichi_available()
 
     def extra_repr(self) -> str:
         r"""extra_repr() -> str

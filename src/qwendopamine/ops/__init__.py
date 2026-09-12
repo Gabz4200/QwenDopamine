@@ -14,8 +14,8 @@ detail; ops are the public contract.
 Backend dispatch: Taichi handles backend selection itself. The kernel
 runtime is initialised on first use via
 :func:`qwendopamine.kernels.taichi.runtime._initialise` and Taichi picks
-CUDA → Vulkan → Metal/OpenGL → CPU. The pure-PyTorch reference is the
-fallback when Taichi is unavailable (e.g. ``taichi`` not installed).
+CUDA → Vulkan → Metal/OpenGL → CPU. Taichi is a required dependency;
+if it cannot be imported, an error is raised at import time.
 """
 
 from __future__ import annotations

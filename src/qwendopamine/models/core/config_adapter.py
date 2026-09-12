@@ -29,7 +29,7 @@ class ConfigAdapter:
 
     @property
     def hidden_size(self) -> int:
-        r"""Hidden dimension size with family-specific fallbacks."""
+        r"""Hidden dimension size with family-specific attribute names."""
         return getattr(
             self._config,
             "hidden_size",
@@ -42,19 +42,19 @@ class ConfigAdapter:
 
     @property
     def vocab_size(self) -> int:
-        r"""Vocabulary size with family-specific fallbacks."""
+        r"""Vocabulary size with family-specific attribute names."""
         return getattr(self._config, "vocab_size", _DEFAULT_VOCAB_SIZE)
 
     @property
     def max_position_embeddings(self) -> int:
-        r"""Maximum sequence length with family-specific fallbacks."""
+        r"""Maximum sequence length with family-specific attribute names."""
         return getattr(
             self._config, "max_position_embeddings", _DEFAULT_MAX_POSITION_EMBEDDINGS
         )
 
     @property
     def num_hidden_layers(self) -> int:
-        r"""Number of transformer layers with family-specific fallbacks."""
+        r"""Number of transformer layers with family-specific attribute names."""
         return getattr(
             self._config,
             "num_hidden_layers",

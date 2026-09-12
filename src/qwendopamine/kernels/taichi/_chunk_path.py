@@ -262,13 +262,10 @@ def _chunk_taichi_gdn2_inner(
             out_inter = torch.matmul(q_gamma, state)
             aqk = compute_gdn2_intra_chunk_scores(q_c, gamma, kbar)
             out[:, :, start:end] = out_inter + torch.matmul(aqk, delta)
-            # S_{end} = gamma[-1] * S_{start} + kbar^T @ delta
-            # (rank-1 term carries no decay factor; ``kbar`` is already
-            # scaled by ``gamma`` and ``delta`` already absorbs the WY
-            # rotation, so applying ``gamma`` again would double-count
-            # the channel-wise decay on the rank-1 contribution).
-            rank_one = torch.matmul(kbar.transpose(-1, -2), delta)
-            state = gamma[:, :, -1:, :].transpose(-1, -2) * state + rank_one
+            gamma_last = gamma[:, :, -1:, :]
+            state = gamma_last.transpose(-1, -2) * (
+                state + torch.matmul(kbar.transpose(-1, -2), delta)
+            )
 
     # Capture per-token states for the Taichi adjoint. The chunkwise
     # forward only produces the per-chunk entry/exit states, so we run

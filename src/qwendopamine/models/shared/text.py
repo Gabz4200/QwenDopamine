@@ -27,7 +27,9 @@ from transformers.masking_utils import (
 )
 from transformers.modeling_layers import GenericForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPast
-from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextModel as _Qwen3_5TextModel
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5TextModel as _Qwen3_5TextModel,
+)
 
 from qwendopamine.models._transformers_utils import expand_position_ids_to_multimodal
 from qwendopamine.models.shared.pretrained import FamilyPreTrainedModel
@@ -53,7 +55,14 @@ class FamilyTextModel(_Qwen3_5TextModel):
                 Args:
                     config (Any): Text model configuration.
         """
-        for _k in ("load_in_4bit", "load_in_8bit", "torch_dtype", "dtype", "quantization_config", "device_map"):
+        for _k in (
+            "load_in_4bit",
+            "load_in_8bit",
+            "torch_dtype",
+            "dtype",
+            "quantization_config",
+            "device_map",
+        ):
             kwargs.pop(_k, None)
         _ = args
         super().__init__(config)

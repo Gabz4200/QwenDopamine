@@ -398,25 +398,25 @@ def _build_chunk_fwd_per_bh_kernel() -> Any:
         V: rt.i32,
         C: rt.template(),  # pyrefly: ignore[invalid-annotation]
     ):
-        for i in rt.static(range(C)):
+        for j in range(K):
             g_acc = rt.f32(0.0)
-            for j in range(K):
+            for i in range(C):
                 g_acc = g_acc + g_log[i, j]
                 gamma[i, j] = rt.exp(g_acc)
 
-        for i in rt.static(range(C)):
+        for i in range(C):
             for j in range(K):
                 kbar[i, j] = k[i, j] / rt.max(gamma[i, j], 1e-12)
                 ebar[i, j] = gamma[i, j] * (b[i, j] * k[i, j])
             for j in range(V):
                 z[i, j] = w[i, j] * v[i, j]
 
-        for i in rt.static(range(C)):
+        for i in range(C):
             for j in range(K):
                 Y[i, j] = ebar[i, j]
             for j in range(V):
                 U[i, j] = z[i, j]
-            for prev in rt.static(range(i)):
+            for prev in range(i):
                 t_y = rt.f32(0.0)
                 for j in range(K):
                     t_y = t_y + ebar[i, j] * kbar[prev, j]
@@ -425,7 +425,7 @@ def _build_chunk_fwd_per_bh_kernel() -> Any:
                 for j in range(V):
                     U[i, j] = U[i, j] - t_y * U[prev, j]
 
-        for i in rt.static(range(C)):
+        for i in range(C):
             for j in range(V):
                 acc = rt.f32(0.0)
                 for kk in range(K):
@@ -435,16 +435,16 @@ def _build_chunk_fwd_per_bh_kernel() -> Any:
         for kk in range(K):
             for j in range(V):
                 acc = rt.f32(0.0)
-                for i in rt.static(range(C)):
+                for i in range(C):
                     acc = acc + kbar[i, kk] * delta[i, j]
                 state_out[kk, j] = gamma[C - 1, kk] * (state_in[kk, j] + acc)
 
-        for i in rt.static(range(C)):
+        for i in range(C):
             for j in range(V):
                 acc = rt.f32(0.0)
                 for kk in range(K):
                     acc = acc + (gamma[i, kk] * q[i, kk]) * state_in[kk, j]
-                for s in rt.static(range(i + 1)):
+                for s in range(i + 1):
                     a_qk = rt.f32(0.0)
                     for kk in range(K):
                         a_qk = a_qk + (gamma[i, kk] * q[i, kk]) * kbar[s, kk]
@@ -502,9 +502,429 @@ def launch_chunk_fwd_per_bh(
     )
 
 
+def _build_chunk_intra_token_parallel_kernel() -> Any:
+    r"""Build the intra-chunk causal score matrices Aqk and Akk.
+
+    For each token position ``i`` within a chunk of size ``C``:
+
+    (Aqk)_{r,i} = 1_{i<=r} (gamma[r] * q[r])^T kbar[i]       (C, C)
+    (Akk)_{r,i} = 1_{i<=r} (gamma[r] * k[r])^T kbar[i]       (C, C)
+
+    where ``kbar = k / gamma``.  Both are causal: entries with ``i > r``
+    are zero.  The kernel is embarrassingly parallel across tokens and
+    across (batch, head) — it writes every element independently.
+    """
+    rt = _rt.require()
+
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def chunk_intra_token_parallel(  # pyrefly: ignore[unannotated-return]
+        q: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        k: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        gamma: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        kbar: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        Aqk: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        Akk: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        K: rt.i32,
+        C: rt.i32,
+    ):
+        for i in range(C):
+            for j in range(C):
+                if j <= i:
+                    aqk = rt.f32(0.0)
+                    akk = rt.f32(0.0)
+                    for kk in range(K):
+                        qg = gamma[i, kk] * q[i, kk]
+                        aqk = aqk + qg * kbar[j, kk]
+                        kg = gamma[i, kk] * k[i, kk]
+                        akk = akk + kg * kbar[j, kk]
+                    Aqk[i, j] = aqk
+                    Akk[i, j] = akk
+                else:
+                    Aqk[i, j] = rt.f32(0.0)
+                    Akk[i, j] = rt.f32(0.0)
+
+    return chunk_intra_token_parallel
+
+
+def launch_chunk_intra_token_parallel(
+    q_chunk: torch.Tensor,
+    k_chunk: torch.Tensor,
+    gamma: torch.Tensor,
+    kbar: torch.Tensor,
+    Aqk: torch.Tensor,
+    Akk: torch.Tensor,
+) -> None:
+    """Build causal intra-chunk score matrices Aqk and Akk for one (batch, head).
+
+    All inputs are ``[C, K]`` (single batch, single head, single chunk);
+    outputs are ``[C, C]``.
+    """
+    K = int(q_chunk.shape[-1])
+    C = int(q_chunk.shape[-2])
+    kernel = _build_chunk_intra_token_parallel_kernel()
+    kernel(
+        q_chunk.contiguous(),
+        k_chunk.contiguous(),
+        gamma.contiguous(),
+        kbar.contiguous(),
+        Aqk,
+        Akk,
+        K,
+        C,
+    )
+
+
+def _build_wy_fast_kernel() -> Any:
+    r"""Recompute the WY auxiliaries (w, u, qg, kg) from the solved matrix ``A``.
+
+    Mirrors FLA ``recompute_w_u_fwd_gdn2_kernel``.  Given the solved
+    WY lower-triangular inverse ``A = (I + tril(T, -1))^{-1}`` of shape
+    ``[C, C]`` (one chunk, one head), and the per-token intermediates of
+    that chunk, produce:
+
+    * ``w_out`` — the WY write auxiliary ``A @ ebar``  (``[C, K]``)
+    * ``u``     — the WY erase auxiliary ``A @ z``     (``[C, V]``)
+    * ``qg``    — query gate scaled by gamma         (``[C, K]``)
+    * ``kg``    — key scaled by tail-decay           (``[C, K]``)
+
+    where ``ebar = gamma * (b * k)``, ``z = w_gate * v``, and
+    ``gamma[t,k] = exp(sum_{s<=t} g_log[s,k])``.  The ``qg``/``kg``
+    outputs are optional (FLA's ``STORE_QG``/``STORE_KG`` heuristics).
+    """
+    rt = _rt.require()
+
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def wy_fast(  # pyrefly: ignore[unannotated-return]
+        A: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        k: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        q: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        b: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        w_gate: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        v: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        gamma: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        g_log: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        w_out: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        u: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        qg: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        kg: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        K: rt.i32,
+        V: rt.i32,
+        C: rt.i32,
+    ):
+        for i in range(C):
+            for vv in range(V):
+                acc = rt.f32(0.0)
+                for j in range(C):
+                    acc = acc + A[i, j] * (w_gate[j, vv] * v[j, vv])
+                u[i, vv] = acc
+
+        for i in range(C):
+            for kk in range(K):
+                acc = rt.f32(0.0)
+                for j in range(C):
+                    ebar_jk = gamma[j, kk] * (b[j, kk] * k[j, kk])
+                    acc = acc + A[i, j] * ebar_jk
+                w_out[i, kk] = acc
+
+        for i in range(C):
+            for kk in range(K):
+                qg[i, kk] = gamma[i, kk] * q[i, kk]
+
+        for i in range(C):
+            for kk in range(K):
+                gm_last = gamma[C - 1, kk]
+                gm_cur = gamma[i, kk]
+                safe_gm = rt.max(gm_cur, rt.f32(1e-12))
+                kg[i, kk] = (gm_last / safe_gm) * k[i, kk]
+
+    return wy_fast
+
+
+def launch_wy_fast(
+    A: torch.Tensor,
+    k: torch.Tensor,
+    q: torch.Tensor,
+    b: torch.Tensor,
+    w_gate: torch.Tensor,
+    v: torch.Tensor,
+    gamma: torch.Tensor,
+    g_log: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Recompute WY auxiliaries (w, u, qg, kg) from the solved WY matrix ``A``.
+
+    All inputs are ``[C, ...]`` (single chunk, single head).  Returns
+    ``(w, u, qg, kg)``.
+    """
+    C = int(A.shape[-1])
+    K = int(k.shape[-1])
+    V = int(v.shape[-1])
+    w_out = torch.zeros(C, K, dtype=torch.float32, device=A.device)
+    u = torch.zeros(C, V, dtype=torch.float32, device=A.device)
+    qg = torch.zeros(C, K, dtype=torch.float32, device=A.device)
+    kg = torch.zeros(C, K, dtype=torch.float32, device=A.device)
+    kernel = _build_wy_fast_kernel()
+    kernel(
+        A.contiguous(),
+        k.contiguous(),
+        q.contiguous(),
+        b.contiguous(),
+        w_gate.contiguous(),
+        v.contiguous(),
+        gamma.contiguous(),
+        g_log.contiguous() if g_log is not None else gamma.contiguous(),
+        w_out,
+        u,
+        qg,
+        kg,
+        K,
+        V,
+        C,
+    )
+    return w_out, u, qg, kg
+
+
+def launch_naive_gdn2(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    b: torch.Tensor,
+    w: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Naive O(T*K*V) GDN-2 per-token recurrence.
+
+    Mirrors FLA's ``naive.py``: a pure-Python loop over the existing
+    :func:`launch_recurrent_step` Taichi kernel. Each call advances the
+    ``[K, V]`` state by one token. ``g`` is the per-token log-decay
+    (not cumulative); ``alpha = exp(g[t])`` is computed inside the
+    recurrent-step kernel.
+
+    All inputs are ``[T, K]`` or ``[T, V]`` (single batch, single head).
+    ``q`` must already be scaled by ``K**-0.5``. Returns
+    ``(output, final_state)``.
+    """
+    _rt.require()
+    T = int(q.shape[0])
+    K = int(q.shape[-1])
+    V = int(v.shape[-1])
+    out = torch.zeros(T, V, dtype=torch.float32, device=q.device)
+    state = torch.zeros(1, 1, K, V, dtype=torch.float32, device=q.device)
+    next_state = torch.zeros(1, 1, K, V, dtype=torch.float32, device=q.device)
+    y_scratch = torch.zeros(1, 1, V, dtype=torch.float32, device=q.device)
+    alphas = torch.exp(g.float())
+
+    for t in range(T):
+        launch_recurrent_step(
+            state=state,
+            q=q[t].unsqueeze(0).unsqueeze(0).contiguous(),
+            k=k[t].unsqueeze(0).unsqueeze(0).contiguous(),
+            v=v[t].unsqueeze(0).unsqueeze(0).contiguous(),
+            a=alphas[t].unsqueeze(0).unsqueeze(0).contiguous(),
+            b=b[t].unsqueeze(0).unsqueeze(0).contiguous(),
+            w=w[t].unsqueeze(0).unsqueeze(0).contiguous(),
+            next_state=next_state,
+            y=y_scratch,
+        )
+        out[t] = y_scratch[0, 0]
+        state, next_state = next_state, state
+
+    return out, state
+
+
+def _build_chunk_fwd_pipeline_kernel() -> Any:
+    r"""Full chunkwise forward pipeline (FLA chunk_fwd equivalent).
+
+    Combines intra-chunk scoring, WY solve, inter-chunk state propagation,
+    and output composition into a single fused kernel per (batch, head).
+    """
+    rt = _rt.require()
+
+    @rt.kernel  # pyrefly: ignore[untyped-function-decorator]
+    def chunk_fwd_pipeline(  # pyrefly: ignore[unannotated-return]
+        q: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        k: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        v: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        g_log: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        b: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        w: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        state_in: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        out: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        state_out: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        gamma: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        kbar: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        ebar: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        z: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        Aqk: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        Akk: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        A: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        Y: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        U: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        delta: rt.types.ndarray(),  # type: ignore[invalid-annotation]
+        scale: rt.f32,
+        K: rt.i32,
+        V: rt.i32,
+        C: rt.i32,
+    ):
+        for kk in range(K):
+            acc = rt.f32(0.0)
+            for t in range(C):
+                acc = acc + g_log[t, kk]
+                gamma[t, kk] = rt.exp(acc)
+
+        for i in range(C):
+            for kk in range(K):
+                gm = rt.max(gamma[i, kk], rt.f32(1e-12))
+                kbar[i, kk] = k[i, kk] / gm
+                ebar[i, kk] = gamma[i, kk] * (b[i, kk] * k[i, kk])
+            for vv in range(V):
+                z[i, vv] = w[i, vv] * v[i, vv]
+
+        for i in range(C):
+            for j in range(C):
+                if j <= i:
+                    aqk = rt.f32(0.0)
+                    for kk in range(K):
+                        aqk = aqk + (gamma[i, kk] * q[i, kk]) * kbar[j, kk]
+                    Aqk[i, j] = aqk
+                    akk = rt.f32(0.0)
+                    for kk in range(K):
+                        akk = akk + (gamma[i, kk] * k[i, kk]) * kbar[j, kk]
+                    Akk[i, j] = akk
+                else:
+                    Aqk[i, j] = rt.f32(0.0)
+                    Akk[i, j] = rt.f32(0.0)
+
+        for i in range(C):
+            for kk in range(K):
+                Y[i, kk] = ebar[i, kk]
+            for vv in range(V):
+                U[i, vv] = z[i, vv]
+            for prev in range(i):
+                t_coeff = rt.f32(0.0)
+                for kk in range(K):
+                    t_coeff = t_coeff + ebar[i, kk] * kbar[prev, kk]
+                for kk in range(K):
+                    Y[i, kk] = Y[i, kk] - t_coeff * Y[prev, kk]
+                for vv in range(V):
+                    U[i, vv] = U[i, vv] - t_coeff * U[prev, vv]
+            for j in range(C):
+                if j < i:
+                    t_val = rt.f32(0.0)
+                    for kk in range(K):
+                        t_val = t_val + ebar[i, kk] * kbar[j, kk]
+                    A[i, j] = t_val
+                elif j == i:
+                    A[i, j] = rt.f32(1.0)
+                else:
+                    A[i, j] = rt.f32(0.0)
+
+        for i in range(C):
+            for vv in range(V):
+                acc = rt.f32(0.0)
+                for kk in range(K):
+                    acc = acc + Y[i, kk] * state_in[kk, vv]
+                delta[i, vv] = U[i, vv] - acc
+
+        for kk in range(K):
+            for vv in range(V):
+                acc = rt.f32(0.0)
+                for i in range(C):
+                    acc = acc + kbar[i, kk] * delta[i, vv]
+                state_out[kk, vv] = gamma[C - 1, kk] * (state_in[kk, vv] + acc)
+
+        for i in range(C):
+            for vv in range(V):
+                acc = rt.f32(0.0)
+                for kk in range(K):
+                    acc = acc + (gamma[i, kk] * q[i, kk]) * state_in[kk, vv]
+                for s in range(i + 1):
+                    acc = acc + Aqk[i, s] * delta[s, vv]
+                out[i, vv] = acc * scale
+
+    return chunk_fwd_pipeline
+
+
+def launch_chunk_fwd_pipeline(
+    q_chunk: torch.Tensor,
+    k_chunk: torch.Tensor,
+    v_chunk: torch.Tensor,
+    g_chunk: torch.Tensor,
+    b_chunk: torch.Tensor,
+    w_chunk: torch.Tensor,
+    state_in: torch.Tensor,
+    out: torch.Tensor,
+    state_out: torch.Tensor,
+    scratch: dict[str, torch.Tensor],
+    scale: float,
+) -> None:
+    """Full chunkwise forward pipeline for one (batch, head).
+
+    Orchestrates intra-chunk scoring, WY solve, inter-chunk state
+    propagation, and output composition in a single fused kernel.
+    """
+    K = int(q_chunk.shape[-1])
+    V = int(v_chunk.shape[-1])
+    C = int(q_chunk.shape[-2])
+    kernel = _build_chunk_fwd_pipeline_kernel()
+    kernel(
+        q_chunk.contiguous(),
+        k_chunk.contiguous(),
+        v_chunk.contiguous(),
+        g_chunk.contiguous(),
+        b_chunk.contiguous(),
+        w_chunk.contiguous(),
+        state_in.contiguous(),
+        out,
+        state_out,
+        scratch["gamma"],
+        scratch["kbar"],
+        scratch["ebar"],
+        scratch["z"],
+        scratch["Aqk"],
+        scratch["Akk"],
+        scratch["A"],
+        scratch["Y"],
+        scratch["U"],
+        scratch["delta"],
+        scale,
+        K,
+        V,
+        C,
+    )
+
+
+def _get_chunk_scratch_full(
+    C: int, K: int, V: int, device: torch.device | str
+) -> dict[str, Any]:
+    """Lazily allocate scratch buffers for the full pipeline kernel."""
+    key = (C, K, V, str(device), "full")
+    if key in _SCRATCH:
+        result: dict[str, Any] = _SCRATCH[key]
+        return result
+    _rt.require()
+    _SCRATCH[key] = {
+        "gamma": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "kbar": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "ebar": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "z": torch.zeros((C, V), dtype=torch.float32, device=device),
+        "Aqk": torch.zeros((C, C), dtype=torch.float32, device=device),
+        "Akk": torch.zeros((C, C), dtype=torch.float32, device=device),
+        "A": torch.zeros((C, C), dtype=torch.float32, device=device),
+        "Y": torch.zeros((C, K), dtype=torch.float32, device=device),
+        "U": torch.zeros((C, V), dtype=torch.float32, device=device),
+        "delta": torch.zeros((C, V), dtype=torch.float32, device=device),
+    }
+    result2: dict[str, Any] = _SCRATCH[key]
+    return result2
+
+
 __all__ = [
     "launch_chunk_bwd_per_bh",
     "launch_chunk_fwd_per_bh",
+    "launch_chunk_fwd_pipeline",
+    "launch_chunk_intra_token_parallel",
+    "launch_naive_gdn2",
     "launch_recurrent_step",
     "launch_recurrent_step_bwd",
+    "launch_wy_fast",
 ]

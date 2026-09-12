@@ -15,8 +15,14 @@ from transformers.integrations import (
 from transformers.modeling_layers import GradientCheckpointingLayer
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention as _Qwen3_5AttentionBase,
+)
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5GatedDeltaNet as _Qwen3_5GatedDeltaNetBase,
+)
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5MLP as _Qwen3_5MLPBase,
+)
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5RMSNorm as _Qwen3_5RMSNormBase,
 )
 from transformers.models.qwen3_next.modeling_qwen3_next import (

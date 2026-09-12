@@ -46,7 +46,9 @@ def test_kaggle_install_fallback_pip_not_forced_upgrade() -> None:
 
     # Check pip fallback lines specifically — don't flag uv's --upgrade via
     # cross-line DOTALL match. Only lines that actually invoke `pip` matter.
-    pip_lines = [line for line in text.splitlines() if "pip" in line and "sys.executable" in line]
+    pip_lines = [
+        line for line in text.splitlines() if "pip" in line and "sys.executable" in line
+    ]
     has_pip_upgrade = any("--upgrade" in line for line in pip_lines)
     assert not has_pip_upgrade, (
         "pip fallback still uses --upgrade which forces transitive upgrade churn; "

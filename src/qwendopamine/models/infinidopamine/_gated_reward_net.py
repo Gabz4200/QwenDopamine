@@ -64,7 +64,9 @@ class InfiniDopamineGatedRewardNet(GatedRewardNet):
         # Reward output starts as near-identity residual: small gain Xavier keeps
         # initial reward augmentation ~0 while preserving gradient flow (cf. gdn2
         # block o_proj xavier gain 2**-2.5, FLA small-gain init).
-        torch.nn.init.trunc_normal_(self.output_proj.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
+        torch.nn.init.trunc_normal_(
+            self.output_proj.weight, mean=0.0, std=0.02, a=-0.04, b=0.04
+        )
         self.output_proj.weight.data.mul_(0.1)
         self._register_load_state_dict_pre_hook(self._convert_gdn1_weights_hook)
 

@@ -96,9 +96,7 @@ def main() -> None:
     if _second.returncode != 0:
         print(out)
         print(_second.stderr[-2000:] if _second.stderr else "")
-        sys.exit(
-            f"[sandbox] second run (training) failed: {_second.returncode}"
-        )
+        sys.exit(f"[sandbox] second run (training) failed: {_second.returncode}")
 
     print(out)
     from qwendopamine.testing.cpt_helpers import losses_from_trainer_state

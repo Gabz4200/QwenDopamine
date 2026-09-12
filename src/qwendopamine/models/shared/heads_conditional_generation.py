@@ -34,7 +34,14 @@ class FamilyForConditionalGeneration(_Qwen3_5ForConditionalGeneration):
             self - .
             config (Any) - .
         """
-        for _k in ("load_in_4bit", "load_in_8bit", "torch_dtype", "dtype", "quantization_config", "device_map"):
+        for _k in (
+            "load_in_4bit",
+            "load_in_8bit",
+            "torch_dtype",
+            "dtype",
+            "quantization_config",
+            "device_map",
+        ):
             kwargs.pop(_k, None)
         _ = args
         super().__init__(config)

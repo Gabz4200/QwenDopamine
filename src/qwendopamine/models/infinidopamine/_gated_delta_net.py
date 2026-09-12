@@ -28,7 +28,6 @@ from transformers.utils.generic import TransformersKwargs
 # via the public custom ops. Ops.gdn2 already delegates to Taichi kernels
 # directly, but the custom_op registration must be loaded for the
 # torch.library path to be available in notebooks.
-import qwendopamine.integrations.pytorch.custom_ops as _taichi_custom_ops  # noqa: F401
 from qwendopamine.models.core import apply_mask_to_padding_states
 from qwendopamine.models.infinidopamine.configs import (
     InfiniDopamineConfig,
@@ -69,7 +68,16 @@ class InfiniDopamineGatedDeltaNet(Qwen3_5GatedDeltaNet):
     ) -> None:
         super().__init__(config, layer_idx)
 
-        for _name in ("in_proj_qkvz", "in_proj_ba", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a", "in_proj_w", "in_proj_gate"):
+        for _name in (
+            "in_proj_qkvz",
+            "in_proj_ba",
+            "in_proj_qkv",
+            "in_proj_z",
+            "in_proj_b",
+            "in_proj_a",
+            "in_proj_w",
+            "in_proj_gate",
+        ):
             if hasattr(self, _name):
                 try:
                     delattr(self, _name)
@@ -112,8 +120,16 @@ class InfiniDopamineGatedDeltaNet(Qwen3_5GatedDeltaNet):
         # this is principled balanced init, not random, and is preserved when
         # loading Qwen (hook clones zeros). Other new projs get small-variance
         # trunc_normal to break symmetry without shifting mean.
-        for proj in (self.in_proj_qkv, self.in_proj_z, self.in_proj_a, self.in_proj_b, self.in_proj_w):
-            torch.nn.init.trunc_normal_(proj.weight, mean=0.0, std=0.02, a=-0.04, b=0.04)
+        for proj in (
+            self.in_proj_qkv,
+            self.in_proj_z,
+            self.in_proj_a,
+            self.in_proj_b,
+            self.in_proj_w,
+        ):
+            torch.nn.init.trunc_normal_(
+                proj.weight, mean=0.0, std=0.02, a=-0.04, b=0.04
+            )
         torch.nn.init.zeros_(self.in_proj_gate.weight)
         torch.nn.init.zeros_(self.betas)
 

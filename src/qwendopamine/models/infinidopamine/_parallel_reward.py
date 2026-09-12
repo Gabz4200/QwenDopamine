@@ -45,6 +45,10 @@ class ParallelRewardBranch(nn.Module):
         reward_values: torch.Tensor | None = None,
         **kwargs,
     ) -> torch.Tensor:
+        if reward_values is not None and reward_values.dim() not in (2, 3):
+            raise ValueError(
+                f"reward_values must be [B,S] or [B,S,D], got shape {tuple(reward_values.shape)}"
+            )
         reward_out = self.reward_branch(
             hidden_states=hidden_states,
             cache_params=cache_params,

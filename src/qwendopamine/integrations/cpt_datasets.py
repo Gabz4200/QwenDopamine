@@ -262,6 +262,83 @@ def format_r0b0tlab(example: dict) -> dict:
     return {"text": text}
 
 
+def format_arc2(example: dict) -> dict:
+    """zhmz90/arc-agi-2: train/test grids with filename."""
+    filename = example.get("filename", "")
+    parts = [f"ARC-AGI-2 [{filename}]"]
+    train = example.get("train", [])
+    test = example.get("test", [])
+    if train:
+        parts.append(f"Train examples: {len(train)}")
+        for i, ex in enumerate(train[:3]):
+            inp = ex.get("input", ex) if isinstance(ex, dict) else ex
+            out = ex.get("output", "") if isinstance(ex, dict) else ""
+            parts.append(f"  Train {i} input: {inp} -> output: {out}")
+    if test:
+        parts.append(f"Test examples: {len(test)}")
+        for i, ex in enumerate(test[:2]):
+            inp = ex.get("input", ex) if isinstance(ex, dict) else ex
+            out = ex.get("output", "") if isinstance(ex, dict) else ""
+            parts.append(f"  Test {i} input: {inp} -> output: {out}")
+    return {"text": "\n".join(parts)}
+
+
+def format_chain_of_draft(example: dict) -> dict:
+    """dvilasuero/chain-of-draft-r1: question + CoD vs standard."""
+    question = example.get("question", "")
+    answer = example.get("answer", "")
+    cod = example.get("cod", "")
+    standard = example.get("standard", "")
+    parts = []
+    if question:
+        parts.append(f"Question: {question}")
+    reasoning = cod.strip() if cod and cod.strip() else standard
+    if reasoning:
+        parts.append(f"Reasoning: {reasoning}")
+    if answer:
+        parts.append(f"Answer: {answer}")
+    return {"text": "\n".join(parts)}
+
+
+def format_nemotron(example: dict) -> dict:
+    """nvidia/Nemotron-SFT-ARC-AGI-v1: messages with system+user ARC puzzle."""
+    text = _flatten_messages(example.get("messages", []))
+    tools = example.get("tools", [])
+    if tools:
+        tool_names = ", ".join(t.get("name", "?") for t in tools if isinstance(t, dict))
+        text = f"[Tools: {tool_names}]\n{text}"
+    meta = example.get("metadata", "")
+    if meta:
+        text = f"{text}\n[metadata: {meta}]"
+    return {"text": text}
+
+
+def format_ara_agent(example: dict) -> dict:
+    """AgentNativeResearchLab ARC-AGI-3 agent trajectories (episodes + ara stats)."""
+    if "frame" in example:
+        turn = example.get("turn", "")
+        action = example.get("action", "")
+        state = example.get("state", "")
+        levels = example.get("levels_completed", "")
+        frame = str(example.get("frame", ""))[:1200]
+        return {
+            "text": f"ARC3 Episode turn={turn} action={action} state={state} levels={levels}\nFrame:\n{frame}"
+        }
+    if "ts" in example:
+        turn = example.get("turn", "")
+        trace_nodes = example.get("trace_nodes", "")
+        ara_bytes = example.get("ara_bytes", "")
+        claims = example.get("claims", "")
+        return {
+            "text": f"ARC3 Trace ts={example.get('ts', '')} turn={turn} nodes={trace_nodes} bytes={ara_bytes} claims={claims}"
+        }
+    return {
+        "text": " ".join(
+            str(v)[:500] for v in example.values() if isinstance(v, (str, int, float))
+        )
+    }
+
+
 DATASET_FORMATTERS = {
     "DylanRiden/smb-worldmodel-data": format_smb,
     "Kalso42/WorldModelForMaze": format_maze,
@@ -280,6 +357,13 @@ DATASET_FORMATTERS = {
     "Glint-Research/Fable-5-traces": format_fable5,
     "Salesforce/wikitext": format_wikitext,
     "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation": format_r0b0tlab,
+    "zhmz90/arc-agi-2": format_arc2,
+    "dvilasuero/chain-of-draft-r1": format_chain_of_draft,
+    "nvidia/Nemotron-SFT-ARC-AGI-v1": format_nemotron,
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-s5i5": format_ara_agent,
+    "AgentNativeResearchLab/arc-agi3-kimi-k2.7-g50t": format_ara_agent,
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l": format_ara_agent,
+    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l": format_ara_agent,
 }
 
 

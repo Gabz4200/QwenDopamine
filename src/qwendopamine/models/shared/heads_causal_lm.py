@@ -33,7 +33,14 @@ class FamilyForCausalLM(Qwen3ForCausalLM):
         """
         # from_pretrained may forward deprecated kwargs (load_in_4bit, torch_dtype)
         # even when they should have been consumed earlier; ignore them here.
-        for _k in ("load_in_4bit", "load_in_8bit", "torch_dtype", "dtype", "quantization_config", "device_map"):
+        for _k in (
+            "load_in_4bit",
+            "load_in_8bit",
+            "torch_dtype",
+            "dtype",
+            "quantization_config",
+            "device_map",
+        ):
             kwargs.pop(_k, None)
         _ = args  # ignore any positional extras forwarded by AutoModel
         if hasattr(config, "text_config") and not hasattr(config, "vocab_size"):

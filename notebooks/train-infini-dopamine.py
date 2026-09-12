@@ -111,6 +111,7 @@ if not _SHOULD_INSTALL:
     _HF_TOKEN_FROM_SECRETS: str | None = None
 else:
     _install_reason = "Kaggle" if IS_KAGGLE else "debug flag QWD_DEBUG_INSTALL"
+
     # In batch (commit) the kernel is fresh, so pip install before any
     # numpy/scipy import does not require a manual restart. In interactive,
     # the kernel may already hold stale C extensions, so we warn to restart.
@@ -118,7 +119,11 @@ else:
     def _trio_healthy() -> bool:
         try:
             _chk = subprocess.run(
-                [sys.executable, "-c", "from scipy.sparse import csr_matrix; import sklearn; print('ok')"],
+                [
+                    sys.executable,
+                    "-c",
+                    "from scipy.sparse import csr_matrix; import sklearn; print('ok')",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -132,7 +137,9 @@ else:
         try:
             _existing_ver = importlib.metadata.version("qwendopamine")
             _skip_install = True
-            print(f"[setup] trio healthy and qwendopamine {_existing_ver} present, skipping install (batch-friendly)")
+            print(
+                f"[setup] trio healthy and qwendopamine {_existing_ver} present, skipping install (batch-friendly)"
+            )
         except importlib.metadata.PackageNotFoundError:
             _skip_install = False
 
@@ -144,6 +151,10 @@ else:
         _PACKAGE_SPEC = os.environ.get(
             "QWD_PACKAGE_SPEC", f"qwendopamine[gpu,cpt,hf] @ {_GIT_URL}"
         )
+        if not _PACKAGE_SPEC.startswith(("qwendopamine", "git+https://")):
+            raise ValueError(
+                f"QWD_PACKAGE_SPEC must start with 'qwendopamine' or 'git+https://', got {_PACKAGE_SPEC!r}"
+            )
         # Force-reinstall the numpy/scipy/sklearn trio together so their C
         # extensions stay ABI-matched. Without this a Kaggle image with a stale
         # scipy + new numpy yields `ImportError: _center` on the next cell.
@@ -161,7 +172,14 @@ else:
 
         def _pip_fallback(spec: str) -> subprocess.CompletedProcess:
             return subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--break-system-packages", spec],
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--break-system-packages",
+                    spec,
+                ],
                 check=False,
             )
 
@@ -208,7 +226,11 @@ else:
         # Validate trio in a fresh subprocess — the current interpreter may still
         # hold stale compiled extensions until the kernel restarts (interactive only).
         _validate = subprocess.run(
-            [sys.executable, "-c", "from scipy.sparse import csr_matrix; import sklearn; print('[setup] trio OK')"],
+            [
+                sys.executable,
+                "-c",
+                "from scipy.sparse import csr_matrix; import sklearn; print('[setup] trio OK')",
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -217,9 +239,13 @@ else:
             print("[setup] WARNING: scipy/sklearn import failed after install:")
             print(_validate.stderr[-2000:])
             if IS_BATCH:
-                print("[setup] Batch mode: continuing anyway, next cell will import fresh (no manual restart needed).")
+                print(
+                    "[setup] Batch mode: continuing anyway, next cell will import fresh (no manual restart needed)."
+                )
             else:
-                print("[setup] Restart the kernel and re-run (Kaggle: Kernel -> Restart).")
+                print(
+                    "[setup] Restart the kernel and re-run (Kaggle: Kernel -> Restart)."
+                )
         else:
             print(_validate.stdout.strip())
     else:
@@ -255,11 +281,13 @@ else:
         print("[setup] Batch install complete — forcing kernel restart for ABI sync.")
         sys.stdout.flush()
         sys.stderr.flush()
-        os._exit(0)
+        raise SystemExit(0)
     elif _skip_install:
         print("[setup] Done (trio healthy, no restart needed).")
     else:
-        print("[setup] Done. Restart the kernel once and skip this cell on reruns (interactive).")
+        print(
+            "[setup] Done. Restart the kernel once and skip this cell on reruns (interactive)."
+        )
 
 # %% [code.2]
 import datetime
@@ -318,7 +346,11 @@ try:
 except (ImportError, AttributeError) as _imp_err:
     # Most common cause is the numpy/scipy _center / _blas_supports_fpe mismatch
     # bubbling through transformers -> sklearn -> scipy.
-    if "_center" in str(_imp_err) or "numpy._core" in str(_imp_err) or "_blas_supports_fpe" in str(_imp_err):
+    if (
+        "_center" in str(_imp_err)
+        or "numpy._core" in str(_imp_err)
+        or "_blas_supports_fpe" in str(_imp_err)
+    ):
         raise ImportError(
             "Import failed due to numpy/scipy ABI mismatch (`_center` / `_blas_supports_fpe` missing). "
             "Restart the kernel and re-run; the setup cell already reinstalled "
@@ -373,7 +405,9 @@ _TAICHI_OPS_REGISTERED = _taichi_ops_registered()
 if IS_MAIN:
     print(f"Taichi arch     : {_TAICHI_ARCH}")
     print(f"Taichi ops reg  : {_TAICHI_OPS_REGISTERED} (torch.ops.qwendopamine.*)")
-    print(f"GDN-2 ops       : {chunk_taichi_gdn2.__module__}.{chunk_taichi_gdn2.__name__}, {recurrent_taichi_gdn2.__module__}.{recurrent_taichi_gdn2.__name__}")
+    print(
+        f"GDN-2 ops       : {chunk_taichi_gdn2.__module__}.{chunk_taichi_gdn2.__name__}, {recurrent_taichi_gdn2.__module__}.{recurrent_taichi_gdn2.__name__}"
+    )
 
 # %% [markdown.3]
 # ## Dataset Sources & Schema Mapping
@@ -433,12 +467,16 @@ CPT_DATASETS: list[str] = [
 # Local smoke-test mode: bound the run size and use an offline synthetic
 # dataset (see the dataset cell below).
 # ---------------------------------------------------------------------------
-LOCAL_SYNTHETIC_DATASET: str = "__local_synthetic__"
+LOCAL_SYNTHETIC: str = "local_synthetic"
+LOCAL_SYNTHETIC_DATASET: str = LOCAL_SYNTHETIC  # alias for compat
 # Re-derive if kernel was restarted and setup cell skipped (setup defines these).
 if "_USE_SMOKE_CONFIG" not in globals():
     import os as _os_fallback
 
-    IS_KAGGLE = _os_fallback.path.isdir("/kaggle/working") or _os_fallback.environ.get("KAGGLE_KERNEL_RUN") == "true"  # type: ignore[no-redef]
+    IS_KAGGLE = (
+        _os_fallback.path.isdir("/kaggle/working")
+        or _os_fallback.environ.get("KAGGLE_KERNEL_RUN") == "true"
+    )  # type: ignore[no-redef]
     _CAPPED_FULL = _os_fallback.environ.get("QWD_CAPPED_FULL_PIPELINE", "0") == "1"  # type: ignore[no-redef]
     _USE_SMOKE_CONFIG = not IS_KAGGLE or _CAPPED_FULL  # type: ignore[no-redef]
 if "_HF_TOKEN_FROM_SECRETS" not in globals():
@@ -447,7 +485,7 @@ if _USE_SMOKE_CONFIG and not _CAPPED_FULL:
     CPT_DATASETS = [LOCAL_SYNTHETIC_DATASET]
 
 # Curriculum Learning: 5 stages easy→hard (Bengio 2009). Each stage
-# holds ~4-5 datasets; after a stage finishes its cache/dataset objects
+# holds ~5-7 datasets; after a stage finishes its cache/dataset objects
 # are dropped (`del` + gc + cache wipe) before the next stage, so
 # peak disk stays ~17GB max (Maze isolated) not 20GB+ for all 24.
 # Order by transition-horizon: general language → ARC fundamentals →
@@ -473,14 +511,16 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
         "Lichess/standard-chess-games",
     ],
     # Stage 2 — Spatial world-models + tool use (Maze isolated to this stage)
-    # + small LLM replay (wikitext 3k) to keep instruction-following alive.
+    # + reasoning replay (OpenThoughts + faunix distill) to keep
+    # instruction-following alive without raw-LM wikitext drift.
     "2_spatial": [
         "Kalso42/WorldModelForMaze",
         "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg",
         "lockon/ToolACE",
         "Decix/ReBel-ALFWorld-SFT-Trajectories",
         "thuml/bytesized32-world-model-cot",
-        "Salesforce/wikitext",
+        "ryanmarten/OpenThoughts-1k-sample",
+        "faunix/Qwen3.8-27B-Distillation-40K",
     ],
     # Stage 3 — ARC-AGI-3 core agent trajectories (MAIN TARGET, 5+2 datasets)
     # 4 codex/kimi rollouts + Nemotron SFT (large_reasoning_and_tools).
@@ -492,7 +532,7 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
         "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l",
         "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l",
         "nvidia/Nemotron-SFT-ARC-AGI-v1",
-        "Salesforce/wikitext",
+        "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
         "ryanmarten/OpenThoughts-1k-sample",
     ],
     # Stage 4 — Reasoning world-models & long CoT (SMB isolated away from Maze)
@@ -502,18 +542,24 @@ CURRICULUM_STAGES: dict[str, list[str]] = {
         "PatronusAI/world_model_corpus",
         "cot-leaderboard/cot-eval-traces-2.0",
         "Glint-Research/Fable-5-traces",
-        "Salesforce/wikitext",
-        "faunix/Qwen3.8-27B-Distillation-40K",
+        "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation",
+        "greghavens/kimi-k3-coding-and-debugging-traces",
     ],
 }
 # Start stage override for resuming/debugging (env QWD_CURRICULUM_STAGE).
-CURRICULUM_START_STAGE: int = int(__import__("os").environ.get("QWD_CURRICULUM_STAGE", "0"))
+CURRICULUM_START_STAGE: int = int(
+    __import__("os").environ.get("QWD_CURRICULUM_STAGE", "0")
+)
 USE_CURRICULUM: bool = not _USE_SMOKE_CONFIG and not _CAPPED_FULL
 if USE_CURRICULUM:
     # Fail fast if any stage accidentally references synthetic/mocked data.
     _all_curriculum = [n for stage in CURRICULUM_STAGES.values() for n in stage]
-    assert LOCAL_SYNTHETIC_DATASET not in _all_curriculum, "curriculum must use real datasets only"
-    assert all(not n.startswith("__") for n in _all_curriculum), "no synthetic keys in curriculum"
+    assert LOCAL_SYNTHETIC not in _all_curriculum, (
+        "curriculum must use real datasets only"
+    )
+    assert LOCAL_SYNTHETIC_DATASET not in _all_curriculum, (
+        "curriculum must use real datasets only"
+    )
 
 # Per-stage hyperparameters tuned for overfitting: LR decay across curriculum,
 # caps to balance tiny ARC sets (50-400) vs large chess (500k).
@@ -541,17 +587,19 @@ CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
     },
     "2_spatial": {
         "thuml/bytesized32-world-model-cot": 20_000,
-        "Salesforce/wikitext": 3_000,
+        # Reasoning replay: distinct slice per stage to avoid forgetting.
+        "ryanmarten/OpenThoughts-1k-sample": 500,
+        "faunix/Qwen3.8-27B-Distillation-40K": 1_000,
     },
     "3_arc_agent": {
         "nvidia/Nemotron-SFT-ARC-AGI-v1": 50_000,
-        # LLM replay to retain general capabilities while specializing for ARC-AGI-3
-        "Salesforce/wikitext": 5_000,
+        # Reasoning replay while specializing for ARC-AGI-3.
+        "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation": 2_000,
         "ryanmarten/OpenThoughts-1k-sample": 500,
     },
     "4_reasoning_world": {
-        "Salesforce/wikitext": 5_000,
-        "faunix/Qwen3.8-27B-Distillation-40K": 5_000,
+        "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation": 2_000,
+        "greghavens/kimi-k3-coding-and-debugging-traces": 2_000,
     },
 }
 # Weighted interleave probabilities per stage (order matches CURRICULUM_STAGES).
@@ -559,18 +607,25 @@ CURRICULUM_SUBSET_OVERRIDES: dict[str, dict[str, int]] = {
 # Used to upweight tiny ARC sets (50-400) vs large chess (15k capped).
 CURRICULUM_PROBABILITIES: dict[str, list[float] | None] = {
     "0_foundation": None,
-    "1_arc_foundation": [0.25, 0.25, 0.20, 0.15, 0.15],  # arc2, CoD, schema, laion, lichess
+    "1_arc_foundation": [
+        0.25,
+        0.25,
+        0.20,
+        0.15,
+        0.15,
+    ],  # arc2, CoD, schema, laion, lichess
     "2_spatial": None,
     "3_arc_agent": None,
     "4_reasoning_world": None,
 }
-# NEFTune noise alpha per stage: only early LM/ARC foundation need embedding noise.
+# NEFTune noise alpha per stage: strong early, light on ARC-AGI-3 target where
+# exact grid copying matters, moderate on long-horizon reasoning.
 CURRICULUM_NEFTUNE: dict[str, float | None] = {
     "0_foundation": 5.0,
     "1_arc_foundation": 5.0,
-    "2_spatial": None,
-    "3_arc_agent": None,
-    "4_reasoning_world": None,
+    "2_spatial": 3.0,
+    "3_arc_agent": 2.0,
+    "4_reasoning_world": 3.0,
 }
 # Epochs per stage: ARC agent core (main target) gets 2 epochs to converge.
 CURRICULUM_EPOCHS: dict[str, int] = {
@@ -664,15 +719,20 @@ REWARD_SCALE: float = 1.0
 REWARD_EVERY_N_STEPS: int = 1
 EMBEDDING_LR_SCALE: float = 0.2
 
+
 # Reward-reference refresh: the per-token pseudo-reward pass is computed from a
 # detached snapshot (a frozen copy of the current best model), not from the
 # live training model. Refresh that snapshot at epoch boundaries and/or every
 # ``REWARD_REFRESH_EVERY_N_STEPS`` optimizer steps (whichever fires first)
 # after ``REWARD_REFRESH_WARMUP_STEPS`` steps have completed. When both are
 # zero the snapshot is never refreshed (frozen at init).
-REWARD_REFRESH_EVERY_N_EPOCHS: int = 0 if _USE_SMOKE_CONFIG else 1
+def _smoke_or(full: int, smoke: int = 0) -> int:
+    return smoke if _USE_SMOKE_CONFIG else full
+
+
+REWARD_REFRESH_EVERY_N_EPOCHS: int = _smoke_or(1)
 REWARD_REFRESH_EVERY_N_STEPS: int = 0
-REWARD_REFRESH_WARMUP_STEPS: int = 0 if _USE_SMOKE_CONFIG else 100
+REWARD_REFRESH_WARMUP_STEPS: int = _smoke_or(100)
 
 PER_DEVICE_TRAIN_BATCH_SIZE: int = 1
 GRADIENT_ACCUMULATION_STEPS: int = 1 if _USE_SMOKE_CONFIG else 16
@@ -962,392 +1022,9 @@ print("Model prepared for CPT.")
 
 
 # %% [code.10]
-# Canonical formatter implementations also live in
-# qwendopamine.integrations.cpt_datasets — keep in sync when editing.
-def _flatten_messages(messages: Any) -> str:
-    if isinstance(messages, str):
-        stripped = messages.strip()
-        if stripped.startswith(("[", "{")):
-            try:
-                messages = json.loads(stripped)
-            except json.JSONDecodeError:
-                return messages
-        else:
-            return messages
-    if not isinstance(messages, list):
-        return str(messages)
-    parts = []
-    for msg in messages:
-        if isinstance(msg, dict):
-            role = msg.get("role", msg.get("from", "user"))
-            content = msg.get("content", msg.get("value", msg.get("text", "")))
-            reasoning = msg.get("reasoning_content", "")
-            if reasoning:
-                parts.append(f"{role}: [thinking: {reasoning}]\n{content}")
-            else:
-                parts.append(f"{role}: {content}")
-        else:
-            parts.append(str(msg))
-    return "\n".join(parts)
-
-
-def format_smb(example: dict) -> dict:
-    return {"text": example.get("text", "")}
-
-
-def format_maze(example: dict) -> dict:
-    return {"text": example.get("text", "")}
-
-
-def format_sokoban(example: dict) -> dict:
-    messages_raw = example.get("messages", "")
-    text = _flatten_messages(messages_raw)
-    task = example.get("task", "")
-    seed = example.get("seed", "")
-    env_id = example.get("env_id", "")
-    header = " | ".join(
-        x for x in [f"task={task}", f"seed={seed}", f"env_id={env_id}"] if x
-    )
-    if header:
-        text = f"[{header}]\n{text}"
-    return {"text": text}
-
-
-def format_bytesized32(example: dict) -> dict:
-    prompt = example.get("prompt", [])
-    reward_model = example.get("reward_model", "")
-    extra_info = example.get("extra_info", "")
-    parts = []
-    if isinstance(prompt, list):
-        for p in prompt:
-            if isinstance(p, dict):
-                role = p.get("role", "user")
-                content = p.get("content", "")
-                parts.append(f"{role}: {content}")
-            else:
-                parts.append(str(p))
-    elif prompt:
-        parts.append(str(prompt))
-    if reward_model:
-        parts.append(f"RewardModel: {reward_model}")
-    if extra_info:
-        parts.append(f"ExtraInfo: {extra_info}")
-    return {"text": "\n".join(parts)}
-
-
-def format_patronus(example: dict) -> dict:
-    text = _flatten_messages(example.get("messages", []))
-    return {"text": text}
-
-
-def format_arc(example: dict) -> dict:
-    task = example.get("task", "")
-    status = example.get("status", "")
-    win_levels = example.get("win_levels", "")
-    level_scores = []
-    for k in [f"level{i}" for i in range(10)]:
-        if k in example and example[k] is not None:
-            level_scores.append(f"{k}={example[k]}")
-    scores_str = ", ".join(level_scores)
-    text = (
-        f"ARC-AGI Task [{task}] Status={status} WinLevels={win_levels}\n"
-        f"Level Scores: {scores_str}"
-    )
-    return {"text": text}
-
-
-def format_chess_laion(example: dict) -> dict:
-    moves = example.get("Moves", [])
-    termination = example.get("Termination", "")
-    result = example.get("Result", "*")
-    if isinstance(moves, list):
-        movetext = " ".join(str(m) for m in moves)
-    else:
-        movetext = str(moves)
-    text = f'[Event "?"]\n[Result "{result}"]\n\n{movetext} {termination}'
-    return {"text": text}
-
-
-def format_openthoughts(example: dict) -> dict:
-    system = example.get("system", "")
-    convs = example.get("conversations", [])
-    parts = []
-    if system:
-        parts.append(f"system: {system}")
-    for turn in convs:
-        role = turn.get("from", turn.get("role", "unknown"))
-        value = turn.get("value", turn.get("content", ""))
-        parts.append(f"{role}: {value}")
-    return {"text": "\n".join(parts)}
-
-
-def format_alfworld(example: dict) -> dict:
-    steps_raw = example.get("steps", "[]")
-    steps: list[Any]
-    if isinstance(steps_raw, str):
-        stripped = steps_raw.strip()
-        if stripped.startswith(("[", "{")):
-            try:
-                steps = json.loads(stripped)
-            except json.JSONDecodeError:
-                steps = []
-        else:
-            steps = []
-    else:
-        steps = steps_raw if isinstance(steps_raw, list) else []
-    parts = []
-    task = example.get("task", "")
-    task_type = example.get("task_type", "")
-    if task:
-        parts.append(f"Task: {task}")
-    if task_type:
-        parts.append(f"Task Type: {task_type}")
-    for step in steps:
-        idx = step.get("idx", step.get("step", step.get("id", "")))
-        obs = step.get("obs", step.get("observation", step.get("text", "")))
-        action = step.get("action", step.get("act", ""))
-        if obs:
-            parts.append(f"Step {idx} Observation: {obs}")
-        if action:
-            parts.append(f"Step {idx} Action: {action}")
-    return {"text": "\n".join(parts)}
-
-
-def format_kimi_k3(example: dict) -> dict:
-    text = _flatten_messages(example.get("messages", []))
-    return {"text": text}
-
-
-def format_cot_eval(example: dict) -> dict:
-    parts = []
-    passage = example.get("passage", "")
-    if passage:
-        parts.append(f"Passage: {passage}")
-    question = example.get("question", "")
-    if question:
-        parts.append(f"Question: {question}")
-    options = example.get("options", [])
-    if options:
-        opts = " | ".join(str(o) for o in options)
-        parts.append(f"Options: {opts}")
-    answer = example.get("answer", "")
-    if answer:
-        parts.append(f"Answer: {answer}")
-    trace = example.get("reasoning_trace", "")
-    if trace:
-        parts.append(f"Reasoning: {trace}")
-    return {"text": "\n".join(parts)}
-
-
-def format_lichess(example: dict) -> dict:
-    movetext = example.get("movetext", "")
-    white = str(example.get("White") or "?")
-    black = str(example.get("Black") or "?")
-    result = example.get("Result", "*")
-    opening = example.get("Opening", "")
-    eco = example.get("ECO", "")
-    event = example.get("Event", "")
-    site = example.get("Site", "")
-    date = example.get("UTCDate", "")
-    text = (
-        f'[Event "{event}"]\n[Site "{site}"]\n'
-        f'[Date "{date}"]\n[White "{white}"]\n[Black "{black}"]\n'
-        f'[Result "{result}"]\n[ECO "{eco}"]\n[Opening "{opening}"]\n\n{movetext}'
-    )
-    return {"text": text}
-
-
-def format_toolace(example: dict) -> dict:
-    system = example.get("system", "")
-    convs = example.get("conversations", [])
-    parts = []
-    if system:
-        parts.append(f"system: {system}")
-    for turn in convs:
-        role = turn.get("from", turn.get("role", "unknown"))
-        value = turn.get("value", turn.get("content", ""))
-        parts.append(f"{role}: {value}")
-    return {"text": "\n".join(parts)}
-
-
-def format_qwen3_distill(example: dict) -> dict:
-    text = _flatten_messages(example.get("messages", []))
-    domain = example.get("domain", "")
-    category = example.get("category", "")
-    source = example.get("source", "")
-    meta = " | ".join(
-        x for x in [f"domain={domain}", f"category={category}", f"source={source}"] if x
-    )
-    if meta:
-        text = f"[{meta}]\n{text}"
-    return {"text": text}
-
-
-def format_fable5(example: dict) -> dict:
-    text = _flatten_messages(example.get("messages", []))
-    trace = example.get("trace", "")
-    prompt = example.get("prompt", "")
-    parts = []
-    if prompt:
-        parts.append(f"Prompt: {prompt}")
-    parts.append(text)
-    if trace:
-        parts.append(f"Trace: {trace}")
-    return {"text": "\n".join(parts)}
-
-
-def format_wikitext(example: dict) -> dict:
-    text = example.get("text", "")
-    if not text or not text.strip():
-        text = "[EMPTY_WIKITEXT_ROW]"
-    return {"text": text}
-
-
-def format_r0b0tlab(example: dict) -> dict:
-    raw: list[Any] = []
-    raw_value = example.get("messages_json", "[]")
-    if isinstance(raw_value, str):
-        stripped = raw_value.strip()
-        if stripped.startswith(("[", "{")):
-            try:
-                raw = json.loads(stripped)
-            except json.JSONDecodeError:
-                raw = []
-        else:
-            raw = []
-    else:
-        raw = raw_value if isinstance(raw_value, list) else []
-    text = _flatten_messages(raw)
-    task_type = example.get("task_type", "")
-    source = example.get("source", "")
-    domain = example.get("domain", "")
-    meta = " | ".join(
-        x
-        for x in [f"task_type={task_type}", f"source={source}", f"domain={domain}"]
-        if x
-    )
-    if meta:
-        text = f"[{meta}]\n{text}"
-    return {"text": text}
-
-
-def format_arc2(example: dict) -> dict:
-    """zhmz90/arc-agi-2: train/test grids with filename."""
-    filename = example.get("filename", "")
-    parts = [f"ARC-AGI-2 [{filename}]"]
-    train = example.get("train", [])
-    test = example.get("test", [])
-    if train:
-        parts.append(f"Train examples: {len(train)}")
-        for i, ex in enumerate(train[:3]):
-            inp = ex.get("input", ex) if isinstance(ex, dict) else ex
-            out = ex.get("output", "") if isinstance(ex, dict) else ""
-            parts.append(f"  Train {i} input: {inp} -> output: {out}")
-    if test:
-        parts.append(f"Test examples: {len(test)}")
-        for i, ex in enumerate(test[:2]):
-            inp = ex.get("input", ex) if isinstance(ex, dict) else ex
-            out = ex.get("output", "") if isinstance(ex, dict) else ""
-            parts.append(f"  Test {i} input: {inp} -> output: {out}")
-    return {"text": "\n".join(parts)}
-
-
-def format_chain_of_draft(example: dict) -> dict:
-    """dvilasuero/chain-of-draft-r1: question + CoD vs standard."""
-    question = example.get("question", "")
-    answer = example.get("answer", "")
-    cod = example.get("cod", "")
-    standard = example.get("standard", "")
-    parts = []
-    if question:
-        parts.append(f"Question: {question}")
-    # Prefer CoD (concise draft) for efficient reasoning; fall back to standard.
-    reasoning = cod.strip() if cod and cod.strip() else standard
-    if reasoning:
-        parts.append(f"Reasoning: {reasoning}")
-    if answer:
-        parts.append(f"Answer: {answer}")
-    return {"text": "\n".join(parts)}
-
-
-def format_nemotron(example: dict) -> dict:
-    """nvidia/Nemotron-SFT-ARC-AGI-v1: messages with system+user ARC puzzle."""
-    text = _flatten_messages(example.get("messages", []))
-    tools = example.get("tools", [])
-    if tools:
-        tool_names = ", ".join(t.get("name", "?") for t in tools if isinstance(t, dict))
-        text = f"[Tools: {tool_names}]\n{text}"
-    meta = example.get("metadata", "")
-    if meta:
-        text = f"{text}\n[metadata: {meta}]"
-    return {"text": text}
-
-
-def format_ara_agent(example: dict) -> dict:
-    """AgentNativeResearchLab ARC-AGI-3 agent trajectories (episodes + ara stats).
-
-    Streaming yields mixed rows: episodes (turn/action/state/frame) and
-    accounting (ts/claims/trace_nodes). Handle both without dropping.
-    """
-    if "frame" in example:
-        turn = example.get("turn", "")
-        action = example.get("action", "")
-        state = example.get("state", "")
-        levels = example.get("levels_completed", "")
-        frame = str(example.get("frame", ""))[:1200]
-        return {"text": f"ARC3 Episode turn={turn} action={action} state={state} levels={levels}\nFrame:\n{frame}"}
-    if "ts" in example:
-        turn = example.get("turn", "")
-        trace_nodes = example.get("trace_nodes", "")
-        ara_bytes = example.get("ara_bytes", "")
-        claims = example.get("claims", "")
-        return {"text": f"ARC3 Trace ts={example.get('ts','')} turn={turn} nodes={trace_nodes} bytes={ara_bytes} claims={claims}"}
-    # Fallback for ledger/predictions rows
-    return {"text": " ".join(str(v)[:500] for v in example.values() if isinstance(v, (str, int, float)))}
-
-
-DATASET_FORMATTERS = {
-    "DylanRiden/smb-worldmodel-data": format_smb,
-    "Kalso42/WorldModelForMaze": format_maze,
-    "ultrastar111/sokoban_easy_v8_cot_chunk_kinf_world_model_20260707_perseg": format_sokoban,
-    "thuml/bytesized32-world-model-cot": format_bytesized32,
-    "PatronusAI/world_model_corpus": format_patronus,
-    "schema-harness/arc-agi-3-schema-traces": format_arc,
-    "laion/strategic_game_chess": format_chess_laion,
-    "ryanmarten/OpenThoughts-1k-sample": format_openthoughts,
-    "Decix/ReBel-ALFWorld-SFT-Trajectories": format_alfworld,
-    "greghavens/kimi-k3-coding-and-debugging-traces": format_kimi_k3,
-    "cot-leaderboard/cot-eval-traces-2.0": format_cot_eval,
-    "Lichess/standard-chess-games": format_lichess,
-    "lockon/ToolACE": format_toolace,
-    "faunix/Qwen3.8-27B-Distillation-40K": format_qwen3_distill,
-    "Glint-Research/Fable-5-traces": format_fable5,
-    "Salesforce/wikitext": format_wikitext,
-    "r0b0tlab/qwen3.8-max-glm5.2-kimi-k3-distillation": format_r0b0tlab,
-    "zhmz90/arc-agi-2": format_arc2,
-    "dvilasuero/chain-of-draft-r1": format_chain_of_draft,
-    "nvidia/Nemotron-SFT-ARC-AGI-v1": format_nemotron,
-    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-s5i5": format_ara_agent,
-    "AgentNativeResearchLab/arc-agi3-kimi-k2.7-g50t": format_ara_agent,
-    "AgentNativeResearchLab/arc-agi3-codex-gpt5.6sol-r11l": format_ara_agent,
-    "AgentNativeResearchLab/arc-agi3-codex-gpt5.5-r11l": format_ara_agent,
-}
-
-
-def format_example(example: dict, dataset_name: str) -> dict:
-    formatter = DATASET_FORMATTERS.get(dataset_name)
-    if formatter is not None:
-        return formatter(example)
-    for col in ["text", "content", "prompt", "problem", "solution"]:
-        if example.get(col):
-            return {"text": str(example[col])}
-    text = " ".join(
-        str(v)
-        for v in example.values()
-        if isinstance(v, (str, int, float)) and not str(v).startswith("_")
-    )
-    return {"text": text}
-
+# Canonical formatters live in qwendopamine.integrations.cpt_datasets.
+# Imported here so notebook and package never drift.
+from qwendopamine.integrations.cpt_datasets import DATASET_FORMATTERS, format_example
 
 # %% [markdown.11]
 # ## Streaming & Interleaving Pipeline
@@ -1414,9 +1091,19 @@ def load_smb_dataset() -> IterableDataset:
                     action = data["action"]
                     if action.ndim == 0:
                         action = np.array([0.0] * 8)
-                    buttons = ["Up", "Down", "Left", "Right", "A", "B", "Start", "Select"]
+                    buttons = [
+                        "Up",
+                        "Down",
+                        "Left",
+                        "Right",
+                        "A",
+                        "B",
+                        "Start",
+                        "Select",
+                    ]
                     action_str = ", ".join(
-                        f"{b}={float(v):.1f}" for b, v in zip(buttons, action.flatten()[:8])
+                        f"{b}={float(v):.1f}"
+                        for b, v in zip(buttons, action.flatten()[:8])
                     )
                     yield {"text": f"SMB Frame Action: [{action_str}]"}
 
@@ -1588,7 +1275,9 @@ def _mock_stream_for_dataset(name: str, n: int | None = None) -> IterableDataset
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
-def _apply_subset(ds: Any, dataset_name: str, stage_name: str | None = None) -> IterableDataset:
+def _apply_subset(
+    ds: Any, dataset_name: str, stage_name: str | None = None
+) -> IterableDataset:
     # Stage-specific caps override global DATASET_SUBSET_MAP to balance tiny ARC sets.
     max_rows = None
     if stage_name is not None:
@@ -1608,9 +1297,13 @@ def _apply_subset(ds: Any, dataset_name: str, stage_name: str | None = None) -> 
     return IterableDataset.from_generator(_gen, gen_kwargs={})
 
 
-def _stream_for(name: str, use_capped: bool, stage_name: str | None = None) -> IterableDataset:
+def _stream_for(
+    name: str, use_capped: bool, stage_name: str | None = None
+) -> IterableDataset:
     if name == LOCAL_SYNTHETIC_DATASET and IS_KAGGLE:
-        raise RuntimeError("synthetic dataset not allowed on Kaggle; curriculum must use real datasets")
+        raise RuntimeError(
+            "synthetic dataset not allowed on Kaggle; curriculum must use real datasets"
+        )
     if use_capped:
         return _mock_stream_for_dataset(name)
     if name == LOCAL_SYNTHETIC_DATASET:
@@ -1651,17 +1344,25 @@ def build_streaming_dataset(
     if stage_name is not None:
         probs = CURRICULUM_PROBABILITIES.get(stage_name)  # type: ignore[name-defined]
         if probs is not None and len(probs) != len(streams):
-            print(f"[warn] probabilities length mismatch for {stage_name}: {len(probs)} vs {len(streams)}, using equal")
+            print(
+                f"[warn] probabilities length mismatch for {stage_name}: {len(probs)} vs {len(streams)}, using equal"
+            )
             probs = None
     # all_exhausted ensures wikitext (50k capped) doesn't stop larger streams early — the
     # 24-way interleave keeps sampling until every source is drained, balancing world-model traces.
     # Per-stage caps above (CURRICULUM_SUBSET_OVERRIDES) keep tiny ARC sets from being dwarfed.
-    return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted", probabilities=probs)
+    return interleave_datasets(
+        streams, seed=seed, stopping_strategy="all_exhausted", probabilities=probs
+    )
 
 
-def peek_streaming_dataset(dataset_names: list[str], seed: int = 42, stage_name: str | None = None) -> IterableDataset:
+def peek_streaming_dataset(
+    dataset_names: list[str], seed: int = 42, stage_name: str | None = None
+) -> IterableDataset:
     rank_seed = seed + RANK
-    train_dataset = build_streaming_dataset(dataset_names, seed=rank_seed, stage_name=stage_name)
+    train_dataset = build_streaming_dataset(
+        dataset_names, seed=rank_seed, stage_name=stage_name
+    )
     if IS_MAIN:
         sample = next(iter(train_dataset.take(1)), None)
         if sample is None:
@@ -1679,12 +1380,24 @@ def log_gpu(prefix: str = "") -> None:
     """Log nvidia-smi + torch CUDA memory for manual review (user requested)."""
     tag = f" {prefix}" if prefix else ""
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5, check=False)
+        out = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
         if out.returncode == 0 and out.stdout.strip():
             print(f"[gpu{tag}] nvidia-smi: {out.stdout.strip()}")
         else:
             # Fallback to full nvidia-smi
-            out2 = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5, check=False)
+            out2 = subprocess.run(
+                ["nvidia-smi"], capture_output=True, text=True, timeout=5, check=False
+            )
             if out2.stdout:
                 print(f"[gpu{tag}] nvidia-smi:\n{out2.stdout[:2000]}")
     except (FileNotFoundError, subprocess.SubprocessError, OSError) as _e:
@@ -1694,9 +1407,11 @@ def log_gpu(prefix: str = "") -> None:
             try:
                 alloc = torch.cuda.memory_allocated(i) / 1024**3
                 reserv = torch.cuda.memory_reserved(i) / 1024**3
-                print(f"[gpu{tag}] cuda:{i} allocated {alloc:.2f}GB reserved {reserv:.2f}GB")
-            except Exception:  # noqa: BLE001
-                pass
+                print(
+                    f"[gpu{tag}] cuda:{i} allocated {alloc:.2f}GB reserved {reserv:.2f}GB"
+                )
+            except Exception as _gpu_e:  # noqa: BLE001
+                print(f"[gpu{tag}] cuda stat failed: {_gpu_e}")
 
 
 def _drop_stage_cache(stage_datasets: list[str]) -> None:
@@ -1706,7 +1421,9 @@ def _drop_stage_cache(stage_datasets: list[str]) -> None:
     def _log_disk(prefix: str) -> None:
         try:
             du = shutil.disk_usage(".")
-            print(f"[disk] {prefix}: {du.free / 1024**3:.1f}GB free / {du.total / 1024**3:.1f}GB total")
+            print(
+                f"[disk] {prefix}: {du.free / 1024**3:.1f}GB free / {du.total / 1024**3:.1f}GB total"
+            )
         except OSError:
             pass
 
@@ -1731,7 +1448,9 @@ def _drop_stage_cache(stage_datasets: list[str]) -> None:
 if USE_CURRICULUM:
     _curriculum_keys = list(CURRICULUM_STAGES.keys())
     _active_keys = _curriculum_keys[CURRICULUM_START_STAGE:]
-    print(f"[curriculum] {len(CURRICULUM_STAGES)} stages total; starting at {CURRICULUM_START_STAGE}: {', '.join(_active_keys)}")
+    print(
+        f"[curriculum] {len(CURRICULUM_STAGES)} stages total; starting at {CURRICULUM_START_STAGE}: {', '.join(_active_keys)}"
+    )
     # Defer dataset build to stage loop in the training cell; keep placeholder.
     train_dataset = None  # type: ignore[assignment]
 else:
@@ -1755,7 +1474,11 @@ def tokenize_fn(example: dict) -> dict:
 
 # Keep column logic as a function so curriculum stages can reuse it per-stage.
 def _cols_to_remove_for(ds: Any) -> list[str]:
-    return [c for c in (getattr(ds, "column_names", None) or []) if c not in {"text", "input_ids", "attention_mask", "labels"}]
+    return [
+        c
+        for c in (getattr(ds, "column_names", None) or [])
+        if c not in {"text", "input_ids", "attention_mask", "labels"}
+    ]
 
 
 def _keep_tokenized(example: dict) -> bool:
@@ -2193,10 +1916,20 @@ class MetricsLogger(TrainerCallback):
         self.metrics: list[dict[str, Any]] = []
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_log(self, args: Any, state: Any, control: Any, logs: dict[str, float] | None = None, **kwargs: Any) -> None:
+    def on_log(
+        self,
+        args: Any,
+        state: Any,
+        control: Any,
+        logs: dict[str, float] | None = None,
+        **kwargs: Any,
+    ) -> None:
         if logs is None or not IS_MAIN:
             return
-        entry: dict[str, Any] = {"step": int(state.global_step), "epoch": float(state.epoch or 0)}
+        entry: dict[str, Any] = {
+            "step": int(state.global_step),
+            "epoch": float(state.epoch or 0),
+        }
         for k in ("loss", "eval_loss", "learning_rate", "grad_norm"):
             if k in logs:
                 entry[k] = float(logs[k])
@@ -2207,9 +1940,13 @@ class MetricsLogger(TrainerCallback):
                     try:
                         import math
 
-                        entry[k.replace("loss", "ppl") if k == "loss" else "eval_ppl"] = float(math.exp(nll))
+                        entry[
+                            k.replace("loss", "ppl") if k == "loss" else "eval_ppl"
+                        ] = float(math.exp(nll))
                     except OverflowError:
-                        entry[k.replace("loss", "ppl") if k == "loss" else "eval_ppl"] = float("inf")
+                        entry[
+                            k.replace("loss", "ppl") if k == "loss" else "eval_ppl"
+                        ] = float("inf")
         # Also capture stage name if set via TrainingArguments.run_name
         entry["run_name"] = getattr(args, "run_name", "") or ""
         self.metrics.append(entry)
@@ -2273,10 +2010,26 @@ else:
 
 def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
     # Per-stage LR/WD/epochs/neftune decay across curriculum to avoid overfitting late ARC stages.
-    lr = CURRICULUM_LEARNING_RATES.get(stage_name, LEARNING_RATE) if stage_name else LEARNING_RATE  # type: ignore[name-defined]
-    wd = CURRICULUM_WEIGHT_DECAY.get(stage_name, WEIGHT_DECAY) if stage_name else WEIGHT_DECAY  # type: ignore[name-defined]
-    epochs = CURRICULUM_EPOCHS.get(stage_name, NUM_TRAIN_EPOCHS) if stage_name else NUM_TRAIN_EPOCHS  # type: ignore[name-defined]
-    neftune = CURRICULUM_NEFTUNE.get(stage_name, NEFTUNE_NOISE_ALPHA) if stage_name is not None else NEFTUNE_NOISE_ALPHA  # type: ignore[name-defined]
+    lr = (
+        CURRICULUM_LEARNING_RATES.get(stage_name, LEARNING_RATE)
+        if stage_name
+        else LEARNING_RATE
+    )  # type: ignore[name-defined]
+    wd = (
+        CURRICULUM_WEIGHT_DECAY.get(stage_name, WEIGHT_DECAY)
+        if stage_name
+        else WEIGHT_DECAY
+    )  # type: ignore[name-defined]
+    epochs = (
+        CURRICULUM_EPOCHS.get(stage_name, NUM_TRAIN_EPOCHS)
+        if stage_name
+        else NUM_TRAIN_EPOCHS
+    )  # type: ignore[name-defined]
+    neftune = (
+        CURRICULUM_NEFTUNE.get(stage_name, NEFTUNE_NOISE_ALPHA)
+        if stage_name is not None
+        else NEFTUNE_NOISE_ALPHA
+    )  # type: ignore[name-defined]
     run_name = f"curriculum-{stage_name}" if stage_name else None
     # Transformers 5.x removed warmup_ratio from TrainingArguments.
     # Compute warmup_steps from the ratio so curriculum stages with different
@@ -2284,7 +2037,11 @@ def _stage_training_args(stage_name: str | None = None) -> TrainingArguments:
     if _USE_SMOKE_CONFIG:
         warmup_steps = WARMUP_STEPS
     else:
-        warmup_steps = max(1, int(MAX_TRAIN_STEPS or 1) * WARMUP_RATIO) if MAX_TRAIN_STEPS else WARMUP_STEPS
+        warmup_steps = (
+            max(1, int(MAX_TRAIN_STEPS or 1) * WARMUP_RATIO)
+            if MAX_TRAIN_STEPS
+            else WARMUP_STEPS
+        )
     return TrainingArguments(
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
@@ -2350,7 +2107,9 @@ elif USE_CURRICULUM:
     for _stage_idx, _stage_name in enumerate(_active_keys):  # type: ignore[name-defined]
         _stage_datasets = CURRICULUM_STAGES[_stage_name]
         if IS_MAIN:
-            print(f"\n{'='*60}\n[stage {_stage_idx+1}/{len(_active_keys)}] {_stage_name}: {len(_stage_datasets)} datasets\n{'='*60}")
+            print(
+                f"\n{'=' * 60}\n[stage {_stage_idx + 1}/{len(_active_keys)}] {_stage_name}: {len(_stage_datasets)} datasets\n{'=' * 60}"
+            )
             for _n in _stage_datasets:
                 print(f"  - {_n}")
         # Build and tokenize only this stage's datasets; previous stage's caches
@@ -2358,17 +2117,25 @@ elif USE_CURRICULUM:
         # sets (50-400) vs large chess (15k capped) to avoid overfitting.
         _stage_ds = peek_streaming_dataset(_stage_datasets, stage_name=_stage_name)
         _stage_cols = _cols_to_remove_for(_stage_ds)
-        _stage_ds = _stage_ds.map(tokenize_fn, batched=False, remove_columns=_stage_cols)
+        _stage_ds = _stage_ds.map(
+            tokenize_fn, batched=False, remove_columns=_stage_cols
+        )
         _stage_ds = _stage_ds.filter(_keep_tokenized)
         # Small eval split (500 ex) for overfitting detection per stage; uses same
         # stage datasets but different seed so eval doesn't overlap train.
         _stage_eval_ds = None
         if not _USE_SMOKE_CONFIG:
-            _eval_raw = build_streaming_dataset(_stage_datasets, seed=43 + _stage_idx, stage_name=_stage_name).take(500)  # type: ignore[name-defined]
+            _eval_raw = build_streaming_dataset(
+                _stage_datasets, seed=43 + _stage_idx, stage_name=_stage_name
+            ).take(500)  # type: ignore[name-defined]
             _eval_cols = _cols_to_remove_for(_eval_raw)
-            _stage_eval_ds = _eval_raw.map(tokenize_fn, batched=False, remove_columns=_eval_cols).filter(_keep_tokenized)
+            _stage_eval_ds = _eval_raw.map(
+                tokenize_fn, batched=False, remove_columns=_eval_cols
+            ).filter(_keep_tokenized)
         if IS_MAIN:
-            print(f"[stage {_stage_name}] tokenized train+eval, disk freed after prior stage")
+            print(
+                f"[stage {_stage_name}] tokenized train+eval, disk freed after prior stage"
+            )
         training_args = _stage_training_args(_stage_name)
         trainer = CPTSFTTrainer(
             model=model,
@@ -2396,7 +2163,9 @@ elif USE_CURRICULUM:
             torch.cuda.empty_cache()
         ACCEL_STATE.wait_for_everyone()
         if IS_MAIN:
-            print(f"[stage {_stage_name}] complete; next checkpoint: {_last_checkpoint}")
+            print(
+                f"[stage {_stage_name}] complete; next checkpoint: {_last_checkpoint}"
+            )
 else:
     # Legacy single-pass over all 24 datasets (capped-full or non-curriculum override).
     # Create small eval split from same datasets with different seed for overfitting detection.
@@ -2404,7 +2173,9 @@ else:
     if not _USE_SMOKE_CONFIG:
         _legacy_eval_raw = build_streaming_dataset(CPT_DATASETS, seed=99).take(500)
         _legacy_eval_cols = _cols_to_remove_for(_legacy_eval_raw)
-        _legacy_eval_ds = _legacy_eval_raw.map(tokenize_fn, batched=False, remove_columns=_legacy_eval_cols).filter(_keep_tokenized)
+        _legacy_eval_ds = _legacy_eval_raw.map(
+            tokenize_fn, batched=False, remove_columns=_legacy_eval_cols
+        ).filter(_keep_tokenized)
     training_args = _stage_training_args(None)
     trainer = CPTSFTTrainer(
         model=model,
@@ -2441,7 +2212,11 @@ if IS_MAIN:
                     except json.JSONDecodeError:
                         continue
         # Also merge trainer.state.log_history if logger missed something (e.g. final eval)
-        if "trainer" in globals() and hasattr(trainer, "state") and trainer.state.log_history:
+        if (
+            "trainer" in globals()
+            and hasattr(trainer, "state")
+            and trainer.state.log_history
+        ):
             for entry in trainer.state.log_history:
                 if any(k in entry for k in ("loss", "eval_loss")):
                     all_metrics.append(entry)
@@ -2455,7 +2230,9 @@ if IS_MAIN:
             train_loss = [by_step[s].get("loss") for s in steps]
             eval_loss = [by_step[s].get("eval_loss") for s in steps]
             nll = [by_step[s].get("nll", by_step[s].get("loss")) for s in steps]
-            eval_nll = [by_step[s].get("eval_nll", by_step[s].get("eval_loss")) for s in steps]
+            eval_nll = [
+                by_step[s].get("eval_nll", by_step[s].get("eval_loss")) for s in steps
+            ]
             lr = [by_step[s].get("learning_rate") for s in steps]
 
             # Save combined metrics json for later analysis
@@ -2467,7 +2244,9 @@ if IS_MAIN:
 
             ax = axes[0, 0]
             ax.plot(steps, train_loss, label="train loss", color="#1f77b4")
-            ax.plot(steps, eval_loss, label="eval loss", color="#ff7f0e", linestyle="--")
+            ax.plot(
+                steps, eval_loss, label="eval loss", color="#ff7f0e", linestyle="--"
+            )
             ax.set_ylabel("loss")
             ax.legend()
             ax.grid(True, alpha=0.3)
@@ -2482,7 +2261,9 @@ if IS_MAIN:
             ax = axes[1, 0]
             # Perplexity = exp(NLL), clip for display
             ppl = [min(math.exp(v), 1e4) if v is not None else None for v in nll]
-            eval_ppl = [min(math.exp(v), 1e4) if v is not None else None for v in eval_nll]
+            eval_ppl = [
+                min(math.exp(v), 1e4) if v is not None else None for v in eval_nll
+            ]
             ax.plot(steps, ppl, label="train ppl", color="#2ca02c")
             ax.plot(steps, eval_ppl, label="eval ppl", color="#d62728", linestyle="--")
             ax.set_ylabel("perplexity")
@@ -2508,7 +2289,9 @@ if IS_MAIN:
 
             csv_path = Path(OUTPUT_DIR) / "metrics.csv"
             with open(csv_path, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=sorted({k for m in by_step.values() for k in m}))
+                writer = csv.DictWriter(
+                    f, fieldnames=sorted({k for m in by_step.values() for k in m})
+                )
                 writer.writeheader()
                 for s in steps:
                     writer.writerow(by_step[s])
